@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Live on-device meeting transcription.
 # Run from YOUR Terminal (it holds the Screen-Recording + Accessibility grants):
-#     ./run.sh          →  open http://localhost:8790 in a browser ; Ctrl-C to stop.
+#     ./run.sh                       →  open http://localhost:8790 in a browser ; Ctrl-C to stop.
+#     ./run.sh --app all             →  capture all system audio (e.g. Google Meet in a browser)
+#     ./run.sh --mic off             →  don't transcribe your own mic
 #
-# Captures the OTHER participants' audio (system output) → Whisper (Metal GPU) → live GUI.
-# Works on Zoom / Meet / Teams / any call. No captions toggle, multilingual, fully on-device.
+# Captures YOU (mic) + the other participants (meeting-app audio) → Whisper (Metal GPU) → live GUI.
+# Auto-scopes to a running Zoom/Teams/Webex/FaceTime window so background audio isn't transcribed.
+# No captions toggle, multilingual, fully on-device. Flags after ./run.sh pass through to the capturer.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUI_PORT="${GUI_PORT:-8790}"
@@ -38,8 +41,9 @@ until curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$GUI_PORT/"     2>/dev
 
 echo
 echo "  ✅  Open  http://localhost:$GUI_PORT"
-echo "  🎙  Transcribing the other participants live. Ctrl-C to stop."
+echo "  🎙  Transcribing you + the other participants live. Ctrl-C to stop."
 echo
 
-# 3) capturer — foreground, under THIS Terminal's Screen-Recording grant
-exec "$ROOT/stt/meeting-tap" "$GUI_PORT" "http://127.0.0.1:$WHISPER_PORT/inference"
+# 3) capturer — foreground, under THIS Terminal's Screen-Recording grant.
+#    "$@" forwards flags like --app / --mic to meeting-tap.
+exec "$ROOT/stt/meeting-tap" "$GUI_PORT" "http://127.0.0.1:$WHISPER_PORT/inference" "$@"

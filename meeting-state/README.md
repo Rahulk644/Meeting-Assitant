@@ -11,12 +11,16 @@ enrich the transcript. The live caption **text** comes from on-device Whisper (s
 `inMeeting`, `selfMuted`, `videoOn`, `sharing` — derived from the meeting app's **menu-bar toggle
 labels** (`Unmute Audio` / `Stop Share` …). Stable across app versions and readable while backgrounded.
 
-## Work in progress: speaker names
+## Speaker names
 
-Zoom renders its meeting UI in embedded Chromium, which is opaque to Accessibility **until you set
-`AXManualAccessibility = true`** on the process (done in `--dump` / `--probe`). Once unlocked, the
-active-speaker name + participant list live in the speaker-tile / participants panel. Build the
-selectors from a live `--dump`, then set `state.activeSpeaker` in the watch loop (see the `TODO(names)`).
+`participants` and `activeSpeaker` are read from Zoom's video-tile element **descriptions**, shaped
+like `"Rahul Khatri, Computer audio muted, Video off"` (and profile buttons `"View <Name>'s profile"`).
+Zoom's always-on-top **floating video window** follows the active speaker in speaker view — and in a
+1-on-1 it always shows the other person — so the name in that window's tile is who's talking. We set
+`AXManualAccessibility = true` first to unlock Zoom's embedded UI, then harvest names (`zoomNames()`).
+
+**Accuracy:** reliable for 1-on-1 (the floating window shows the remote person); in large gallery-view
+calls the active-speaker pick is best-effort. Names update at the watch `--interval` (default 1s).
 
 ## Build & run
 
@@ -26,7 +30,6 @@ swiftc -O meeting-state.swift -o meeting-state
 ./meeting-state             # stream state as NDJSON on change
 ./meeting-state --once      # one snapshot, then exit
 ./meeting-state --dump      # dump a live meeting app's AX tree (build name selectors from this)
-./meeting-state --probe     # print text nodes as they appear while you speak
 ./meeting-state --selftest  # validate the derive logic (exit 0/1)
 ```
 

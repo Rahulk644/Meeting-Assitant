@@ -29,7 +29,13 @@ http.createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
-      try { broadcast(JSON.parse(body)); } catch {}
+      try {
+        const obj = JSON.parse(body);
+        // Tag a remote line with whoever meeting-state says is speaking now. "You"/self lines untouched.
+        if (obj.type === "caption" && !obj.self && (!obj.speaker || obj.speaker === "Speaker") && lastState.activeSpeaker)
+          obj.speaker = lastState.activeSpeaker;
+        broadcast(obj);
+      } catch {}
       res.writeHead(204); res.end();
     });
     return;
@@ -50,7 +56,9 @@ http.createServer((req, res) => {
   res.end();
 }).listen(PORT, () => {
   console.log(`\n  Live transcript → http://localhost:${PORT}   ${DEMO ? "(demo)" : "(live)"}\n`);
-  DEMO ? startDemo() : INGEST ? (lastState = { inMeeting: true, title: "Live transcript" }) : startMeetingState();
+  if (DEMO) { startDemo(); return; }
+  if (INGEST) lastState = { inMeeting: true, title: "Live transcript" }; // captions POST to /ingest
+  startMeetingState(); // state + active-speaker (names). Harmless if not built yet.
 });
 
 // LIVE: forward meeting-state's NDJSON (state + caption events) straight through.

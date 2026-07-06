@@ -1,16 +1,30 @@
-// meeting-tap.swift (v2) — continuous meeting transcription.
-// Captures system audio (ScreenCaptureKit) → energy-VAD segments into utterances →
-// POSTs each utterance to a hot whisper-server → POSTs the caption to the GUI server.
+// meeting-tap.swift (v3) — continuous meeting transcription from TWO sources.
+//   • System audio (ScreenCaptureKit), scoped to the meeting app  → the other participants.
+//   • Microphone   (AVAudioEngine)                                → you.
+// Both → energy-VAD → per-utterance WAV → hot whisper-server → caption POSTed to the GUI.
 //
 // Build:  swiftc -O -target arm64-apple-macos13.0 meeting-tap.swift -o meeting-tap \
 //           -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
 //           -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist
-//         codesign --force --sign - meeting-tap   (then packaged into meeting-tap.app)
-// Run (as the app, for Screen-Recording permission):
-//         open meeting-tap.app --args <guiPort=8787> <whisperURL=http://127.0.0.1:8091/inference>
 //
-// ponytail: energy-threshold VAD (not Silero yet) — simplest thing that segments; swap in
-// Silero (vad-rs / a coreml silero) if the energy gate mis-segments in noisy calls.
+// Run:    meeting-tap <guiPort=8787> <whisperURL> [--app auto|all|<id>] [--mic on|off] [--me <name>]
+//         meeting-tap --list-apps       # capturable apps + bundle ids (pick one for --app)
+//
+//   --app auto  (default) captures only the running native meeting app (Zoom/Teams/Webex/FaceTime),
+//               so background audio (a YouTube tab) is NOT transcribed. If none is running it falls
+//               back to the whole system. Google Meet lives in a browser — pass --app <browser bundle>.
+//   --mic on    (default) also transcribes your own mic, labeled "<name> (Me)". Needs Microphone
+//               permission on the launching terminal.  --mic off to skip it.
+//   --me <name> your label (default: the macOS full name).  --rms / --mic-rms tune the VAD gates
+//               (system 0.006, mic 0.02 — the mic is higher because a room is noisier than the feed).
+//   --min-conf 0.5   drop utterances below this mean word-confidence (kills noise hallucinations).
+//   --expressions    keep Whisper's *sigh* / (laughs) cues as [sigh] tags for a sentiment read.
+//   NOTE: use HEADPHONES. On speakers, the mic re-hears the remote voices → duplicate/misattributed
+//         lines. Headphones give a clean split: mic = you, system audio = them.
+//
+// ponytail: energy-threshold VAD (not Silero) — simplest thing that segments; swap in Silero if it
+// mis-segments in noisy calls. Core Audio process taps (Fathom's per-app method) need the macOS 14.2+
+// SDK, which this toolchain (13.3) lacks — hence ScreenCaptureKit app-scoping instead.
 
 import Foundation
 import ScreenCaptureKit
@@ -18,36 +32,61 @@ import AVFoundation
 import CoreMedia
 
 func err(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
+func f2(_ v: Float) -> String { String(format: "%.4f", v) }
+func f1(_ v: Double) -> String { String(format: "%.1f", v) }
 
-let args = CommandLine.arguments
-let guiPort = args.count > 1 ? args[1] : "8787"
-let whisperURL = args.count > 2 ? args[2] : "http://127.0.0.1:8091/inference"
+// ---- args ----
+let A = CommandLine.arguments
+func opt(_ name: String, _ def: String) -> String {
+    if let i = A.firstIndex(of: name), i + 1 < A.count { return A[i + 1] }
+    return def
+}
+let LIST_APPS = A.contains("--list-apps")
+let guiPort    = (A.count > 1 && !A[1].hasPrefix("--")) ? A[1] : "8787"
+let whisperURL = (A.count > 2 && !A[2].hasPrefix("--")) ? A[2] : "http://127.0.0.1:8091/inference"
+let APP_SEL = opt("--app", "auto")            // auto | all | <bundleID>
+let MIC_ON  = opt("--mic", "on") != "off"
+let SPEECH_RMS = Float(opt("--rms", "0.006")) ?? 0.006       // system-audio gate (the Zoom feed is clean)
+let MIC_RMS    = Float(opt("--mic-rms", "0.02")) ?? 0.02     // mic gate — higher: a room is noisier than the feed
+let MIN_CONF   = Float(opt("--min-conf", "0.5")) ?? 0.5      // drop utterances below this mean word-confidence
+let EXPRESSIONS = A.contains("--expressions")                // keep *sigh*/(laughs) as [sigh] sentiment cues
+let ME = { let n = NSFullUserName(); return opt("--me", n.isEmpty ? "Me" : n) }()  // shown as "<name> (Me)"
 
 // VAD / segmentation tuning
 let SR = 16000.0
-let SPEECH_RMS: Float = CommandLine.arguments.count > 3 ? (Float(CommandLine.arguments[3]) ?? 0.006) : 0.006  // arg3 tunable
 let SILENCE_HANGOVER = 0.7          // seconds of quiet that ends an utterance
 let MIN_SEG = 0.5                   // ignore blips shorter than this
-let MAX_SEG = 12.0                  // force-flush very long speech
+let MAX_SEG = 8.0                   // force-flush long speech (lower = snappier captions)
 
-final class Rec: NSObject, SCStreamOutput, SCStreamDelegate {
-    var seg = [Float]()
-    var inSpeech = false
-    var silentDur = 0.0
-    var segIdx = 0
-    var bufN = 0
-    var peak: Float = 0
-    var announced = false
-    let procQ = DispatchQueue(label: "stt.process")   // WAV+curl off the audio thread
+// Native meeting apps we auto-scope to (browsers excluded on purpose — a browser may just be YouTube).
+let NATIVE_MEETING: Set<String> = [
+    "us.zoom.xos",                               // Zoom
+    "com.microsoft.teams", "com.microsoft.teams2",
+    "com.cisco.webexmeetingsapp",                // Webex
+    "com.apple.FaceTime",
+]
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .audio, CMSampleBufferDataIsReady(sb), let s = floatSamples(sb), !s.isEmpty else { return }
+// MARK: - one energy-VAD segmenter → whisper → caption. Reused by both audio sources.
+
+final class Segmenter {
+    let speaker: String, isSelf: Bool, tag: String, threshold: Float
+    var seg = [Float](), inSpeech = false, silentDur = 0.0, segIdx = 0
+    var bufN = 0; var peak: Float = 0; var announced = false
+    let procQ: DispatchQueue
+
+    init(speaker: String, isSelf: Bool, tag: String, threshold: Float) {
+        self.speaker = speaker; self.isSelf = isSelf; self.tag = tag; self.threshold = threshold
+        self.procQ = DispatchQueue(label: "stt.process.\(tag)")
+    }
+
+    func feed(_ s: [Float]) {
+        guard !s.isEmpty else { return }
         let dur = Double(s.count) / SR
         let rms = (s.reduce(0) { $0 + $1 * $1 } / Float(s.count)).squareRoot()
-        if !announced { announced = true; err("first buffer: \(s.count) samples, rms=\(String(format: "%.4f", rms)) (threshold=\(SPEECH_RMS))") }
+        if !announced { announced = true; err("\(tag): first buffer \(s.count) samples rms=\(f2(rms)) (threshold=\(f2(threshold)))") }
         bufN += 1; peak = max(peak, rms)
-        if bufN % 500 == 0 { err("· listening (peak \(String(format: "%.3f", peak)))"); peak = 0 }   // ~10s heartbeat
-        if rms > SPEECH_RMS {
+        if bufN % 500 == 0 { err("\(tag): · listening (peak \(f2(peak)))"); peak = 0 }
+        if rms > threshold {
             if !inSpeech { inSpeech = true; seg.removeAll(keepingCapacity: true) }
             seg.append(contentsOf: s); silentDur = 0
         } else if inSpeech {
@@ -60,32 +99,45 @@ final class Rec: NSObject, SCStreamOutput, SCStreamDelegate {
     func flush() {
         let samples = seg; seg.removeAll(keepingCapacity: true); inSpeech = false; silentDur = 0
         guard Double(samples.count) / SR >= MIN_SEG else { return }
-        segIdx += 1
-        let idx = segIdx
-        err("flush seg#\(idx) len=\(String(format: "%.1f", Double(samples.count) / SR))s")
+        segIdx += 1; let idx = segIdx
         procQ.async { self.process(samples, idx) }
     }
 
     func process(_ samples: [Float], _ idx: Int) {
-        let wav = URL(fileURLWithPath: "/tmp/mt_seg_\(idx % 4).wav")   // small ring of temp files
+        let wav = URL(fileURLWithPath: "/tmp/mt_\(tag)_seg_\(idx % 4).wav")   // small ring of temp files
         writeWav16(samples, to: wav)
-        let text = curl(["-s", whisperURL, "-F", "file=@\(wav.path)", "-F", "temperature=0", "-F", "response_format=text"])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let clean = text.replacingOccurrences(of: "[BLANK_AUDIO]", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-        err("seg#\(idx) \(String(format: "%.1f", Double(samples.count) / SR))s → '\(clean)'")
+        let secs = f1(Double(samples.count) / SR)
+        guard let (raw, conf) = transcribe(wav.path) else { return }
+        if conf < MIN_CONF {   // low mean word-probability = noise/hallucination (the "*Sigh*" case)
+            err("\(tag) seg#\(idx) \(secs)s dropped: conf \(f2(conf)) < \(f2(MIN_CONF)) raw='\(raw.prefix(40))'")
+            return
+        }
+        let clean = EXPRESSIONS ? keepExpressions(raw) : cleanTranscript(raw)
+        err("\(tag) seg#\(idx) \(secs)s conf=\(f2(conf)) → '\(clean)'")
         guard clean.count > 1 else { return }
         postCaption(clean)
     }
 
     func postCaption(_ text: String) {
-        let obj: [String: Any] = ["type": "caption", "speaker": "Speaker", "text": text, "self": false]
+        let obj: [String: Any] = ["type": "caption", "speaker": speaker, "text": text, "self": isSelf,
+                                  "ts": Int(Date().timeIntervalSince1970 * 1000)]
         guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        let f = "/tmp/mt_cap.json"; try? data.write(to: URL(fileURLWithPath: f))
+        let f = "/tmp/mt_cap_\(tag).json"; try? data.write(to: URL(fileURLWithPath: f))
         _ = curl(["-s", "-X", "POST", "http://127.0.0.1:\(guiPort)/ingest",
                   "-H", "Content-Type: application/json", "--data-binary", "@\(f)"])
     }
+}
 
-    func stream(_ stream: SCStream, didStopWithError error: Error) { err("stream stopped: \(error)") }
+// MARK: - system audio (ScreenCaptureKit) → segmenter
+
+final class SCKOut: NSObject, SCStreamOutput, SCStreamDelegate {
+    let seg: Segmenter
+    init(_ seg: Segmenter) { self.seg = seg }
+    func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .audio, CMSampleBufferDataIsReady(sb), let s = floatSamples(sb) else { return }
+        seg.feed(s)
+    }
+    func stream(_ stream: SCStream, didStopWithError error: Error) { err("sys stream stopped: \(error)") }
 }
 
 func floatSamples(_ sb: CMSampleBuffer) -> [Float]? {
@@ -98,11 +150,45 @@ func floatSamples(_ sb: CMSampleBuffer) -> [Float]? {
     pcm.frameLength = AVAudioFrameCount(n)
     guard CMSampleBufferCopyPCMDataIntoAudioBufferList(sb, at: 0, frameCount: Int32(n), into: pcm.mutableAudioBufferList) == noErr else { return nil }
     if let fc = pcm.floatChannelData { return Array(UnsafeBufferPointer(start: fc[0], count: Int(n))) }
-    if let ic = pcm.int16ChannelData { return (0..<Int(n)).map { Float(ic[0][$0]) / 32768.0 } }   // handle Int16 SCK buffers
+    if let ic = pcm.int16ChannelData { return (0..<Int(n)).map { Float(ic[0][$0]) / 32768.0 } }   // Int16 SCK buffers
     return nil
 }
 
-// Plain 16-bit PCM mono WAV writer (AVAudioFile mangles Int16 buffers → write bytes ourselves).
+// MARK: - microphone (AVAudioEngine) → segmenter.  Resamples hardware rate → 16k mono.
+
+final class Mic {
+    let engine = AVAudioEngine()
+    let seg: Segmenter
+    init(_ seg: Segmenter) { self.seg = seg }
+    func start() {
+        let input = engine.inputNode
+        let inFmt = input.inputFormat(forBus: 0)
+        guard inFmt.sampleRate > 0, inFmt.channelCount > 0 else {
+            err("mic: no input format — grant Microphone permission to your terminal, then rerun (or --mic off)"); return
+        }
+        guard let outFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: SR, channels: 1, interleaved: false),
+              let conv = AVAudioConverter(from: inFmt, to: outFmt) else { err("mic: converter init failed"); return }
+        input.installTap(onBus: 0, bufferSize: 4096, format: inFmt) { [weak self] buf, _ in
+            guard let self = self else { return }
+            let cap = AVAudioFrameCount(Double(buf.frameLength) * SR / inFmt.sampleRate) + 1024
+            guard let out = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: cap) else { return }
+            var e: NSError?; var fed = false
+            conv.convert(to: out, error: &e) { _, st in
+                if fed { st.pointee = .noDataNow; return nil }
+                fed = true; st.pointee = .haveData; return buf
+            }
+            if let ch = out.floatChannelData, out.frameLength > 0 {
+                self.seg.feed(Array(UnsafeBufferPointer(start: ch[0], count: Int(out.frameLength))))
+            }
+        }
+        engine.prepare()
+        do { try engine.start(); err(">> mic capture started (\(Int(inFmt.sampleRate))Hz \(inFmt.channelCount)ch → 16k mono)") }
+        catch { err("mic: engine.start failed: \(error) — grant Microphone permission, or --mic off") }
+    }
+}
+
+// MARK: - shared helpers
+
 func writeWav16(_ samples: [Float], to url: URL) {
     let dataSize = samples.count * 2
     func le32(_ v: UInt32) -> [UInt8] { [UInt8(v & 0xff), UInt8((v >> 8) & 0xff), UInt8((v >> 16) & 0xff), UInt8((v >> 24) & 0xff)] }
@@ -119,6 +205,46 @@ func writeWav16(_ samples: [Float], to url: URL) {
     try? d.write(to: url)
 }
 
+// Ask whisper-server for verbose_json → (full text, mean per-word confidence). Whisper reports a
+// probability per word; averaged, it separates real speech (~0.9) from noise/hallucination (low).
+func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
+    let out = curl(["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json"])
+    guard let data = out.data(using: .utf8),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    let text = (obj["text"] as? String) ?? ""
+    var probs: [Double] = []
+    for seg in (obj["segments"] as? [[String: Any]] ?? []) {
+        for w in (seg["words"] as? [[String: Any]] ?? []) {
+            if let p = w["probability"] as? Double { probs.append(p) }
+        }
+    }
+    let conf = probs.isEmpty ? 1.0 : probs.reduce(0, +) / Double(probs.count)   // no word probs → don't penalize
+    return (text, Float(conf))
+}
+
+// Expression capture (--expressions): keep Whisper's paralinguistic cues (*sigh*, (laughs)) as [sigh]
+// tags for a sentiment read, instead of stripping them. Trustworthy only because low-confidence noise
+// is already dropped upstream. ponytail: a cheap proxy — real emotion sensing wants a dedicated model.
+func keepExpressions(_ raw: String) -> String {
+    var t = raw.replacingOccurrences(of: "[BLANK_AUDIO]", with: "")
+    t = t.replacingOccurrences(of: "\\*([^*]+)\\*", with: "[$1]", options: .regularExpression)
+    t = t.replacingOccurrences(of: "\\(([^)]+)\\)", with: "[$1]", options: .regularExpression)
+    return t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+// Whisper hallucinates non-speech as annotations on quiet/noisy audio: [BLANK_AUDIO], *sigh*,
+// (music), *click*. Strip those; drop whatever's left with no letters/digits (e.g. "- -", ".").
+func cleanTranscript(_ raw: String) -> String {
+    var t = raw
+    for pat in ["\\[[^\\]]*\\]", "\\*[^*]*\\*", "\\([^)]*\\)"] {
+        t = t.replacingOccurrences(of: pat, with: " ", options: .regularExpression)
+    }
+    t = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+         .trimmingCharacters(in: .whitespacesAndNewlines)
+    return t.range(of: "[\\p{L}\\p{N}]", options: .regularExpression) == nil ? "" : t
+}
+
 @discardableResult
 func curl(_ argv: [String]) -> String {
     let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/curl"); p.arguments = argv
@@ -128,14 +254,52 @@ func curl(_ argv: [String]) -> String {
     return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
 }
 
-// MARK: - start continuous capture
+// MARK: - content filter (which app's audio to capture)
 
-let rec = Rec()
-let started = DispatchSemaphore(value: 0)
+func makeFilter(_ display: SCDisplay, _ apps: [SCRunningApplication]) -> SCContentFilter {
+    let whole = SCContentFilter(display: display, excludingWindows: [])
+    switch APP_SEL {
+    case "all":
+        err("capturing full system audio (--app all)")
+        return whole
+    case "auto":
+        if let m = apps.first(where: { NATIVE_MEETING.contains($0.bundleIdentifier) }) {
+            err("auto: scoping audio to \(m.applicationName) [\(m.bundleIdentifier)]")
+            return SCContentFilter(display: display, including: [m], exceptingWindows: [])
+        }
+        err("auto: no native meeting app running — capturing full system audio (background audio will be transcribed; pass --app <bundleID>, see --list-apps)")
+        return whole
+    default:
+        if let m = apps.first(where: { $0.bundleIdentifier == APP_SEL }) {
+            err("scoping audio to \(m.applicationName) [\(APP_SEL)]")
+            return SCContentFilter(display: display, including: [m], exceptingWindows: [])
+        }
+        err("app \(APP_SEL) not running — capturing full system audio")
+        return whole
+    }
+}
+
+// MARK: - start
+
+let sysSeg = Segmenter(speaker: "Speaker", isSelf: false, tag: "sys", threshold: SPEECH_RMS)
+let micSeg = Segmenter(speaker: ME, isSelf: true, tag: "mic", threshold: MIC_RMS)
 var theStream: SCStream?
+var sckOut: SCKOut?
+var mic: Mic?
+
+if MIC_ON { mic = Mic(micSeg); mic?.start() }
 
 SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
     if let error = error { err("SCShareableContent error: \(error)"); exit(1) }
+    let apps = content?.applications ?? []
+
+    if LIST_APPS {
+        for a in apps.sorted(by: { $0.applicationName.lowercased() < $1.applicationName.lowercased() }) {
+            print("\(a.bundleIdentifier)\t\(a.applicationName)")
+        }
+        exit(0)
+    }
+
     guard let display = content?.displays.first else { err("no display"); exit(1) }
     let cfg = SCStreamConfiguration()
     cfg.capturesAudio = true
@@ -144,17 +308,16 @@ SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false)
     cfg.channelCount = 1
     cfg.width = 2; cfg.height = 2
     cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+    let out = SCKOut(sysSeg); sckOut = out
     do {
-        let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: cfg, delegate: rec)
-        try stream.addStreamOutput(rec, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio"))
+        let stream = SCStream(filter: makeFilter(display, apps), configuration: cfg, delegate: out)
+        try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio"))
         theStream = stream
         stream.startCapture { e in
             if let e = e { err("startCapture error: \(e)"); exit(1) }
-            err(">> live transcription started (gui:\(guiPort) whisper:\(whisperURL))")
-            started.signal()
+            err(">> live transcription started (gui:\(guiPort) whisper:\(whisperURL) app:\(APP_SEL) mic:\(MIC_ON) me:\(ME))")
         }
     } catch { err("SCStream setup failed: \(error)"); exit(1) }
 }
 
-started.wait()
 RunLoop.main.run()   // run until killed

@@ -140,8 +140,15 @@ private func snapshot() -> State {
     guard let (key, pid) = runningMeetingApp() else { return s }
     s.app = key
     let appEl = AXUIElementCreateApplication(pid)
+    if key == "zoom" { enableManualAX(appEl) }   // unlock Zoom's embedded UI for name reading
     deriveControls(from: menuTitles(appEl), into: &s)
     if windowInMeeting(appEl, appKey: key) { s.inMeeting = true }
+    if key == "zoom" {
+        let (names, active) = zoomNames(appEl)
+        s.participants = names
+        s.activeSpeaker = active
+        if !names.isEmpty { s.inMeeting = true }
+    }
     return s
 }
 
@@ -180,31 +187,63 @@ private func dumpTree(_ el: AXUIElement, depth: Int, maxDepth: Int) {
     for k in axKids(el) { dumpTree(k, depth: depth + 1, maxDepth: maxDepth) }
 }
 
-/// Collect every text-bearing node (role + value). Used by --probe to discover how the
-/// meeting app renders live captions (speaker names, partial vs final lines).
-private func collectTextNodes(_ el: AXUIElement, _ out: inout [(String, String)], depth: Int) {
-    if depth > 32 { return }
-    let role = axStr(el, kRole) ?? "?"
-    if role == "AXStaticText" || role == "AXTextArea" || role == "AXTextField" {
-        if let v = (axGet(el, kValue) as? String) ?? axStr(el, kTitle) ?? axStr(el, kDesc), !v.isEmpty {
-            out.append((role, v))
-        }
-    }
-    for k in axKids(el) { collectTextNodes(k, &out, depth: depth + 1) }
-}
-
-// ---- Zoom live-caption reading -------------------------------------------------
-// Zoom renders its meeting UI (incl. captions) in an embedded-Chromium layer that is
-// INVISIBLE to Accessibility until you set AXManualAccessibility=true on the process.
-// Then live captions appear in an AXTable titled/described "Closed caption subtitles".
-
+// Zoom renders its meeting UI in an embedded-Chromium layer that is INVISIBLE to Accessibility
+// until you set AXManualAccessibility=true on the process. We do that to read participant names.
 private func enableManualAX(_ el: AXUIElement) {
     AXUIElementSetAttributeValue(el, "AXManualAccessibility" as CFString, kCFBooleanTrue)
 }
 
-// NOTE: live captions now come from on-device Whisper (see ../stt). This helper's job is the
-// AX meeting-STATE layer — in-meeting / mute / share (reliable, from menu-bar labels) — plus the
-// hooks (enableManualAX, collectTextNodes, --dump/--probe) to add active-speaker NAMES next.
+// ---- Zoom participant / active-speaker names ----------------------------------
+// Zoom labels each video tile with an element DESCRIPTION shaped like
+//   "Rahul Khatri, Computer audio muted, Video off"      (a tile)
+//   "View Rahul Khatri's profile"                        (its profile button)
+// The always-on-top "zoom floating video window" follows the ACTIVE SPEAKER in speaker
+// view — so the name in that window's tile is who's talking right now. Other windows
+// (participants panel, gallery) give the roster.
+
+private func validName(_ s: String) -> Bool {
+    s.count >= 2 && s.count <= 60 && s.rangeOfCharacter(from: .letters) != nil
+        && !s.lowercased().contains("zoom")
+}
+
+/// "Rahul Khatri, Computer audio muted, Video off" -> "Rahul Khatri"
+private func nameFromTileDesc(_ d: String) -> String? {
+    let low = d.lowercased()
+    guard d.contains(","), low.contains("audio") || low.contains("video") || low.contains("muted") else { return nil }
+    let name = d.components(separatedBy: ",").first!.trimmingCharacters(in: .whitespaces)
+    return validName(name) ? name : nil
+}
+
+/// "View Rahul Khatri's profile" -> "Rahul Khatri"  (handles straight + curly apostrophe)
+private func nameFromProfileDesc(_ d: String) -> String? {
+    guard d.hasPrefix("View ") else { return nil }
+    var name = String(d.dropFirst(5))
+    for suffix in ["'s profile", "\u{2019}s profile", " profile"] {
+        if let r = name.range(of: suffix) { name = String(name[..<r.lowerBound]); break }
+    }
+    name = name.trimmingCharacters(in: .whitespaces)
+    return validName(name) ? name : nil
+}
+
+/// Walk the app's windows harvesting tile/profile names. The floating video window's tile
+/// is the active speaker; all harvested names form the roster.
+private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], active: String?) {
+    var names: [String] = [], active: String? = nil
+    func walk(_ el: AXUIElement, floating: Bool, depth: Int) {
+        if depth > 30 { return }
+        let inFloat = floating || (axStr(el, kTitle) ?? "").lowercased().contains("floating video")
+        if let d = axStr(el, kDesc), let n = nameFromTileDesc(d) ?? nameFromProfileDesc(d) {
+            if !names.contains(n) { names.append(n) }
+            if inFloat && active == nil { active = n }   // first tile in the floating window = who's on screen
+        }
+        for k in axKids(el) { walk(k, floating: inFloat, depth: depth + 1) }
+    }
+    for w in (axGet(appEl, kWindows) as? [AXUIElement] ?? []) { walk(w, floating: false, depth: 0) }
+    return (names, active)
+}
+
+// NOTE: live caption TEXT comes from on-device Whisper (see ../stt). This layer's job is meeting
+// STATE — in-meeting / mute / share (from menu-bar labels) and participant/active-speaker NAMES.
 
 // MARK: - self-test (ponytail runnable check; uses explicit checks, not assert — assert is
 //         stripped under -O)
@@ -237,7 +276,7 @@ private func selftest() -> Never {
 
 setbuf(stdout, nil)   // unbuffered: parent receives each JSON line immediately
 
-enum Mode { case watch, once, dump, probe, selftest }
+enum Mode { case watch, once, dump, selftest }
 var mode = Mode.watch
 var interval = 1.0
 var maxDepth = 14
@@ -248,7 +287,6 @@ while i < args.count {
     switch args[i] {
     case "--once": mode = .once
     case "--dump": mode = .dump
-    case "--probe": mode = .probe
     case "--selftest": mode = .selftest
     case "--interval": if i + 1 < args.count { i += 1; interval = Double(args[i]) ?? 1.0 }
     case "--depth": if i + 1 < args.count { i += 1; maxDepth = Int(args[i]) ?? 14 }
@@ -266,38 +304,11 @@ case .dump:
     guard let (key, pid) = runningMeetingApp() else { err("No meeting app (Zoom/Teams) running."); exit(1) }
     err("== \(key) pid=\(pid) ==")
     let appEl = AXUIElementCreateApplication(pid)
+    if key == "zoom" { enableManualAX(appEl); Thread.sleep(forTimeInterval: 0.5) }  // unlock embedded UI, let it populate
     err("-- menu titles --")
     for t in menuTitles(appEl) { err("  \(t)") }
     err("-- window trees (build participant/active-speaker selectors from here) --")
     for w in (axGet(appEl, kWindows) as? [AXUIElement] ?? []) { dumpTree(w, depth: 1, maxDepth: maxDepth) }
-    exit(0)
-
-case .probe:
-    // The make-or-break test: does Zoom expose its live captions to the Accessibility API?
-    // Prints every NEW text node that appears while you speak (with captions ON), tagged by
-    // window + role + time — so we can see if/how captions + speaker names are structured.
-    guard axTrusted(prompt: true) else { err("Grant Accessibility permission, then rerun."); exit(1) }
-    guard let (key, pid) = runningMeetingApp(), key == "zoom" else {
-        err("Start a Zoom meeting (New Meeting) with captions ON, then run --probe."); exit(1)
-    }
-    let appEl = AXUIElementCreateApplication(pid)
-    err(">> Probing Zoom caption AX for ~25s. Captions ON? Now speak a few full sentences...")
-    var seen = Set<String>()
-    let start = Date()
-    while Date().timeIntervalSince(start) < 25 {
-        for w in (axGet(appEl, kWindows) as? [AXUIElement] ?? []) {
-            let wt = axStr(w, kTitle) ?? "(untitled)"
-            var nodes: [(String, String)] = []
-            collectTextNodes(w, &nodes, depth: 0)
-            for (role, val) in nodes where val.count >= 5 {
-                if seen.insert(wt + "|" + role + "|" + val).inserted {
-                    print("[\(Int(Date().timeIntervalSince(start)))s] win=\"\(wt)\" \(role): \(val)")
-                }
-            }
-        }
-        Thread.sleep(forTimeInterval: 1.0)
-    }
-    err(">> Probe done. Send me the [Ns] lines above.")
     exit(0)
 
 case .once:
@@ -319,8 +330,6 @@ case .watch:
         }
         let s = snapshot()
         if s != last { emit(Line(type: "state", ts: nowMs(), state: s)); last = s }
-        // TODO(names): read the active-speaker NAME from Zoom's AX tree here → state.activeSpeaker
-        //              (the GUI already renders it; Whisper provides the words).
         Thread.sleep(forTimeInterval: interval)
     }
 }
