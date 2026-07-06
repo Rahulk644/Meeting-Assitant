@@ -3,144 +3,395 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Live Transcript</title>
+<title>Assistant</title>
+<script>try{var m=localStorage.getItem('theme')||'light';document.documentElement.dataset.theme=(m==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):m)}catch(e){}</script>
 <style>
   :root{
-    --bg:#0e1116; --panel:#151a21; --line:#222b36; --ink:#e6edf3; --mut:#8b98a8;
-    --accent:#2dd4bf; --you:#2dd4bf;
-    --r:14px;
+    /* LIGHT (default) — off-white canvas, dark ink, hairlines; the same lavender, used just as scarcely */
+    --canvas:#ffffff; --side:#fafbfc;
+    --s1:#f6f7f9; --s2:#eceef1; --s3:#e4e6ea; --s4:#dbdee3;
+    --hair:#e8e9ed; --hair-2:#dbdde2; --scroll:#d4d6db;
+    --ink:#1b1c21; --mut:#494c54; --sub:#71747c; --ter:#9498a0;
+    --pri:#5e6ad2; --pri-hi:#4b57c4; --pri-fo:#5e69d1; --ok:#1a9e42;
+    --r-sm:6px; --r-md:8px; --r-lg:12px;
+  }
+  :root[data-theme="dark"]{
+    /* DARK — canvas is near-black with a faint blue tint (never #000) */
+    --canvas:#010102; --side:#010102;
+    --s1:#0c0d10; --s2:#141519; --s3:#1a1b1f; --s4:#202127;
+    --hair:#1e2024; --hair-2:#2a2c31; --scroll:#22242a;
+    --ink:#f7f8f8; --mut:#c3c8d0; --sub:#8a8f98; --ter:#5c6069;
+    --pri:#5e6ad2; --pri-hi:#828fff; --pri-fo:#5e69d1; --ok:#27a644;
   }
   *{box-sizing:border-box}
-  html,body{height:100%}
+  html,body{height:100%;margin:0}
   body{
-    margin:0; background:var(--bg); color:var(--ink);
-    font:15px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
-    display:flex; flex-direction:column; height:100vh;
+    background:var(--canvas); color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display",system-ui,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased; letter-spacing:-0.01em;
   }
-  header{
-    display:flex; align-items:center; gap:14px; padding:14px 20px;
-    border-bottom:1px solid var(--line); background:var(--panel);
-  }
-  .live{display:flex; align-items:center; gap:8px; font-weight:600; letter-spacing:.02em}
-  .dot{width:9px;height:9px;border-radius:50%;background:#f2545b;box-shadow:0 0 0 0 rgba(242,84,91,.6);animation:p 1.6s infinite}
-  @keyframes p{0%{box-shadow:0 0 0 0 rgba(242,84,91,.5)}70%{box-shadow:0 0 0 7px rgba(242,84,91,0)}100%{box-shadow:0 0 0 0 rgba(242,84,91,0)}}
-  .title{color:var(--ink); font-weight:600}
-  .sub{color:var(--mut); font-size:13px}
+  .app{display:flex;height:100vh;overflow:hidden}
+  ::selection{background:rgba(94,106,210,.35)}
+  button{font-family:inherit;letter-spacing:inherit}
+  :focus-visible{outline:2px solid var(--pri-fo);outline-offset:2px;border-radius:var(--r-sm)}
+
+  /* ---------- sidebar ---------- */
+  .side{width:224px;flex:0 0 224px;background:var(--side);border-right:1px solid var(--hair);
+        display:flex;flex-direction:column;padding:18px 12px}
+  .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 22px;font-weight:600;font-size:15px;letter-spacing:-0.02em}
+  .brand .mark{width:22px;height:22px;border-radius:6px;background:var(--pri);display:grid;place-items:center;
+        color:#fff;font-weight:700;font-size:13px;letter-spacing:0}
+  nav{display:flex;flex-direction:column;gap:1px}
+  .nav{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:var(--r-md);color:var(--sub);
+        cursor:pointer;border:none;background:none;width:100%;text-align:left;font-size:13.5px;font-weight:450;transition:.12s}
+  .nav svg{width:16px;height:16px;flex:0 0 auto;color:var(--ter)}
+  .nav:hover{color:var(--ink)}.nav:hover svg{color:var(--sub)}
+  .nav.on{background:var(--s2);color:var(--ink);font-weight:550}
+  .nav.on svg{color:var(--ink)}
+  .livedot{width:6px;height:6px;border-radius:50%;background:var(--ok);margin-left:auto;box-shadow:0 0 0 0 rgba(39,166,68,.5);animation:pulse 2.4s infinite}
+  .side .spacer{flex:1}
+  .side hr{border:none;border-top:1px solid var(--hair);margin:12px 8px}
+
+  /* ---------- main ---------- */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+  .view{flex:1;min-height:0;display:none;flex-direction:column}
+  .view.on{display:flex}
+
+  /* ---------- meetings ---------- */
+  header.top{display:flex;align-items:center;gap:16px;padding:18px 28px;border-bottom:1px solid var(--hair)}
+  .eyebrow{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--sub)}
+  .eyebrow .d{width:6px;height:6px;border-radius:50%;background:var(--ok);animation:pulse 2.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(39,166,68,.45)}70%{box-shadow:0 0 0 6px rgba(39,166,68,0)}100%{box-shadow:0 0 0 0 rgba(39,166,68,0)}}
+  .t-title{font-weight:600;font-size:15px;letter-spacing:-0.02em}
+  .t-sub{color:var(--sub);font-size:12.5px;margin-top:1px}
   .spacer{flex:1}
-  .speaking{display:flex;align-items:center;gap:9px;color:var(--mut);font-size:13px}
-  .speaking b{color:var(--ink)}
-  .mic{width:16px;height:16px;opacity:.9}
-  main{flex:1; overflow:hidden; display:flex}
-  .rail{width:210px; border-right:1px solid var(--line); padding:16px 14px; overflow:auto; background:var(--panel)}
-  .rail h3{margin:0 0 12px; font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--mut); font-weight:600}
-  .who{display:flex; align-items:center; gap:9px; padding:7px 8px; border-radius:9px; margin-bottom:2px}
-  .who.act{background:rgba(45,212,191,.10)}
-  .av{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#0e1116;flex:0 0 auto}
-  .who .nm{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .feed{flex:1; overflow:auto; padding:22px clamp(16px,4vw,48px); scroll-behavior:smooth}
-  .wrap{max-width:760px;margin:0 auto}
-  .row{display:flex; gap:13px; padding:11px 0; animation:in .28s ease}
-  @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-  .row .av{width:34px;height:34px;font-size:14px;margin-top:1px}
-  .body{min-width:0}
-  .meta{display:flex;align-items:baseline;gap:9px;margin-bottom:1px}
-  .nm2{font-weight:650}
-  .ts{color:var(--mut);font-size:12px}
-  .txt{color:#d3dbe4}
-  .row.self .txt{color:var(--ink)}
-  .row.self{padding-left:12px;border-left:2px solid var(--you);margin-left:-14px}
-  .empty{color:var(--mut);text-align:center;margin-top:18vh}
-  .empty .big{font-size:17px;color:var(--ink);margin-bottom:6px}
-  footer{padding:8px 20px;border-top:1px solid var(--line);color:var(--mut);font-size:12px;background:var(--panel);display:flex;gap:16px}
-  .ok{color:var(--accent)}
-  ::-webkit-scrollbar{width:10px}::-webkit-scrollbar-thumb{background:#26303c;border-radius:8px}
+  .speaking{display:flex;align-items:center;gap:8px;color:var(--sub);font-size:12.5px}
+  .speaking b{color:var(--ink);font-weight:550}.micico{width:14px;height:14px;color:var(--ter)}
+  .mrow{flex:1;min-height:0;display:flex}
+  .rail{width:200px;flex:0 0 200px;border-right:1px solid var(--hair);padding:20px 14px;overflow:auto}
+  .rail h3{margin:0 0 14px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--sub);font-weight:600}
+  .who{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:var(--r-md);margin-bottom:2px}
+  .who.act{background:var(--s2)}
+  .av{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:600;
+        background:var(--s2);color:var(--sub);flex:0 0 auto}
+  .who.act .av{box-shadow:0 0 0 1.5px var(--pri)}
+  .who .nm{font-size:13px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .who.act .nm{color:var(--ink)}
+  .feed{flex:1;overflow:auto;padding:24px clamp(18px,4vw,52px);scroll-behavior:smooth}
+  .wrap{max-width:720px;margin:0 auto}
+  .row{display:flex;gap:14px;padding:13px 0;animation:in .24s ease}
+  @keyframes in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+  .row .av{width:30px;height:30px;font-size:12px;margin-top:1px}
+  .row.self .av{background:var(--pri);color:#fff}
+  .rbody{min-width:0}
+  .meta{display:flex;align-items:baseline;gap:9px;margin-bottom:2px}
+  .nm2{font-weight:600;font-size:13.5px;color:var(--ink);letter-spacing:-0.01em}
+  .row.self .nm2{color:var(--pri-hi)}
+  .ts{color:var(--ter);font-size:11.5px}
+  .txt{color:var(--mut);font-size:14px}
+  .row.self{margin-left:-16px;padding-left:14px;border-left:2px solid var(--pri)}
+  .empty{color:var(--sub);text-align:center;margin-top:18vh}
+  .empty .big{font-size:15px;color:var(--ink);margin-bottom:6px;font-weight:550}
+  footer.foot{padding:9px 28px;border-top:1px solid var(--hair);color:var(--ter);font-size:11.5px;display:flex;gap:16px;align-items:center}
+  .ok{color:var(--ok)}
+
+  /* ---------- generic header + placeholders ---------- */
+  .vhead{padding:24px 30px 18px;border-bottom:1px solid var(--hair)}
+  .vhead h1{margin:0;font-size:21px;font-weight:600;letter-spacing:-0.03em}
+  .vhead p{margin:5px 0 0;color:var(--sub);font-size:13.5px}
+  .pad{padding:30px;overflow:auto;flex:1}
+  .soon{max-width:520px;margin:12vh auto;text-align:center;color:var(--sub)}
+  .soon .ic{width:46px;height:46px;border-radius:var(--r-lg);background:var(--s1);border:1px solid var(--hair);
+        display:grid;place-items:center;margin:0 auto 18px}
+  .soon .ic svg{width:20px;height:20px;color:var(--sub)}
+  .soon h2{color:var(--ink);font-size:16px;font-weight:600;margin:0 0 6px;letter-spacing:-0.02em}
+  .soon .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:20px}
+  .chip{background:var(--s1);border:1px solid var(--hair);border-radius:var(--r-md);padding:6px 11px;font-size:12.5px;color:var(--mut)}
+
+  /* ---------- settings ---------- */
+  .subtabs{display:flex;gap:2px;padding:14px 30px 0;border-bottom:1px solid var(--hair);overflow-x:auto}
+  .subtab{padding:8px 12px 13px;color:var(--sub);cursor:pointer;font-size:13px;font-weight:500;
+        border:none;background:none;border-bottom:1.5px solid transparent;white-space:nowrap;margin-bottom:-1px}
+  .subtab:hover{color:var(--ink)}
+  .subtab.on{color:var(--ink);border-bottom-color:var(--pri)}
+  .sgroup{max-width:680px}
+  .srow{display:flex;align-items:center;gap:18px;padding:15px 2px;border-bottom:1px solid var(--hair)}
+  .srow:last-child{border-bottom:none}
+  .slabel{flex:1;min-width:0}
+  .slabel .l{font-weight:500;font-size:14px}.slabel .h{color:var(--sub);font-size:12.5px;margin-top:2px}
+  .badge{font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--sub);background:var(--s2);
+        border-radius:4px;padding:2px 6px;margin-left:8px;vertical-align:middle}
+  .sctl{flex:0 0 auto}
+  .sw{position:relative;width:38px;height:22px;border-radius:20px;background:var(--s3);cursor:pointer;transition:.15s;border:none}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:.15s}
+  .sw.on{background:var(--pri)}.sw.on::after{left:18px}
+  .sw:disabled,.sel:disabled,.btnx:disabled{opacity:.45;cursor:not-allowed}
+  .sel{background:var(--s1);color:var(--ink);border:1px solid var(--hair);border-radius:var(--r-md);padding:7px 10px;font:inherit;min-width:150px}
+  .btnx{background:var(--s1);color:var(--ink);border:1px solid var(--hair);border-radius:var(--r-md);padding:7px 13px;font:inherit;cursor:pointer}
+  .btnx:hover:not(:disabled){border-color:var(--hair-2)}
+  .seg{display:inline-flex;background:var(--s1);border:1px solid var(--hair);border-radius:var(--r-md);padding:2px;gap:2px}
+  .seg button{background:none;border:none;color:var(--sub);padding:6px 12px;font:inherit;cursor:pointer;border-radius:6px}
+  .seg button.on{background:var(--s3);color:var(--ink)}
+  .rng{display:flex;align-items:center;gap:12px}.rng input{accent-color:var(--pri)}
+  .key{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;background:var(--s1);border:1px solid var(--hair);border-radius:var(--r-sm);padding:5px 9px;color:var(--mut)}
+  .note{color:var(--ter);font-size:12.5px;padding:16px 2px}
+  ::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:8px}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
 </head>
 <body>
-  <header>
-    <span class="live"><span class="dot"></span>LIVE</span>
-    <div>
-      <div class="title" id="title">Waiting for meeting…</div>
-      <div class="sub" id="sub">Not in a call</div>
-    </div>
-    <span class="spacer"></span>
-    <span class="speaking" id="speaking" hidden>
-      <svg class="mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>
-      <span>speaking: <b id="active">—</b></span>
-    </span>
-  </header>
-  <main>
-    <aside class="rail">
-      <h3>In the room</h3>
-      <div id="people"></div>
-    </aside>
-    <section class="feed" id="feed">
-      <div class="wrap" id="wrap">
-        <div class="empty" id="empty">
-          <div class="big">Ready.</div>
-          <div>Speaker-named lines will stream in as people talk.</div>
-        </div>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="mark">A</span>Assistant</div>
+    <nav id="nav-main">
+      <button class="nav" data-view="dictation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>Dictation</button>
+      <button class="nav" data-view="writing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>Writing Assistant</button>
+      <button class="nav" data-view="meetings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>Meetings<span class="livedot"></span></button>
+      <button class="nav" data-view="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 8V4M8 2h8"/><circle cx="8.5" cy="14" r="1.3"/><circle cx="15.5" cy="14" r="1.3"/></svg>Agents</button>
+      <button class="nav" data-view="feedback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Feedback &amp; Support</button>
+    </nav>
+    <div class="spacer"></div>
+    <hr>
+    <nav id="nav-foot">
+      <button class="nav" data-view="guide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>Guide</button>
+      <button class="nav" data-view="share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>Share with a friend</button>
+      <button class="nav" data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
+      <button class="nav" data-view="upgrade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg>Upgrade</button>
+      <button class="nav" id="themeToggle" title="Toggle light / dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Appearance</button>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <section id="v-meetings" class="view on">
+      <header class="top">
+        <span class="eyebrow"><span class="d"></span>Live</span>
+        <div><div class="t-title" id="title">Waiting for meeting…</div><div class="t-sub" id="sub">Not in a call</div></div>
+        <span class="spacer"></span>
+        <span class="speaking" id="speaking" hidden>
+          <svg class="micico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>
+          <span>speaking <b id="active">—</b></span>
+        </span>
+      </header>
+      <div class="mrow">
+        <aside class="rail"><h3>In the room</h3><div id="people"></div></aside>
+        <section class="feed" id="feed"><div class="wrap" id="wrap">
+          <div class="empty" id="empty"><div class="big">Ready</div><div>Named lines stream in as people talk.</div></div>
+        </div></section>
       </div>
+      <footer class="foot"><span id="conn">connecting…</span><span class="spacer"></span><span id="count">0 lines</span></footer>
     </section>
-  </main>
-  <footer>
-    <span id="conn">connecting…</span>
-    <span class="spacer" style="flex:1"></span>
-    <span id="count">0 lines</span>
-  </footer>
+
+    <section id="v-dictation" class="view"></section>
+    <section id="v-writing" class="view"></section>
+    <section id="v-agents" class="view"></section>
+    <section id="v-feedback" class="view"></section>
+    <section id="v-guide" class="view"></section>
+    <section id="v-share" class="view"></section>
+    <section id="v-upgrade" class="view"></section>
+
+    <section id="v-settings" class="view">
+      <div class="vhead"><h1>Settings</h1><p>Items marked <span class="badge">DESKTOP</span> activate in the installed app.</p></div>
+      <div class="subtabs" id="setTabs"></div>
+      <div class="pad"><div class="sgroup" id="setBody"></div></div>
+    </section>
+  </div>
+</div>
+
 <script>
-const PALETTE = ["#f2a154","#6ea8fe","#f78fb3","#a5d4a4","#c792ea","#ffcb6b","#7ee787","#ff9492","#79c0ff","#d2a8ff"];
-function colorFor(name){
-  if(name==="You"||/\(you\)/i.test(name)) return getComputedStyle(document.documentElement).getPropertyValue('--you').trim();
-  let h=0; for(const c of name) h=(h*31+c.charCodeAt(0))>>>0;
-  return PALETTE[h%PALETTE.length];
+"use strict";
+const $ = s => document.querySelector(s);
+
+function setView(name){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
+  (document.getElementById('v-'+name)||{}).classList?.add('on');
+  document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('on', n.dataset.view===name));
+  try{localStorage.setItem('route',name)}catch{}
+  if(name==='settings') renderSettings();
 }
+document.querySelectorAll('.nav[data-view]').forEach(n=> n.onclick=()=>setView(n.dataset.view));
+
+/* ---------- theme (light default · dark · system) ---------- */
+function effTheme(m){return m==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):m}
+function themePref(){try{return localStorage.getItem('theme')||'light'}catch{return 'light'}}
+function updateThemeIcon(){
+  const dark=document.documentElement.dataset.theme==='dark';
+  const svg=document.querySelector('#themeToggle svg'); if(!svg)return;
+  svg.innerHTML = dark
+    ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+    : '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+}
+function setTheme(mode){
+  try{localStorage.setItem('theme',mode)}catch{}
+  document.documentElement.dataset.theme=effTheme(mode);
+  updateThemeIcon();
+}
+document.getElementById('themeToggle').onclick=()=>setTheme(effTheme(themePref())==='dark'?'light':'dark');
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{ if(themePref()==='system') setTheme('system') });
+updateThemeIcon();
+
+const ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2v20M2 12h20"/></svg>';
+function placeholder(id,title,sub,chips){
+  $('#v-'+id).innerHTML=
+    `<div class="vhead"><h1>${title}</h1><p>${sub}</p></div>
+     <div class="pad"><div class="soon"><div class="ic">${ICON}</div>
+       <h2>Coming next</h2><div>On the roadmap. Meetings is live today.</div>
+       <div class="chips">${chips.map(c=>`<span class="chip">${c}</span>`).join('')}</div></div></div>`;
+}
+placeholder('dictation','Dictation','Speak anywhere, get text — on-device.',['Push-to-talk','Custom vocab','Snippets','Punctuation','Floating widget']);
+placeholder('writing','Writing Assistant','Grammar, polish, translate — on any selected text.',['On selection','Translate','Custom modes','Local or cloud']);
+placeholder('agents','Agents','Turn meetings & notes into actions.',['Follow-ups','CRM sync','Summaries','Workflows']);
+placeholder('feedback','Feedback & Support','Tell us what to build next.',['Report a bug','Request a feature','Contact']);
+placeholder('guide','Guide','Get the most out of Assistant.',['Getting started','Shortcuts','Tips']);
+placeholder('share','Share with a friend','Spread the word.',['Copy invite link']);
+placeholder('upgrade','Upgrade to Pro','Cloud sync, bigger models, team features.',['Cloud audio','Deeper reasoning','Priority support']);
+
+const SETTINGS=[
+  ['General',[
+    ['appearance','Appearance','Light, dark, or follow the system','theme',['Light','Dark','System']],
+    ['micDevice','Microphone','','select',['System Default'],1],
+    ['appLang','Application Language','','select',['English']],
+    ['permissions','Permissions','Screen Recording · Microphone · Accessibility','action','Review'],
+    ['appUpdates','App updates','','toggle',true,1],
+    ['version','Version','','info','0.1.0 · meetings'],
+    ['startLogin','Start at Login','','toggle',false,1],
+    ['startHidden','Start hidden','','toggle',false,1],
+    ['overlayType','Overlay type','','select',['Bar','Pill','Off'],1],
+    ['trayIcon','Show tray icon','','toggle',true,1],
+    ['overlayPos','Overlay position','','select',['Top','Bottom','Follow cursor'],1],
+  ]],
+  ['Advanced',[
+    ['unloadModel','Unload Model','Free the ~1 GB of RAM the model holds','action','Unload'],
+    ['logDir','Log Directory','','action','Open'],
+    ['support','Support Creator','','action','Open'],
+    ['whatsNew',"Show what's new",'','toggle',true],
+  ]],
+  ['Experimental',[
+    ['expNone','Nothing here yet','Experimental flags will appear here','info','—'],
+  ]],
+  ['Meetings',[
+    ['mSource','Source','Where meetings & notes come from','seg',['Fathom','Local','Google Calendar'],0,'Local'],
+    ['mFolders','Organise meetings into custom folders','','toggle',false],
+    ['mTemplate','Meeting Notes Template','','select',['Fathom','Snaply','Fireflies','Zoom']],
+    ['mLive','Display live indicator','','toggle',true],
+    ['mAutoDetect','Detect meeting start & end automatically','Zoom, Google Meet, Teams + supported apps','toggle',true],
+    ['mReason','Deeper reasoning for meeting notes','Slower, higher-quality summaries','toggle',false],
+    ['mAudioGB','Audio Storage','Local cap in GB (cloud = Pro)','slider',[1,100,10]],
+  ]],
+  ['Writing Assistant',[
+    ['wSelect','Show on text selection','','toggle',true,1],
+    ['wNonEdit','Show on non-editable text','','toggle',false,1],
+    ['wTrans','Default translation language','','select',['English','Hindi','Spanish','French']],
+    ['wModes','Assistant Modes','Grammar · Polish · Translate · Custom','action','Manage'],
+    ['wModel','AI Model','','select',['Local (small)','Local (large)','API key…','Cloud · Pro']],
+    ['wShortcut','Shortcut','','key','⌥ Space',1],
+    ['wClose','Close key','','key','Esc',1],
+  ]],
+  ['Dictation',[
+    ['dLang','Language','','select',['Auto','English','Hindi','Hinglish']],
+    ['dVocab','Custom Vocab','','action','Manage'],
+    ['dSnip','Snippets','','action','Manage'],
+    ['dPunct','Punctuation Behaviour','','select',['Auto','Spoken','Off']],
+    ['dClip','Clipboard Behaviour','','select',['Paste','Copy only']],
+    ['dSound','Dictation sound','','toggle',true],
+    ['dDelete','Auto delete recordings','','select',['Never','After 1 day','After 7 days','After 30 days']],
+    ['dPTT','Push to talk','','toggle',false,1],
+    ['dWidget','Floating widget','','toggle',true,1],
+    ['dHideDock','Hide from dock','','toggle',false,1],
+    ['dPause','Auto-Pause Audio','Pause other output while recording','toggle',false,1],
+    ['dStart','Start / Stop dictation','','key','⌥ D',1],
+    ['dCancel','Cancel Shortcut','','key','Esc',1],
+    ['dMute','Mute system audio while recording','','toggle',false,1],
+    ['dVol','Volume','','slider',[0,100,80]],
+  ]],
+];
+const store={get(k,d){try{const v=localStorage.getItem('set.'+k);return v==null?d:JSON.parse(v)}catch{return d}},
+             set(k,v){try{localStorage.setItem('set.'+k,JSON.stringify(v))}catch{}}};
+let curTab=0;
+function renderSettings(){
+  const tabs=$('#setTabs');tabs.innerHTML='';
+  SETTINGS.forEach(([g],i)=>{const b=document.createElement('button');b.className='subtab'+(i===curTab?' on':'');b.textContent=g;
+    b.onclick=()=>{curTab=i;renderSettings()};tabs.append(b)});
+  const body=$('#setBody');body.innerHTML='';
+  for(const f of SETTINGS[curTab][1]) body.append(settingRow(f));
+  if(['Dictation','Writing Assistant'].includes(SETTINGS[curTab][0])){
+    const n=document.createElement('div');n.className='note';n.textContent='Model-specific settings appear here based on the model you choose.';body.append(n);
+  }
+}
+function settingRow([key,label,hint,type,opt,desktop,def]){
+  const row=document.createElement('div');row.className='srow';
+  const lab=document.createElement('div');lab.className='slabel';
+  lab.innerHTML=`<div class="l">${label}${desktop?'<span class="badge">DESKTOP</span>':''}</div>${hint?`<div class="h">${hint}</div>`:''}`;
+  const ctl=document.createElement('div');ctl.className='sctl';const dis=!!desktop;
+  if(type==='toggle'){
+    const sw=document.createElement('button');sw.className='sw'+(store.get(key,opt)?' on':'');sw.disabled=dis;
+    sw.onclick=()=>{const v=!sw.classList.contains('on');sw.classList.toggle('on',v);store.set(key,v)};ctl.append(sw);
+  }else if(type==='select'){
+    const sel=document.createElement('select');sel.className='sel';sel.disabled=dis;const cur=store.get(key,opt[0]);
+    opt.forEach(o=>sel.add(new Option(o,o,false,o===cur)));sel.onchange=()=>store.set(key,sel.value);ctl.append(sel);
+  }else if(type==='seg'){
+    const cur=store.get(key,def||opt[0]);const w=document.createElement('div');w.className='seg';
+    opt.forEach(o=>{const b=document.createElement('button');b.className=(o===cur?'on':'');b.textContent=o;
+      b.onclick=()=>{store.set(key,o);renderSettings()};w.append(b)});ctl.append(w);
+  }else if(type==='theme'){
+    const cur=themePref();const w=document.createElement('div');w.className='seg';
+    opt.forEach(o=>{const b=document.createElement('button');b.className=(o.toLowerCase()===cur?'on':'');b.textContent=o;
+      b.onclick=()=>{setTheme(o.toLowerCase());renderSettings()};w.append(b)});ctl.append(w);
+  }else if(type==='slider'){
+    const [mn,mx,dv]=opt;const w=document.createElement('div');w.className='rng';
+    const r=document.createElement('input');r.type='range';r.min=mn;r.max=mx;r.value=store.get(key,dv);
+    const out=document.createElement('span');out.textContent=r.value;out.style.cssText='color:var(--sub);min-width:32px;font-size:13px';
+    r.oninput=()=>{out.textContent=r.value;store.set(key,+r.value)};w.append(r,out);ctl.append(w);
+  }else if(type==='key'){
+    const k=document.createElement('span');k.className='key';k.textContent=store.get(key,opt);ctl.append(k);
+  }else if(type==='action'){
+    const b=document.createElement('button');b.className='btnx';b.textContent=opt;b.disabled=dis;ctl.append(b);
+  }else{const s=document.createElement('span');s.style.color='var(--sub)';s.textContent=opt;ctl.append(s)}
+  row.append(lab,ctl);return row;
+}
+
+/* ---------- live transcript ---------- */
 function initials(n){return n.replace(/\(.*/,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()}
-const feed=document.getElementById('feed'), wrap=document.getElementById('wrap'),
-      empty=document.getElementById('empty'), people=document.getElementById('people'),
-      titleEl=document.getElementById('title'), subEl=document.getElementById('sub'),
-      speakingEl=document.getElementById('speaking'), activeEl=document.getElementById('active'),
-      connEl=document.getElementById('conn'), countEl=document.getElementById('count');
-let count=0, roster=[];
-function fmt(ts){const d=ts?new Date(ts):new Date();return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+const feed=$('#feed'),wrap=$('#wrap'),empty=$('#empty'),people=$('#people'),
+      titleEl=$('#title'),subEl=$('#sub'),speakingEl=$('#speaking'),activeEl=$('#active'),
+      connEl=$('#conn'),countEl=$('#count');
+let count=0,roster=[];const MAX_ROWS=400;
+function fmt(ts){const d=ts?new Date(ts):new Date();return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 function renderPeople(list,active){
-  roster=list||roster;
-  people.innerHTML='';
+  roster=list||roster;people.innerHTML='';
   for(const p of roster){
-    const row=document.createElement('div'); row.className='who'+(p===active?' act':'');
-    const av=document.createElement('div'); av.className='av'; av.style.background=colorFor(p); av.textContent=initials(p);
-    const nm=document.createElement('div'); nm.className='nm'; nm.textContent=p;
-    row.append(av,nm); people.append(row);
+    const row=document.createElement('div');row.className='who'+(p===active?' act':'');
+    const av=document.createElement('div');av.className='av';av.textContent=initials(p);
+    const nm=document.createElement('div');nm.className='nm';nm.textContent=p;row.append(av,nm);people.append(row);
   }
 }
 function onState(s){
-  if(s.title){titleEl.textContent=s.title}
-  if(s.inMeeting!==undefined){subEl.textContent=s.inMeeting?(s.app?('on '+s.app):'in a call'):'Not in a call'}
-  if(s.participants&&s.participants.length){renderPeople(s.participants,s.activeSpeaker)}
-  if(s.activeSpeaker){speakingEl.hidden=false; activeEl.textContent=s.activeSpeaker; renderPeople(null,s.activeSpeaker)}
+  if(s.title)titleEl.textContent=s.title;
+  if(s.inMeeting!==undefined)subEl.textContent=s.inMeeting?(s.app?('on '+s.app):'in a call'):'Not in a call';
+  if(s.participants&&s.participants.length)renderPeople(s.participants,s.activeSpeaker);
+  if(s.activeSpeaker){speakingEl.hidden=false;activeEl.textContent=s.activeSpeaker;renderPeople(null,s.activeSpeaker)}
 }
 function addCaption(c){
   empty.style.display='none';
-  const row=document.createElement('div'); row.className='row'+(c.self?' self':'');
-  const av=document.createElement('div'); av.className='av'; av.style.background=colorFor(c.speaker); av.textContent=initials(c.speaker);
-  const body=document.createElement('div'); body.className='body';
-  const meta=document.createElement('div'); meta.className='meta';
-  const nm=document.createElement('span'); nm.className='nm2'; nm.style.color=colorFor(c.speaker); nm.textContent=c.speaker;
-  const ts=document.createElement('span'); ts.className='ts'; ts.textContent=fmt(c.ts);
-  const txt=document.createElement('div'); txt.className='txt'; txt.textContent=c.text;
-  meta.append(nm,ts); body.append(meta,txt); row.append(av,body); wrap.append(row);
-  count++; countEl.textContent=count+' line'+(count===1?'':'s');
-  const near = feed.scrollHeight-feed.scrollTop-feed.clientHeight < 200;
-  if(near) feed.scrollTop=feed.scrollHeight;
+  const label=c.self?(c.speaker==='You'?'You':c.speaker+' (Me)'):c.speaker;
+  const row=document.createElement('div');row.className='row'+(c.self?' self':'');
+  const av=document.createElement('div');av.className='av';av.textContent=initials(c.speaker);
+  const body=document.createElement('div');body.className='rbody';
+  const meta=document.createElement('div');meta.className='meta';
+  const nm=document.createElement('span');nm.className='nm2';nm.textContent=label;
+  const ts=document.createElement('span');ts.className='ts';ts.textContent=fmt(c.ts);
+  const txt=document.createElement('div');txt.className='txt';txt.textContent=c.text;
+  meta.append(nm,ts);body.append(meta,txt);row.append(av,body);wrap.append(row);
+  while(wrap.children.length>MAX_ROWS) wrap.removeChild(wrap.firstChild);
+  count++;countEl.textContent=count+' line'+(count===1?'':'s');
+  if(feed.scrollHeight-feed.scrollTop-feed.clientHeight<200) feed.scrollTop=feed.scrollHeight;
 }
 const es=new EventSource('/events');
-es.onopen=()=>{connEl.textContent='● connected'; connEl.className='ok'};
-es.onerror=()=>{connEl.textContent='reconnecting…'; connEl.className=''};
-es.onmessage=(e)=>{
-  let m; try{m=JSON.parse(e.data)}catch{return}
-  if(m.type==='state'&&m.state) onState(m.state);
-  else if(m.type==='caption') addCaption(m);
-};
+es.onopen=()=>{connEl.textContent='● connected';connEl.className='ok'};
+es.onerror=()=>{connEl.textContent='reconnecting…';connEl.className=''};
+es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
+  if(m.type==='state'&&m.state)onState(m.state);else if(m.type==='caption')addCaption(m)};
+
+setView((()=>{try{return localStorage.getItem('route')||'meetings'}catch{return 'meetings'}})());
 </script>
 </body>
 </html>
