@@ -135,6 +135,44 @@
   .rng{display:flex;align-items:center;gap:12px}.rng input{accent-color:var(--pri)}
   .key{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;background:var(--s1);border:1px solid var(--hair);border-radius:var(--r-sm);padding:5px 9px;color:var(--mut)}
   .note{color:var(--ter);font-size:12.5px;padding:16px 2px}
+  /* meetings module: library / detail panes */
+  .mt-pane{flex:1;min-height:0;display:none;flex-direction:column}
+  .mt-pane.on{display:flex}
+  .lib-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+  .back{background:none;border:none;color:var(--sub);cursor:pointer;font:inherit;font-size:13px;padding:2px 0;margin-bottom:6px;align-self:flex-start}
+  .back:hover{color:var(--ink)}
+  .live-btn{display:flex;align-items:center;gap:7px}
+  .ld{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:pulse 2.4s infinite}
+  .day{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--sub);margin:20px 2px 10px}
+  .day:first-child{margin-top:0}
+  .mcard{display:flex;gap:14px;align-items:flex-start;padding:14px;border:1px solid var(--hair);border-radius:var(--r-lg);
+        margin-bottom:8px;cursor:pointer;transition:.12s;background:var(--canvas)}
+  .mcard:hover{border-color:var(--hair-2);background:var(--s1)}
+  .mcard .mi{width:38px;height:38px;border-radius:var(--r-md);background:var(--s2);display:grid;place-items:center;color:var(--sub);flex:0 0 auto}
+  .mcard .mi svg{width:18px;height:18px}
+  .mcard .mb{flex:1;min-width:0}
+  .mcard .ct{font-weight:600;font-size:14.5px;letter-spacing:-0.01em;display:flex;align-items:center;gap:8px}
+  .mcard .cs{color:var(--sub);font-size:13px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mcard .cm{color:var(--ter);font-size:12px;margin-top:7px;display:flex;gap:12px;flex-wrap:wrap}
+  .livepill{font-size:9.5px;font-weight:700;letter-spacing:.04em;color:var(--ok);border:1px solid var(--ok);
+        border-radius:20px;padding:1px 7px 1px 6px;display:inline-flex;align-items:center;gap:5px}
+  .livepill .ld{width:5px;height:5px}
+  #mt-detail .feed{padding-top:8px}
+  .sumcard{border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;margin-bottom:20px;background:var(--s1)}
+  .sum-h{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--sub);margin-bottom:11px}
+  .sum-b{white-space:pre-wrap;color:var(--mut);font-size:14px;line-height:1.62}
+  .sum-err{color:var(--sub);font-size:13px;line-height:1.55;margin-bottom:11px}
+  .sum-err b{color:var(--ink);font-weight:600}
+  .sum-err code{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--s2);padding:1px 5px;border-radius:4px}
+  .linkbtn{background:none;border:none;color:var(--pri);cursor:pointer;font:inherit;font-weight:500;padding:0}
+  .linkbtn:hover{color:var(--pri-hi)}.linkbtn:disabled{color:var(--sub);cursor:default}
+  .ask{display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:1px solid var(--hair)}
+  .ask input{flex:1;background:var(--canvas);color:var(--ink);border:1px solid var(--hair);border-radius:var(--r-md);padding:9px 12px;font:inherit}
+  .ask input:focus{outline:none;border-color:var(--pri-fo)}
+  .qa{margin-top:14px;padding-top:14px;border-top:1px solid var(--hair)}
+  .qa .q{font-weight:600;font-size:13.5px;color:var(--ink)}
+  .qa .a{white-space:pre-wrap;color:var(--mut);font-size:14px;line-height:1.6;margin-top:4px}
+  .qa .a.spin{color:var(--sub)}
   ::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:8px}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
@@ -163,22 +201,48 @@
 
   <div class="main">
     <section id="v-meetings" class="view on">
-      <header class="top">
-        <span class="eyebrow"><span class="d"></span>Live</span>
-        <div><div class="t-title" id="title">Waiting for meeting…</div><div class="t-sub" id="sub">Not in a call</div></div>
-        <span class="spacer"></span>
-        <span class="speaking" id="speaking" hidden>
-          <svg class="micico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>
-          <span>speaking <b id="active">—</b></span>
-        </span>
-      </header>
-      <div class="mrow">
-        <aside class="rail"><h3>In the room</h3><div id="people"></div></aside>
-        <section class="feed" id="feed"><div class="wrap" id="wrap">
-          <div class="empty" id="empty"><div class="big">Ready</div><div>Named lines stream in as people talk.</div></div>
-        </div></section>
+      <!-- LIBRARY (default landing) -->
+      <div class="mt-pane on" id="mt-library">
+        <div class="vhead lib-head">
+          <div><h1>Meetings</h1><p>Your recorded calls, saved on-device.</p></div>
+          <button class="btnx live-btn" id="goLive" hidden><span class="ld"></span>Live now</button>
+        </div>
+        <div class="pad">
+          <div id="lib-list"></div>
+          <div class="soon" id="lib-empty">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div>
+            <h2>No meetings yet</h2><div>Start a call and it’ll be recorded here.</div>
+          </div>
+        </div>
       </div>
-      <footer class="foot"><span id="conn">connecting…</span><span class="spacer"></span><span id="count">0 lines</span></footer>
+      <!-- LIVE -->
+      <div class="mt-pane" id="mt-live">
+        <header class="top">
+          <button class="back" id="liveBack">‹ Meetings</button>
+          <span class="eyebrow"><span class="d"></span>Live</span>
+          <div><div class="t-title" id="title">Waiting for meeting…</div><div class="t-sub" id="sub">Not in a call</div></div>
+          <span class="spacer"></span>
+          <span class="speaking" id="speaking" hidden>
+            <svg class="micico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>
+            <span>speaking <b id="active">—</b></span>
+          </span>
+        </header>
+        <div class="mrow">
+          <aside class="rail"><h3>In the room</h3><div id="people"></div></aside>
+          <section class="feed" id="feed"><div class="wrap" id="wrap">
+            <div class="empty" id="empty"><div class="big">Ready</div><div>Named lines stream in as people talk.</div></div>
+          </div></section>
+        </div>
+        <footer class="foot"><span id="conn">connecting…</span><span class="spacer"></span><span id="count">0 lines</span></footer>
+      </div>
+      <!-- DETAIL (a saved meeting) -->
+      <div class="mt-pane" id="mt-detail">
+        <div class="vhead">
+          <button class="back" id="detBack">‹ Meetings</button>
+          <h1 id="det-title">Meeting</h1><p id="det-meta"></p>
+        </div>
+        <section class="feed"><div class="wrap" id="det-wrap"></div></section>
+      </div>
     </section>
 
     <section id="v-dictation" class="view"></section>
@@ -369,9 +433,10 @@ function onState(s){
   if(s.inMeeting!==undefined)subEl.textContent=s.inMeeting?(s.app?('on '+s.app):'in a call'):'Not in a call';
   if(s.participants&&s.participants.length)renderPeople(s.participants,s.activeSpeaker);
   if(s.activeSpeaker){speakingEl.hidden=false;activeEl.textContent=s.activeSpeaker;renderPeople(null,s.activeSpeaker)}
+  if(s.inMeeting===true){ $('#goLive').hidden=false; if(!liveShown && mtCurrent==='library'){ liveShown=true; mtShow('live'); } }
+  else if(s.inMeeting===false && mtCurrent==='library') loadLibrary();
 }
-function addCaption(c){
-  empty.style.display='none';
+function lineRow(c){
   const label=c.self?(c.speaker==='You'?'You':c.speaker+' (Me)'):c.speaker;
   const row=document.createElement('div');row.className='row'+(c.self?' self':'');
   const av=document.createElement('div');av.className='av';av.textContent=initials(c.speaker);
@@ -380,10 +445,119 @@ function addCaption(c){
   const nm=document.createElement('span');nm.className='nm2';nm.textContent=label;
   const ts=document.createElement('span');ts.className='ts';ts.textContent=fmt(c.ts);
   const txt=document.createElement('div');txt.className='txt';txt.textContent=c.text;
-  meta.append(nm,ts);body.append(meta,txt);row.append(av,body);wrap.append(row);
+  meta.append(nm,ts);body.append(meta,txt);row.append(av,body);return row;
+}
+function addCaption(c){
+  empty.style.display='none';
+  wrap.append(lineRow(c));
   while(wrap.children.length>MAX_ROWS) wrap.removeChild(wrap.firstChild);
   count++;countEl.textContent=count+' line'+(count===1?'':'s');
   if(feed.scrollHeight-feed.scrollTop-feed.clientHeight<200) feed.scrollTop=feed.scrollHeight;
+}
+
+/* ---------- meetings module: library / live / detail ---------- */
+let mtCurrent='library', liveShown=false;
+function mtShow(name){
+  document.querySelectorAll('.mt-pane').forEach(p=>p.classList.remove('on'));
+  const el=document.getElementById('mt-'+name); if(el) el.classList.add('on');
+  mtCurrent=name;
+  if(name==='library') loadLibrary();
+}
+$('#liveBack').onclick=()=>mtShow('library');
+$('#detBack').onclick=()=>mtShow('library');
+$('#goLive').onclick=()=>mtShow('live');
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function fmtDay(ts){
+  const d=new Date(ts),n=new Date();
+  const day=new Date(d.getFullYear(),d.getMonth(),d.getDate()),today=new Date(n.getFullYear(),n.getMonth(),n.getDate());
+  const diff=Math.round((today-day)/86400000);
+  if(diff<=0)return 'Today'; if(diff===1)return 'Yesterday';
+  return d.toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'});
+}
+function fmtDur(m){ if(!m.endedAt)return 'live'; const s=Math.round((m.endedAt-m.startedAt)/1000);
+  return s<60? s+'s' : Math.round(s/60)+' min'; }
+async function loadLibrary(){
+  let meetings=[]; try{ meetings=await (await fetch('/api/meetings')).json() }catch{}
+  const list=$('#lib-list'); list.innerHTML='';
+  $('#lib-empty').style.display = meetings.length? 'none':'';
+  $('#goLive').hidden = !meetings.some(m=>m.live);
+  let lastDay='';
+  for(const m of meetings){
+    const day=fmtDay(m.startedAt);
+    if(day!==lastDay){ lastDay=day; const h=document.createElement('div'); h.className='day'; h.textContent=day; list.append(h); }
+    list.append(meetingCard(m));
+  }
+}
+function meetingCard(m){
+  const card=document.createElement('div'); card.className='mcard';
+  const t=new Date(m.startedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  const ppl=(m.participants||[]).slice(0,4).join(', ')+((m.participants||[]).length>4?'…':'');
+  card.innerHTML=
+    `<div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div>
+     <div class="mb">
+       <div class="ct">${esc(m.title)}${m.live?'<span class="livepill"><span class="ld"></span>LIVE</span>':''}</div>
+       <div class="cs">${esc(m.snippet||'…')}</div>
+       <div class="cm"><span>${t} · ${fmtDur(m)}</span><span>${m.lineCount} lines</span>${ppl?`<span>${esc(ppl)}</span>`:''}</div>
+     </div>`;
+  card.onclick=()=> m.live? mtShow('live') : openMeeting(m.id);
+  return card;
+}
+async function openMeeting(id){
+  let m; try{ m=await (await fetch('/api/meetings/'+id)).json() }catch{ return }
+  $('#det-title').textContent=m.title;
+  const when=new Date(m.startedAt).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  $('#det-meta').textContent=`${when} · ${fmtDur(m)} · ${m.lines.length} lines`+((m.participants||[]).length?` · ${m.participants.join(', ')}`:'');
+  const w=$('#det-wrap'); w.innerHTML='';
+  w.append(aiPanel(m));
+  const tl=document.createElement('div'); tl.className='sum-h'; tl.style.margin='2px 0 10px'; tl.textContent='Transcript'; w.append(tl);
+  for(const l of m.lines) w.append(lineRow(l));
+  mtShow('detail');
+}
+function aiPanel(m){
+  const card=document.createElement('div'); card.className='sumcard';
+  const top=document.createElement('div'); card.append(top);
+  fillSummary(top, m.id, m.summary);
+  const ask=document.createElement('div'); ask.className='ask';
+  const inp=document.createElement('input'); inp.type='text'; inp.placeholder='Ask this meeting…';
+  const go=document.createElement('button'); go.className='btnx'; go.textContent='Ask';
+  const run=()=>{ const q=inp.value.trim(); if(q){ inp.value=''; askMeeting(card, m.id, q); } };
+  go.onclick=run; inp.addEventListener('keydown',e=>{ if(e.key==='Enter') run(); });
+  ask.append(inp,go); card.append(ask);
+  const qa=document.createElement('div'); qa.className='qa-list'; card.append(qa);
+  return card;
+}
+function fillSummary(top, id, summary){
+  top.innerHTML='';
+  const h=document.createElement('div'); h.className='sum-h'; h.textContent='Summary'; top.append(h);
+  if(summary){ const b=document.createElement('div'); b.className='sum-b'; b.textContent=summary; top.append(b); }
+  else { const b=document.createElement('button'); b.className='linkbtn'; b.textContent='Generate summary'; b.onclick=()=>genSummary(top,id); top.append(b); }
+}
+async function genSummary(top,id){
+  const b=top.querySelector('.linkbtn'); if(b){ b.disabled=true; b.textContent='Generating…'; }
+  try{
+    const r=await fetch('/api/meetings/'+id+'/summary',{method:'POST'});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    fillSummary(top,id,j.summary);
+  }catch(e){
+    top.innerHTML='';
+    const h=document.createElement('div'); h.className='sum-h'; h.textContent='Summary'; top.append(h);
+    const err=document.createElement('div'); err.className='sum-err';
+    err.innerHTML='<b>No model connected.</b> Choose one in Settings → AI Model, or run <code>./setup.sh</code> for the on-device model.';
+    top.append(err);
+    const rb=document.createElement('button'); rb.className='linkbtn'; rb.textContent='Try again'; rb.onclick=()=>genSummary(top,id); top.append(rb);
+  }
+}
+async function askMeeting(card,id,q){
+  const qa=card.querySelector('.qa-list');
+  const item=document.createElement('div'); item.className='qa';
+  const qd=document.createElement('div'); qd.className='q'; qd.textContent=q;
+  const ad=document.createElement('div'); ad.className='a spin'; ad.textContent='Thinking…';
+  item.append(qd,ad); qa.append(item);
+  try{
+    const r=await fetch('/api/meetings/'+id+'/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    ad.className='a'; ad.textContent=j.answer;
+  }catch(e){ ad.className='a sum-err'; ad.textContent="Couldn't answer — set up a model in Settings → AI Model."; }
 }
 const es=new EventSource('/events');
 es.onopen=()=>{connEl.textContent='● connected';connEl.className='ok'};
@@ -392,6 +566,7 @@ es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
   if(m.type==='state'&&m.state)onState(m.state);else if(m.type==='caption')addCaption(m)};
 
 setView((()=>{try{return localStorage.getItem('route')||'meetings'}catch{return 'meetings'}})());
+mtShow('library');   // populate the meetings library on load (auto-switches to live when a call starts)
 </script>
 </body>
 </html>
