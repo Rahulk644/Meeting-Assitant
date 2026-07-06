@@ -1,0 +1,18 @@
+# Whisper model — downloaded by ./setup.sh (too large for git)
+stt/whisper/*.bin
+stt/whisper/bin/
+
+# Native build artifacts — built by ./setup.sh
+stt/meeting-tap
+meeting-state/meeting-state
+
+# macOS / editor
+.DS_Store
+*.swp
+
+# Node
+node_modules/
+
+# Runtime logs / scratch
+*.log
+/tmp/mt-*.log
