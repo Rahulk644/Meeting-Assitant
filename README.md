@@ -1,11 +1,14 @@
-# Meeting Assistant
+# Assistant
 
-Private, **on-device**, real-time transcription of the *other participants* in any Mac video call
-(Zoom / Meet / Teams). Whisper runs on the Apple GPU — **no bot joins the call, no audio leaves your
-machine, no meeting-app captions toggle.** It's the foundation for a real-time sales copilot.
+A private, **on-device** super-app for calls and text — **Dictation, Writing Assistant, Meetings, and
+Agents** in one minimal shell. **Meetings ships first:** real-time transcription of *you and the other
+participants* in any Mac video call (Zoom / Meet / Teams), with speaker names. Whisper runs on the
+Apple GPU — **no bot joins the call, no audio leaves your machine, no meeting-app captions toggle.**
 
-**Status:** transcription works end-to-end, live, in a browser GUI. Speaker names, your own mic, and
-the coaching layer are on the [roadmap](#roadmap).
+**Status:** the Meetings module works end-to-end — your mic + the other participants, auto-scoped to
+the meeting app, with live speaker names. It runs today in a browser GUI (a minimal light/dark UI); the
+app is headed for a lightweight cross-platform [Tauri](https://tauri.app) shell. The real-time
+**coaching** layer is next — see the [roadmap](#roadmap).
 
 ## How it works
 
@@ -22,12 +25,13 @@ the coaching layer are on the [roadmap](#roadmap).
                                                                           live transcript UI
 ```
 
-- **Capture** — `meeting-tap` taps system-output audio (the remote voices) via ScreenCaptureKit and
-  splits it into utterances on silence.
+- **Capture** — `meeting-tap` taps the meeting app's system-output audio (the remote voices) via
+  ScreenCaptureKit **and your mic** via AVAudioEngine, splitting each into utterances on silence.
 - **Transcribe** — a hot `whisper-server` transcribes each utterance in ~1s (≈4.6× real-time on an M1).
-- **Display** — a zero-dependency Node server streams captions to a clean browser UI.
-- **Names** *(WIP)* — `meeting-state/` reads Zoom's Accessibility tree for the active-speaker name and
-  mute/share state.
+- **Display** — a zero-dependency Node server streams captions over SSE to the app UI
+  (`app/index.html`): a minimal light/dark shell with the module nav, live transcript, and settings.
+- **Names** — `meeting-state/` reads Zoom's Accessibility tree for the active-speaker name (and
+  mute / share state); `server.js` stamps each remote line with who's speaking.
 
 ## Requirements
 
@@ -51,7 +55,19 @@ Then grant **your Terminal** these permissions (System Settings → Privacy & Se
 ./run.sh       # then open http://localhost:8790 · Ctrl-C to stop
 ```
 
-Get on a call (or play any audio) and captions stream in live.
+Get on a call and captions stream in live. By default it **auto-scopes to a running
+Zoom/Teams/Webex/FaceTime** window (so a background YouTube tab is ignored) and also transcribes
+**your own mic** as `You`. Flags pass straight through to the capturer:
+
+```bash
+./run.sh --app all                 # capture ALL system audio (use for Google Meet in a browser)
+./run.sh --app com.google.Chrome   # scope to a specific app  (list them: stt/meeting-tap --list-apps)
+./run.sh --mic off                 # don't transcribe your own mic
+./run.sh --me "Niket"              # your label (default: your macOS name) → shown as "Niket (Me)"
+./run.sh --expressions             # keep *sigh* / (laughs) as [sigh] cues (sentiment read)
+```
+
+> **Use headphones.** On speakers the mic re-hears the remote voices, so their words can show up twice.
 
 > **Run it from a Terminal that has the Screen-Recording grant.** `run.sh` execs the capturer directly
 > for this reason — macOS won't reliably persist screen-recording grants for ad-hoc-signed standalone
@@ -65,8 +81,9 @@ Get on a call (or play any audio) and captions stream in live.
 | `setup.sh` | one-time install (engine + model + build) |
 | `stt/meeting-tap.swift` | ScreenCaptureKit capture + VAD + POST to whisper-server |
 | `stt/whisper/` | Whisper model (git-ignored; fetched by `setup.sh`) |
-| `app/server.js` · `app/index.html` | caption relay (SSE, `/ingest`) + live UI |
-| `meeting-state/` | AX layer: in-meeting / mute / share (+ names, WIP) |
+| `app/server.js` | caption relay (SSE, `/ingest`) + spawns `meeting-state` |
+| `app/index.html` | the app shell — module nav, live transcript, settings; minimal light/dark UI |
+| `meeting-state/` | AX layer: speaker names + in-meeting / mute / share |
 
 ## Design notes
 
@@ -80,19 +97,30 @@ Get on a call (or play any audio) and captions stream in live.
 
 ## Known limitations
 
-- Transcribes the **other** participants only — your own mic isn't captured yet.
-- Every line is labeled `Speaker` — real names are WIP (`meeting-state`).
-- Energy-threshold VAD (not Silero yet) — may mis-segment in very noisy calls.
+- **Speaker names** work by reading Zoom's active-speaker from the Accessibility tree (see
+  `meeting-state`). Reliable in 1-on-1 calls; best-effort in large gallery-view calls. Your own lines
+  are labeled `You`.
+- `--app auto` scopes to a running **native** meeting app (Zoom/Teams/Webex/FaceTime). **Google Meet
+  runs in a browser** — pass `--app <browser bundle id>`; otherwise auto falls back to all system audio.
+- Energy-threshold VAD (not Silero yet) — may mis-segment in very noisy calls. Defences against
+  Whisper's noise hallucinations: the mic gate (`--mic-rms`) blocks room noise, low mean word-
+  confidence utterances are dropped (`--min-conf`), and `*sigh*`/`[music]` annotations are stripped
+  (unless `--expressions` keeps them as sentiment cues).
+- **Use headphones.** On speakers, your mic re-captures the remote voices, so their words can appear
+  twice (once named, once as you). Headphones keep the two streams clean.
 - ScreenCaptureKit audio can occasionally go silent after long uptime — reset with
   `sudo killall coreaudiod`.
 - **Recording calls may require consent** depending on jurisdiction. That's on you.
 
 ## Roadmap
 
-- [ ] Speaker **names** — wire `meeting-state` active-speaker → captions
-- [ ] Transcribe **your own mic** (second stream)
-- [ ] **Google Meet** coverage (Chrome-extension DOM)
-- [ ] Real-time **sales coaching** — feed the transcript to Claude (the original goal)
+- [x] Transcribe **your own mic** + **scope capture to the meeting app** (`--app auto`)
+- [x] Speaker **names** from Zoom's AX tree (1-on-1 solid)
+- [x] **App shell** — module nav, settings, minimal **light/dark** UI
+- [ ] **Copilot panel** — real-time coaching + "ask", the transcript fed to Claude (the original goal)
+- [ ] Wrap in a **Tauri** shell (tray, global shortcuts, invisible-on-screen-share overlay, cross-platform)
+- [ ] Sharper names in **large gallery calls**; in-GUI device pickers
+- [ ] The other modules — **Dictation, Writing Assistant, Agents**
 
 ## License
 
