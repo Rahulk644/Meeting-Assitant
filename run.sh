@@ -31,16 +31,17 @@ if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$WHISPER_PORT/" 2>/dev/
   PIDS+=($!)
 fi
 
-# 1.5) local LLM (optional) — llama-server for post-call summaries / "ask", if a model is present.
-#      Downloaded by ./setup.sh into stt/llm/. Skipped silently if absent (AI features just show a hint).
-LLM_PORT="${LLM_PORT:-8092}"
-LLM_MODEL="$(ls "$ROOT/stt/llm/"*.gguf 2>/dev/null | head -1)"
-LLAMA_BIN="$(command -v llama-server || true)"
-if [ -n "$LLM_MODEL" ] && [ -n "$LLAMA_BIN" ]; then
-  export LLM_BASE="http://127.0.0.1:$LLM_PORT/v1"   # app/server.js reads this
-  if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$LLM_PORT/health" 2>/dev/null; then
-    echo "starting llama-server ($(basename "$LLM_MODEL"), Metal)…"
-    "$LLAMA_BIN" -m "$LLM_MODEL" --host 127.0.0.1 --port "$LLM_PORT" -c 8192 -ngl 99 >/tmp/mt-llm.log 2>&1 &
+# 1.5) local LLM (optional) — LiteRT-LM OpenAI server for post-call summaries / "ask".
+#      Gemma 4 E2B (text-only) runs at effective-2B (~1 GB RAM) on the GPU. Imported by ./setup.sh.
+#      Skipped silently if not set up (the AI panel just shows a "set one up" hint).
+LLM_PORT="${LLM_PORT:-9379}"
+LITERT_BIN="$(command -v litert-lm || echo "$HOME/.local/bin/litert-lm")"
+if [ -x "$LITERT_BIN" ] && "$LITERT_BIN" list 2>/dev/null | grep -q "gemma4-e2b"; then
+  export LLM_BASE="http://127.0.0.1:$LLM_PORT/v1"   # app/server.js reads these
+  export LLM_MODEL="gemma4-e2b"                      # (append ,gpu for the GPU backend)
+  if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$LLM_PORT/v1/models" 2>/dev/null; then
+    echo "starting LiteRT-LM server (Gemma 4 E2B, effective-2B)…"
+    "$LITERT_BIN" serve --host 127.0.0.1 --port "$LLM_PORT" >/tmp/mt-llm.log 2>&1 &
     PIDS+=($!)
   fi
 fi

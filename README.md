@@ -40,8 +40,10 @@ Every meeting is recorded to `data/meetings/*.json` (on-device, git-ignored). Op
 **Library** for an AI **summary + action items**, and to **ask questions** about it. The model is
 pluggable across three tiers (Settings → *AI Model*):
 
-- **Local** *(default, private)* — a small on-device model (**Gemma 4 E2B**, q4) via `llama-server` on
-  the Apple GPU; nothing leaves your machine. Fetched by `setup.sh`, served by `run.sh`.
+- **Local** *(default, private)* — **Gemma 4 E2B** (text-only) via **LiteRT-LM** on the Apple GPU. It runs
+  at *effective-2B* (**~1 GB RAM**, 2.4 GB disk), so it stays light even on an 8 GB Mac — a plain GGUF
+  loads the full ~5 B params and can hang. `setup.sh` installs it (`uv tool install litert-lm`) + imports
+  the model; `run.sh` serves it (OpenAI-compatible). Nothing leaves your machine.
 - **API key** — bring your own, any OpenAI-compatible provider (Groq / OpenAI / Cerebras …) for higher
   quality. One client covers local + these.
 - **Cloud** — hosted (Pro), later.
@@ -56,7 +58,7 @@ Without a model configured, the AI panel simply shows a "set one up" hint — tr
 ## Setup
 
 ```bash
-./setup.sh     # installs whisper-cpp + llama.cpp, downloads the models (~4 GB), builds the helpers
+./setup.sh     # installs whisper-cpp + LiteRT-LM, downloads the models (~3.2 GB), builds the helpers
 ```
 
 Then grant **your Terminal** these permissions (System Settings → Privacy & Security):
