@@ -43,7 +43,8 @@ pluggable across three tiers (Settings → *AI Model*):
 - **Local** *(default, private)* — **Gemma 4 E2B** (text-only) via **LiteRT-LM** on the Apple GPU. It runs
   at *effective-2B* (**~1 GB RAM**, 2.4 GB disk), so it stays light even on an 8 GB Mac — a plain GGUF
   loads the full ~5 B params and can hang. `setup.sh` installs it (`uv tool install litert-lm`) + imports
-  the model; `run.sh` serves it (OpenAI-compatible). Nothing leaves your machine.
+  the model; the app **starts it on demand** (first summary/ask) and **unloads it when idle**, so it never
+  competes with Whisper for RAM during a call. Nothing leaves your machine.
 - **API key** — bring your own, any OpenAI-compatible provider (Groq / OpenAI / Cerebras …) for higher
   quality. One client covers local + these.
 - **Cloud** — hosted (Pro), later.
@@ -138,9 +139,10 @@ Zoom/Teams/Webex/FaceTime** window (so a background YouTube tab is ignored) and 
 - [x] **App shell** — module nav, settings, minimal **light/dark** UI
 - [x] **Meeting history** — every call saved on-device; browsable Library + per-meeting detail
 - [x] **Post-call AI** — summary, action items, "ask this meeting" (on-device LLM; API/cloud tiers pluggable)
+- [x] **AI Model picker** in Settings — choose on-device (LiteRT-LM, started on demand) or a BYO-key API provider
 - [ ] Wrap in a **Tauri** shell (tray, global shortcuts, invisible-on-screen-share overlay, cross-platform)
 - [ ] **Real-time Copilot** — in-call coaching in an always-on overlay (needs the Tauri shell first)
-- [ ] Sharper names in **large gallery calls**; in-GUI device pickers; wire the model tiers into Settings
+- [ ] Sharper names in **large gallery calls**; in-GUI device pickers
 - [ ] The other modules — **Dictation, Writing Assistant, Agents**
 
 ## License

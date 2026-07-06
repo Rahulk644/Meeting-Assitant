@@ -323,6 +323,7 @@ const SETTINGS=[
     ['trayIcon','Show tray icon','','toggle',true,1],
     ['overlayPos','Overlay position','','select',['Top','Bottom','Follow cursor'],1],
   ]],
+  ['AI Model',[]], // rendered by renderAIModel()
   ['Advanced',[
     ['unloadModel','Unload Model','Free the ~1 GB of RAM the model holds','action','Unload'],
     ['logDir','Log Directory','','action','Open'],
@@ -346,7 +347,6 @@ const SETTINGS=[
     ['wNonEdit','Show on non-editable text','','toggle',false,1],
     ['wTrans','Default translation language','','select',['English','Hindi','Spanish','French']],
     ['wModes','Assistant Modes','Grammar · Polish · Translate · Custom','action','Manage'],
-    ['wModel','AI Model','','select',['Local (small)','Local (large)','API key…','Cloud · Pro']],
     ['wShortcut','Shortcut','','key','⌥ Space',1],
     ['wClose','Close key','','key','Esc',1],
   ]],
@@ -370,12 +370,51 @@ const SETTINGS=[
 ];
 const store={get(k,d){try{const v=localStorage.getItem('set.'+k);return v==null?d:JSON.parse(v)}catch{return d}},
              set(k,v){try{localStorage.setItem('set.'+k,JSON.stringify(v))}catch{}}};
+
+/* ---------- AI model (Settings → AI Model) — post-call summaries & "ask" run on this ---------- */
+const AI_PROVIDERS={
+  local:   {label:'On-device · Gemma 4 E2B (private)', base:'http://127.0.0.1:9379/v1', model:'gemma4-e2b',             needsKey:false},
+  groq:    {label:'Groq',     base:'https://api.groq.com/openai/v1', model:'llama-3.3-70b-versatile', needsKey:true, keyUrl:'console.groq.com/keys'},
+  openai:  {label:'OpenAI',   base:'https://api.openai.com/v1',      model:'gpt-4o-mini',             needsKey:true, keyUrl:'platform.openai.com/api-keys'},
+  cerebras:{label:'Cerebras', base:'https://api.cerebras.ai/v1',     model:'llama-3.3-70b',           needsKey:true, keyUrl:'cloud.cerebras.ai'},
+  custom:  {label:'Custom · OpenAI-compatible',        base:'',                          model:'',                      needsKey:true},
+};
+function aiCfg(){return store.get('aiModel',{provider:'local',key:'',model:'',base:''})}
+function setAiCfg(patch){store.set('aiModel',Object.assign(aiCfg(),patch))}
+function resolveLLM(){ // → {base,key,model} sent with each summary/ask request
+  const c=aiCfg(),p=AI_PROVIDERS[c.provider]||AI_PROVIDERS.local;
+  return {base:(c.provider==='custom'?c.base:p.base)||p.base, key:p.needsKey?(c.key||''):'', model:c.model||p.model};
+}
+function aiRow(label,hint,ctl){
+  const row=document.createElement('div');row.className='srow';
+  const lab=document.createElement('div');lab.className='slabel';
+  lab.innerHTML=`<div class="l">${label}</div>`+(hint?`<div class="h">${hint}</div>`:'');
+  const c=document.createElement('div');c.className='sctl';if(ctl)c.append(ctl);
+  row.append(lab,c);return row;
+}
+function aiInput(type,val,ph,onset){
+  const i=document.createElement('input');i.type=type;i.className='sel';i.style.minWidth='260px';
+  i.placeholder=ph;i.value=val||'';i.onchange=()=>onset(i.value.trim());return i;
+}
+function renderAIModel(body){
+  const c=aiCfg(),p=AI_PROVIDERS[c.provider]||AI_PROVIDERS.local;
+  const sel=document.createElement('select');sel.className='sel';
+  for(const [k,v] of Object.entries(AI_PROVIDERS)) sel.add(new Option(v.label,k,false,k===c.provider));
+  sel.onchange=()=>{setAiCfg({provider:sel.value});renderSettings()};
+  body.append(aiRow('Model','Where post-call summaries &amp; “ask” run',sel));
+  if(!p.needsKey){ body.append(aiRow('Privacy','Runs on your Mac via LiteRT-LM — nothing leaves the machine. Starts on demand, unloads when idle.',null)); return; }
+  if(c.provider==='custom') body.append(aiRow('Base URL','OpenAI-compatible endpoint',aiInput('text',c.base,'https://…/v1',v=>setAiCfg({base:v}))));
+  body.append(aiRow('API key',(p.keyUrl?`Stored locally on this device · get one at ${p.keyUrl}`:'Stored locally on this device'),aiInput('password',c.key,'sk-…',v=>setAiCfg({key:v}))));
+  body.append(aiRow('Model name',(p.model?`Default: ${p.model}`:''),aiInput('text',c.model,p.model||'model',v=>setAiCfg({model:v}))));
+}
+
 let curTab=0;
 function renderSettings(){
   const tabs=$('#setTabs');tabs.innerHTML='';
   SETTINGS.forEach(([g],i)=>{const b=document.createElement('button');b.className='subtab'+(i===curTab?' on':'');b.textContent=g;
     b.onclick=()=>{curTab=i;renderSettings()};tabs.append(b)});
   const body=$('#setBody');body.innerHTML='';
+  if(SETTINGS[curTab][0]==='AI Model'){ renderAIModel(body); return; }
   for(const f of SETTINGS[curTab][1]) body.append(settingRow(f));
   if(['Dictation','Writing Assistant'].includes(SETTINGS[curTab][0])){
     const n=document.createElement('div');n.className='note';n.textContent='Model-specific settings appear here based on the model you choose.';body.append(n);
@@ -535,7 +574,7 @@ function fillSummary(top, id, summary){
 async function genSummary(top,id){
   const b=top.querySelector('.linkbtn'); if(b){ b.disabled=true; b.textContent='Generating…'; }
   try{
-    const r=await fetch('/api/meetings/'+id+'/summary',{method:'POST'});
+    const r=await fetch('/api/meetings/'+id+'/summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm:resolveLLM()})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
     fillSummary(top,id,j.summary);
   }catch(e){
@@ -554,7 +593,7 @@ async function askMeeting(card,id,q){
   const ad=document.createElement('div'); ad.className='a spin'; ad.textContent='Thinking…';
   item.append(qd,ad); qa.append(item);
   try{
-    const r=await fetch('/api/meetings/'+id+'/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
+    const r=await fetch('/api/meetings/'+id+'/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,llm:resolveLLM()})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
     ad.className='a'; ad.textContent=j.answer;
   }catch(e){ ad.className='a sum-err'; ad.textContent="Couldn't answer — set up a model in Settings → AI Model."; }

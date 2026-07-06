@@ -5,6 +5,7 @@
 // No dependencies. Open http://localhost:8787
 const http = require("http");
 const fs = require("fs");
+const net = require("net");
 const path = require("path");
 const { spawn } = require("child_process");
 
@@ -83,21 +84,64 @@ function readMeeting(id) {
 }
 
 // ---- LLM backend (local-first) -----------------------------------------------
-// One OpenAI-compatible client serves all tiers: local LiteRT-LM (`litert-lm serve`, Gemma 4 E2B)
-// and the API tier (Groq / OpenAI / Cerebras). Config via env; later, the Settings "AI Model".
-//   LLM_BASE (default local LiteRT-LM :9379), LLM_KEY (API tier), LLM_MODEL.
-async function chat(messages, opts = {}) {
-  const base = (process.env.LLM_BASE || "http://127.0.0.1:9379/v1").replace(/\/$/, "");
-  const key = process.env.LLM_KEY || "";
-  const model = process.env.LLM_MODEL || "local";
-  const r = await fetch(base + "/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(key ? { Authorization: "Bearer " + key } : {}) },
-    body: JSON.stringify({ model, messages, temperature: opts.temperature ?? 0.3, max_tokens: opts.maxTokens ?? 700, stream: false }),
+// One OpenAI-compatible client serves every tier. The UI (Settings → AI Model) sends the chosen
+// { base, key, model } per request; the LLM_* env vars are the fallback default.
+//   Local = LiteRT-LM (Gemma 4 E2B) on 127.0.0.1:9379 — started ON DEMAND (first summary/ask), so it
+//           never competes with Whisper for RAM during a call, and unloads after LLM_IDLE_MS idle.
+//   API   = any OpenAI-compatible provider (Groq / OpenAI / Cerebras …) via a user-supplied key.
+const LLM_LOCAL = "http://127.0.0.1:" + (process.env.LLM_PORT || "9379"); // on-device server origin
+const LLM_IDLE_MS = 5 * 60 * 1000;
+let llmProc = null, llmIdle = null; // the LiteRT-LM child WE started (null if already up / not ours)
+const isLocal = (base) => base.startsWith(LLM_LOCAL);
+
+function portOpen(host, port, ms = 800) {
+  return new Promise((res) => {
+    const s = net.connect(port, host);
+    const done = (ok) => { s.destroy(); res(ok); };
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
+    s.setTimeout(ms, () => done(false));
   });
-  if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 160)}`);
-  const j = await r.json();
-  return (j.choices?.[0]?.message?.content || "").trim();
+}
+// Ensure the on-device LLM is listening; spawn `litert-lm serve` and wait for it if not.
+async function ensureLocalLLM(base) {
+  const u = new URL(base), port = +u.port || 80;
+  if (await portOpen(u.hostname, port)) return; // already up (run.sh / user / a previous request)
+  if (!llmProc) {
+    const bin = process.env.LITERT_BIN || path.join(process.env.HOME || "", ".local/bin/litert-lm");
+    if (!fs.existsSync(bin)) throw new Error("on-device model not set up — run ./setup.sh, or pick an API model in Settings");
+    llmProc = spawn(bin, ["serve", "--host", u.hostname, "--port", String(port)], { stdio: "ignore" });
+    llmProc.on("exit", () => { llmProc = null; });
+  }
+  for (let i = 0; i < 90; i++) { if (await portOpen(u.hostname, port)) return; await new Promise((r) => setTimeout(r, 1000)); }
+  throw new Error("on-device LLM did not start");
+}
+function touchLLM() { // unload our LLM after idle so it doesn't hold ~1 GB between calls
+  if (!llmProc) return;
+  clearTimeout(llmIdle);
+  llmIdle = setTimeout(() => { if (llmProc) { llmProc.kill(); llmProc = null; } }, LLM_IDLE_MS);
+}
+["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => { if (llmProc) llmProc.kill(); process.exit(0); }));
+process.on("exit", () => { if (llmProc) llmProc.kill(); });
+
+async function chat(messages, opts = {}) {
+  const llm = opts.llm || {};
+  const base = (llm.base || process.env.LLM_BASE || LLM_LOCAL + "/v1").replace(/\/$/, "");
+  const key = llm.key || process.env.LLM_KEY || "";
+  const model = llm.model || process.env.LLM_MODEL || "local";
+  if (isLocal(base)) await ensureLocalLLM(base);
+  try {
+    const r = await fetch(base + "/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(key ? { Authorization: "Bearer " + key } : {}) },
+      body: JSON.stringify({ model, messages, temperature: opts.temperature ?? 0.3, max_tokens: opts.maxTokens ?? 700, stream: false }),
+    });
+    if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 160)}`);
+    const j = await r.json();
+    return (j.choices?.[0]?.message?.content || "").trim();
+  } finally {
+    if (isLocal(base)) touchLLM();
+  }
 }
 function transcriptText(m, cap = 16000) {
   return m.lines.map(l => `${l.speaker}: ${l.text}`).join("\n").slice(0, cap);
@@ -153,10 +197,13 @@ http.createServer((req, res) => {
   if (msum && req.method === "POST") {
     const one = readMeeting(msum[1]);
     if (!one) { res.writeHead(404); return res.end(); }
-    chat([
-      { role: "system", content: "You summarise meeting transcripts for a busy professional. Be concise, specific, neutral — no preamble." },
-      { role: "user", content: `Summarise this meeting as 3–5 short bullet points, then a line "Action items:" with each as "- <owner>: <task>" (or "None"). Transcript:\n\n${transcriptText(one)}` },
-    ], { maxTokens: 650 }).then(text => {
+    readBody(req).then(b => {
+      let llm; try { llm = JSON.parse(b).llm; } catch {}
+      return chat([
+        { role: "system", content: "You summarise meeting transcripts for a busy professional. Be concise, specific, neutral — no preamble." },
+        { role: "user", content: `Summarise this meeting as 3–5 short bullet points, then a line "Action items:" with each as "- <owner>: <task>" (or "None"). Transcript:\n\n${transcriptText(one)}` },
+      ], { maxTokens: 650, llm });
+    }).then(text => {
       one.summary = text; saveMeeting(one);
       res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ summary: text }));
     }).catch(e => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(e.message || e) })); });
@@ -167,11 +214,11 @@ http.createServer((req, res) => {
     const one = readMeeting(mask[1]);
     if (!one) { res.writeHead(404); return res.end(); }
     readBody(req).then(b => {
-      let q = ""; try { q = JSON.parse(b).question || ""; } catch {}
+      let q = "", llm; try { const j = JSON.parse(b); q = j.question || ""; llm = j.llm; } catch {}
       return chat([
         { role: "system", content: "Answer questions about this meeting using ONLY its transcript. If it isn't covered, say so briefly." },
         { role: "user", content: `Transcript:\n${transcriptText(one)}\n\nQuestion: ${q}` },
-      ], { maxTokens: 500 });
+      ], { maxTokens: 500, llm });
     }).then(text => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ answer: text })); })
       .catch(e => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(e.message || e) })); });
     return;
