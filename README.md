@@ -5,10 +5,11 @@ Agents** in one minimal shell. **Meetings ships first:** real-time transcription
 participants* in any Mac video call (Zoom / Meet / Teams), with speaker names. Whisper runs on the
 Apple GPU — **no bot joins the call, no audio leaves your machine, no meeting-app captions toggle.**
 
-**Status:** the Meetings module works end-to-end — your mic + the other participants, auto-scoped to
-the meeting app, with live speaker names. It runs today in a browser GUI (a minimal light/dark UI); the
-app is headed for a lightweight cross-platform [Tauri](https://tauri.app) shell. The real-time
-**coaching** layer is next — see the [roadmap](#roadmap).
+**Status:** the Meetings module works end-to-end — mic + the other participants, auto-scoped, with live
+speaker names. Every call is **saved on-device** into a browsable history, with **post-call summaries,
+action items, and "ask this meeting"** from an on-device LLM. It runs today in a browser GUI (a minimal
+light/dark UI); the app is headed for a lightweight cross-platform [Tauri](https://tauri.app) shell, and
+real-time in-call **coaching** is the next milestone — see the [roadmap](#roadmap).
 
 ## How it works
 
@@ -33,6 +34,20 @@ app is headed for a lightweight cross-platform [Tauri](https://tauri.app) shell.
 - **Names** — `meeting-state/` reads Zoom's Accessibility tree for the active-speaker name (and
   mute / share state); `server.js` stamps each remote line with who's speaking.
 
+## Post-call AI
+
+Every meeting is recorded to `data/meetings/*.json` (on-device, git-ignored). Open one from the
+**Library** for an AI **summary + action items**, and to **ask questions** about it. The model is
+pluggable across three tiers (Settings → *AI Model*):
+
+- **Local** *(default, private)* — a small on-device model (**Gemma 4 E2B**, q4) via `llama-server` on
+  the Apple GPU; nothing leaves your machine. Fetched by `setup.sh`, served by `run.sh`.
+- **API key** — bring your own, any OpenAI-compatible provider (Groq / OpenAI / Cerebras …) for higher
+  quality. One client covers local + these.
+- **Cloud** — hosted (Pro), later.
+
+Without a model configured, the AI panel simply shows a "set one up" hint — transcription is unaffected.
+
 ## Requirements
 
 - macOS 13+ on Apple Silicon
@@ -41,7 +56,7 @@ app is headed for a lightweight cross-platform [Tauri](https://tauri.app) shell.
 ## Setup
 
 ```bash
-./setup.sh     # installs whisper-cpp, downloads the model (~830 MB), builds the native helpers
+./setup.sh     # installs whisper-cpp + llama.cpp, downloads the models (~4 GB), builds the helpers
 ```
 
 Then grant **your Terminal** these permissions (System Settings → Privacy & Security):
@@ -81,9 +96,11 @@ Zoom/Teams/Webex/FaceTime** window (so a background YouTube tab is ignored) and 
 | `setup.sh` | one-time install (engine + model + build) |
 | `stt/meeting-tap.swift` | ScreenCaptureKit capture + VAD + POST to whisper-server |
 | `stt/whisper/` | Whisper model (git-ignored; fetched by `setup.sh`) |
-| `app/server.js` | caption relay (SSE, `/ingest`) + spawns `meeting-state` |
-| `app/index.html` | the app shell — module nav, live transcript, settings; minimal light/dark UI |
+| `app/server.js` | SSE relay + meeting recording + summary / ask API |
+| `app/index.html` | the app shell — nav, live transcript, Library + detail, settings; light/dark UI |
 | `meeting-state/` | AX layer: speaker names + in-meeting / mute / share |
+| `stt/llm/` | on-device LLM (git-ignored; fetched by `setup.sh`) for post-call AI |
+| `data/meetings/` | saved meeting history (git-ignored, on-device) |
 
 ## Design notes
 
@@ -117,9 +134,11 @@ Zoom/Teams/Webex/FaceTime** window (so a background YouTube tab is ignored) and 
 - [x] Transcribe **your own mic** + **scope capture to the meeting app** (`--app auto`)
 - [x] Speaker **names** from Zoom's AX tree (1-on-1 solid)
 - [x] **App shell** — module nav, settings, minimal **light/dark** UI
-- [ ] **Copilot panel** — real-time coaching + "ask", the transcript fed to Claude (the original goal)
+- [x] **Meeting history** — every call saved on-device; browsable Library + per-meeting detail
+- [x] **Post-call AI** — summary, action items, "ask this meeting" (on-device LLM; API/cloud tiers pluggable)
 - [ ] Wrap in a **Tauri** shell (tray, global shortcuts, invisible-on-screen-share overlay, cross-platform)
-- [ ] Sharper names in **large gallery calls**; in-GUI device pickers
+- [ ] **Real-time Copilot** — in-call coaching in an always-on overlay (needs the Tauri shell first)
+- [ ] Sharper names in **large gallery calls**; in-GUI device pickers; wire the model tiers into Settings
 - [ ] The other modules — **Dictation, Writing Assistant, Agents**
 
 ## License
