@@ -83,11 +83,11 @@ function readMeeting(id) {
 }
 
 // ---- LLM backend (local-first) -----------------------------------------------
-// One OpenAI-compatible client serves all tiers: local llama.cpp (llama-server),
+// One OpenAI-compatible client serves all tiers: local LiteRT-LM (`litert-lm serve`, Gemma 4 E2B)
 // and the API tier (Groq / OpenAI / Cerebras). Config via env; later, the Settings "AI Model".
-//   LLM_BASE  (default local llama-server), LLM_KEY (API tier), LLM_MODEL.
+//   LLM_BASE (default local LiteRT-LM :9379), LLM_KEY (API tier), LLM_MODEL.
 async function chat(messages, opts = {}) {
-  const base = (process.env.LLM_BASE || "http://127.0.0.1:8092/v1").replace(/\/$/, "");
+  const base = (process.env.LLM_BASE || "http://127.0.0.1:9379/v1").replace(/\/$/, "");
   const key = process.env.LLM_KEY || "";
   const model = process.env.LLM_MODEL || "local";
   const r = await fetch(base + "/chat/completions", {
