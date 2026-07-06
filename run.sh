@@ -31,6 +31,20 @@ if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$WHISPER_PORT/" 2>/dev/
   PIDS+=($!)
 fi
 
+# 1.5) local LLM (optional) — llama-server for post-call summaries / "ask", if a model is present.
+#      Downloaded by ./setup.sh into stt/llm/. Skipped silently if absent (AI features just show a hint).
+LLM_PORT="${LLM_PORT:-8092}"
+LLM_MODEL="$(ls "$ROOT/stt/llm/"*.gguf 2>/dev/null | head -1)"
+LLAMA_BIN="$(command -v llama-server || true)"
+if [ -n "$LLM_MODEL" ] && [ -n "$LLAMA_BIN" ]; then
+  export LLM_BASE="http://127.0.0.1:$LLM_PORT/v1"   # app/server.js reads this
+  if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$LLM_PORT/health" 2>/dev/null; then
+    echo "starting llama-server ($(basename "$LLM_MODEL"), Metal)…"
+    "$LLAMA_BIN" -m "$LLM_MODEL" --host 127.0.0.1 --port "$LLM_PORT" -c 8192 -ngl 99 >/tmp/mt-llm.log 2>&1 &
+    PIDS+=($!)
+  fi
+fi
+
 # 2) GUI + caption relay
 pkill -f 'app/server.js' 2>/dev/null
 PORT="$GUI_PORT" node "$ROOT/app/server.js" --ingest >/tmp/mt-gui.log 2>&1 &

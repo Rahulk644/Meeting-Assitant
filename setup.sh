@@ -9,14 +9,21 @@ MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-
 command -v swiftc >/dev/null || { echo "Xcode Command Line Tools required: xcode-select --install"; exit 1; }
 command -v brew   >/dev/null || { echo "Homebrew required: https://brew.sh"; exit 1; }
 
-echo "1/3  Whisper engine (whisper-server via Homebrew)…"
+echo "1/4  Speech + LLM engines (whisper-server, llama-server via Homebrew)…"
 command -v whisper-server >/dev/null || brew install whisper-cpp
+command -v llama-server   >/dev/null || brew install llama.cpp
 
-echo "2/3  Whisper model — large-v3-turbo q8_0, ~830 MB…"
+echo "2/4  Whisper model — large-v3-turbo q8_0, ~830 MB…"
 mkdir -p "$MODEL_DIR"
 [ -f "$MODEL" ] || curl -L --fail --progress-bar -o "$MODEL" "$MODEL_URL"
 
-echo "3/3  Building native helpers (Swift)…"
+echo "3/4  Post-call AI model — Gemma 4 E2B q4_0 (~3.1 GB, on-device summaries & 'ask')…"
+LLM_DIR="$ROOT/stt/llm"; mkdir -p "$LLM_DIR"
+LLM_MODEL="$LLM_DIR/gemma-4-E2B_q4_0-it.gguf"
+[ -f "$LLM_MODEL" ] || curl -L --fail --progress-bar -o "$LLM_MODEL" \
+  "https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf"
+
+echo "4/4  Building native helpers (Swift)…"
 ( cd "$ROOT/stt" && swiftc -O -target arm64-apple-macos13.0 meeting-tap.swift -o meeting-tap \
     -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist )

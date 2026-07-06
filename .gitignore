@@ -2,6 +2,9 @@
 stt/whisper/*.bin
 stt/whisper/bin/
 
+# Local LLM model for post-call AI — downloaded by ./setup.sh
+stt/llm/*.gguf
+
 # Native build artifacts — built by ./setup.sh
 stt/meeting-tap
 meeting-state/meeting-state
@@ -16,3 +19,6 @@ node_modules/
 # Runtime logs / scratch
 *.log
 /tmp/mt-*.log
+
+# Saved meetings (local history)
+/data/
