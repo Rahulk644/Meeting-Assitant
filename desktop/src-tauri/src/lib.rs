@@ -3,7 +3,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use tauri::{
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     Manager,
 };
@@ -20,6 +20,14 @@ fn ensure_gui_server() {
     let _ = Command::new("node").arg(server).spawn();
 }
 
+// Hide/show the window from screen-share & screenshots — NSWindow.sharingType = .none on macOS,
+// WDA_EXCLUDEFROMCAPTURE on Windows. Still fully visible to the user. Called from the UI
+// (Settings → Privacy → Invisible to screen-share).
+#[tauri::command]
+fn set_stealth(window: tauri::WebviewWindow, on: bool) -> Result<(), String> {
+    window.set_content_protected(on).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -34,30 +42,24 @@ pub fn run() {
 
             ensure_gui_server();
 
-            // Menu-bar tray: show / hide / stealth / quit.
+            // Verification/testing hook: launch with ASSISTANT_STEALTH=1 to start hidden from capture.
+            if std::env::var("ASSISTANT_STEALTH").is_ok() {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_content_protected(true);
+                }
+            }
+
+            // Menu-bar tray: show / hide / quit. (Stealth lives in Settings → Privacy.)
             let show = MenuItem::with_id(app, "show", "Show Assistant", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
-            // Keystone for the future Copilot: hide the window from screen-share / screenshots
-            // (NSWindow.sharingType = .none on macOS, WDA_EXCLUDEFROMCAPTURE on Windows) while it stays
-            // fully visible to you. Off by default here; the Copilot overlay will default it on.
-            let stealth = CheckMenuItem::with_id(
-                app,
-                "stealth",
-                "Stealth · hide from screen share",
-                true,
-                false,
-                None::<&str>,
-            )?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Assistant", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &hide, &stealth, &sep, &quit])?;
-
-            let stealth_h = stealth.clone();
+            let menu = Menu::with_items(app, &[&show, &hide, &sep, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .tooltip("Assistant")
-                .on_menu_event(move |app, event| match event.id.as_ref() {
+                .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.show();
@@ -69,14 +71,6 @@ pub fn run() {
                             let _ = w.hide();
                         }
                     }
-                    "stealth" => {
-                        // CheckMenuItem toggles its own tick on click; mirror it onto the window.
-                        if let (Some(w), Ok(on)) =
-                            (app.get_webview_window("main"), stealth_h.is_checked())
-                        {
-                            let _ = w.set_content_protected(on);
-                        }
-                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -84,6 +78,7 @@ pub fn run() {
 
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![set_stealth])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

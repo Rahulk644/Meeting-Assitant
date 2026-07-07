@@ -18,13 +18,15 @@ start it the usual way first, then launch the shell:
 cd desktop && npm run dev   # native window (Rust compiles on first run, ~1 min)
 ```
 
-Tray → **Stealth** toggles screen-share invisibility (off by default). Tray → **Quit** exits.
+**Settings → Privacy → "Invisible to screen-share"** toggles content protection (off by default) —
+the window stays visible to you but is excluded from screenshots and shared screens. Tray → **Quit** exits.
 
 Prereqs: [Rust](https://rustup.rs) and Node. Run `npm install` in `desktop/` once for the Tauri CLI.
 
 ## Status
 
-- [x] Native window hosting the UI · menu-bar tray · stealth (content protection)
+- [x] Native window hosting the UI · menu-bar tray · Snaply-style no-scroll **Settings** modal
+- [x] **Screen-share stealth** — Settings toggle → `set_stealth` command; verified (capture refused on macOS 26)
 - [ ] App starts the whole stack as sidecars (today `run.sh` still runs capture)
 - [ ] Migrate the Screen-Recording grant onto the signed `.app` (dev rebuilds churn the TCC grant)
 - [ ] Global shortcut · launch-at-login · packaged installers · the invisible Copilot overlay

@@ -108,25 +108,45 @@
   .soon .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:20px}
   .chip{background:var(--s1);border:1px solid var(--hair);border-radius:var(--r-md);padding:6px 11px;font-size:12.5px;color:var(--mut)}
 
-  /* ---------- settings ---------- */
-  .subtabs{display:flex;gap:2px;padding:14px 30px 0;border-bottom:1px solid var(--hair);overflow-x:auto}
-  .subtab{padding:8px 12px 13px;color:var(--sub);cursor:pointer;font-size:13px;font-weight:500;
-        border:none;background:none;border-bottom:1.5px solid transparent;white-space:nowrap;margin-bottom:-1px}
-  .subtab:hover{color:var(--ink)}
-  .subtab.on{color:var(--ink);border-bottom-color:var(--pri)}
-  .sgroup{max-width:680px}
-  .srow{display:flex;align-items:center;gap:18px;padding:15px 2px;border-bottom:1px solid var(--hair)}
+  /* ---------- settings modal (Snaply-style · two columns · no scroll) ---------- */
+  .modal-back{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+        background:rgba(16,18,27,.42);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+  .modal-back.on{display:flex;animation:fade .16s ease}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .modal{width:840px;max-width:calc(100vw - 48px);height:544px;max-height:calc(100vh - 40px);display:flex;
+        background:var(--canvas);border:1px solid var(--hair);border-radius:16px;overflow:hidden;
+        box-shadow:0 1px 2px rgba(0,0,0,.05),0 28px 64px -16px rgba(0,0,0,.32);animation:pop .18s cubic-bezier(.2,.7,.2,1)}
+  @keyframes pop{from{opacity:0;transform:scale(.985) translateY(8px)}to{opacity:1;transform:none}}
+  .m-rail{width:212px;flex:0 0 212px;background:var(--side);border-right:1px solid var(--hair);
+        display:flex;flex-direction:column;padding:16px 12px}
+  .m-title{font-weight:600;font-size:14.5px;letter-spacing:-0.02em;padding:6px 10px 14px}
+  .m-rail nav{display:flex;flex-direction:column;gap:1px}
+  .m-tab{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r-md);color:var(--sub);
+        cursor:pointer;border:none;background:none;text-align:left;font:inherit;font-size:13.5px;font-weight:450;width:100%;transition:.12s}
+  .m-tab svg{width:16px;height:16px;color:var(--ter);flex:0 0 auto}
+  .m-tab:hover{color:var(--ink)}.m-tab:hover svg{color:var(--sub)}
+  .m-tab.on{background:var(--s2);color:var(--ink);font-weight:550}.m-tab.on svg{color:var(--ink)}
+  .m-foot{margin-top:auto;padding:10px;color:var(--ter);font-size:11px;letter-spacing:.02em}
+  .m-main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .m-head{display:flex;align-items:center;justify-content:space-between;padding:20px 22px 10px}
+  .m-head h2{margin:0;font-size:16px;font-weight:600;letter-spacing:-0.02em}
+  .m-x{width:28px;height:28px;border-radius:8px;border:none;background:none;color:var(--sub);cursor:pointer;
+        font-size:13px;display:grid;place-items:center;transition:.12s}
+  .m-x:hover{background:var(--s2);color:var(--ink)}
+  .m-body{flex:1;min-height:0;padding:2px 22px 18px;overflow:hidden}   /* no scroll — content is curated to fit */
+  .srow{display:flex;align-items:center;gap:18px;padding:14px 2px;border-bottom:1px solid var(--hair)}
   .srow:last-child{border-bottom:none}
   .slabel{flex:1;min-width:0}
-  .slabel .l{font-weight:500;font-size:14px}.slabel .h{color:var(--sub);font-size:12.5px;margin-top:2px}
-  .badge{font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--sub);background:var(--s2);
-        border-radius:4px;padding:2px 6px;margin-left:8px;vertical-align:middle}
+  .slabel .l{font-weight:500;font-size:13.5px}.slabel .h{color:var(--sub);font-size:12px;margin-top:3px;line-height:1.45}
+  .badge{font-size:9px;font-weight:600;letter-spacing:.04em;color:var(--sub);background:var(--s2);
+        border-radius:4px;padding:2px 5px;margin-left:8px;vertical-align:middle}
   .sctl{flex:0 0 auto}
   .sw{position:relative;width:38px;height:22px;border-radius:20px;background:var(--s3);cursor:pointer;transition:.15s;border:none}
   .sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:.15s}
   .sw.on{background:var(--pri)}.sw.on::after{left:18px}
   .sw:disabled,.sel:disabled,.btnx:disabled{opacity:.45;cursor:not-allowed}
   .sel{background:var(--s1);color:var(--ink);border:1px solid var(--hair);border-radius:var(--r-md);padding:7px 10px;font:inherit;min-width:150px}
+  .sel:focus{outline:none;border-color:var(--pri-fo)}
   .btnx{background:var(--s1);color:var(--ink);border:1px solid var(--hair);border-radius:var(--r-md);padding:7px 13px;font:inherit;cursor:pointer}
   .btnx:hover:not(:disabled){border-color:var(--hair-2)}
   .seg{display:inline-flex;background:var(--s1);border:1px solid var(--hair);border-radius:var(--r-md);padding:2px;gap:2px}
@@ -134,7 +154,6 @@
   .seg button.on{background:var(--s3);color:var(--ink)}
   .rng{display:flex;align-items:center;gap:12px}.rng input{accent-color:var(--pri)}
   .key{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;background:var(--s1);border:1px solid var(--hair);border-radius:var(--r-sm);padding:5px 9px;color:var(--mut)}
-  .note{color:var(--ter);font-size:12.5px;padding:16px 2px}
   /* meetings module: library / detail panes */
   .mt-pane{flex:1;min-height:0;display:none;flex-direction:column}
   .mt-pane.on{display:flex}
@@ -253,11 +272,21 @@
     <section id="v-share" class="view"></section>
     <section id="v-upgrade" class="view"></section>
 
-    <section id="v-settings" class="view">
-      <div class="vhead"><h1>Settings</h1><p>Items marked <span class="badge">DESKTOP</span> activate in the installed app.</p></div>
-      <div class="subtabs" id="setTabs"></div>
-      <div class="pad"><div class="sgroup" id="setBody"></div></div>
-    </section>
+  </div>
+
+  <!-- Settings modal (Snaply-style) -->
+  <div class="modal-back" id="settingsModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Settings">
+      <aside class="m-rail">
+        <div class="m-title">Settings</div>
+        <nav id="setTabs"></nav>
+        <div class="m-foot">Assistant · 0.1.0</div>
+      </aside>
+      <section class="m-main">
+        <div class="m-head"><h2 id="setHead">General</h2><button class="m-x" id="setClose" aria-label="Close settings">✕</button></div>
+        <div class="m-body" id="setBody"></div>
+      </section>
+    </div>
   </div>
 </div>
 
@@ -270,9 +299,8 @@ function setView(name){
   (document.getElementById('v-'+name)||{}).classList?.add('on');
   document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('on', n.dataset.view===name));
   try{localStorage.setItem('route',name)}catch{}
-  if(name==='settings') renderSettings();
 }
-document.querySelectorAll('.nav[data-view]').forEach(n=> n.onclick=()=>setView(n.dataset.view));
+document.querySelectorAll('.nav[data-view]').forEach(n=> n.onclick=()=> n.dataset.view==='settings' ? openSettings() : setView(n.dataset.view));
 
 /* ---------- theme (light default · dark · system) ---------- */
 function effTheme(m){return m==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):m}
@@ -309,63 +337,37 @@ placeholder('guide','Guide','Get the most out of Assistant.',['Getting started',
 placeholder('share','Share with a friend','Spread the word.',['Copy invite link']);
 placeholder('upgrade','Upgrade to Pro','Cloud sync, bigger models, team features.',['Cloud audio','Deeper reasoning','Priority support']);
 
+const SI={
+  general:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="2" y1="14" x2="6" y2="14"/><line x1="10" y1="8" x2="14" y2="8"/><line x1="18" y1="16" x2="22" y2="16"/></svg>',
+  privacy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  ai:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/></svg>',
+  meet:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
+  about:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+};
 const SETTINGS=[
-  ['General',[
+  ['General', SI.general, [
     ['appearance','Appearance','Light, dark, or follow the system','theme',['Light','Dark','System']],
-    ['micDevice','Microphone','','select',['System Default'],1],
-    ['appLang','Application Language','','select',['English']],
-    ['permissions','Permissions','Screen Recording · Microphone · Accessibility','action','Review'],
-    ['appUpdates','App updates','','toggle',true,1],
-    ['version','Version','','info','0.1.0 · meetings'],
-    ['startLogin','Start at Login','','toggle',false,1],
-    ['startHidden','Start hidden','','toggle',false,1],
-    ['overlayType','Overlay type','','select',['Bar','Pill','Off'],1],
-    ['trayIcon','Show tray icon','','toggle',true,1],
-    ['overlayPos','Overlay position','','select',['Top','Bottom','Follow cursor'],1],
+    ['appLang','Language','','select',['English']],
+    ['startLogin','Launch at login','','toggle',false,1],
+    ['startHidden','Start hidden in the tray','','toggle',false,1],
+    ['trayIcon','Show menu-bar icon','','toggle',true,1],
   ]],
-  ['AI Model',[]], // rendered by renderAIModel()
-  ['Advanced',[
-    ['unloadModel','Unload Model','Free the ~1 GB of RAM the model holds','action','Unload'],
-    ['logDir','Log Directory','','action','Open'],
-    ['support','Support Creator','','action','Open'],
-    ['whatsNew',"Show what's new",'','toggle',true],
+  ['Privacy', SI.privacy, [
+    ['stealth','Invisible to screen-share','Hide this window from screen recordings & shared screens','stealth',false],
+    ['micDevice','Microphone','Input device for your voice','select',['System Default']],
+    ['permissions','Permissions','Screen Recording · Microphone · Accessibility','action','Review',1],
   ]],
-  ['Experimental',[
-    ['expNone','Nothing here yet','Experimental flags will appear here','info','—'],
+  ['AI Model', SI.ai, []],   // rendered by renderAIModel()
+  ['Meetings', SI.meet, [
+    ['mTemplate','Notes template','Layout for summaries & notes','select',['Fathom','Snaply','Fireflies','Zoom']],
+    ['mAutoDetect','Auto-detect meetings','Start & end on Zoom, Meet, Teams…','toggle',true],
+    ['mReason','Deeper reasoning','Slower, higher-quality summaries','toggle',false],
+    ['mAudioGB','Audio storage','Local cap, GB (cloud sync = Pro)','slider',[1,100,10]],
   ]],
-  ['Meetings',[
-    ['mSource','Source','Where meetings & notes come from','seg',['Fathom','Local','Google Calendar'],0,'Local'],
-    ['mFolders','Organise meetings into custom folders','','toggle',false],
-    ['mTemplate','Meeting Notes Template','','select',['Fathom','Snaply','Fireflies','Zoom']],
-    ['mLive','Display live indicator','','toggle',true],
-    ['mAutoDetect','Detect meeting start & end automatically','Zoom, Google Meet, Teams + supported apps','toggle',true],
-    ['mReason','Deeper reasoning for meeting notes','Slower, higher-quality summaries','toggle',false],
-    ['mAudioGB','Audio Storage','Local cap in GB (cloud = Pro)','slider',[1,100,10]],
-  ]],
-  ['Writing Assistant',[
-    ['wSelect','Show on text selection','','toggle',true,1],
-    ['wNonEdit','Show on non-editable text','','toggle',false,1],
-    ['wTrans','Default translation language','','select',['English','Hindi','Spanish','French']],
-    ['wModes','Assistant Modes','Grammar · Polish · Translate · Custom','action','Manage'],
-    ['wShortcut','Shortcut','','key','⌥ Space',1],
-    ['wClose','Close key','','key','Esc',1],
-  ]],
-  ['Dictation',[
-    ['dLang','Language','','select',['Auto','English','Hindi','Hinglish']],
-    ['dVocab','Custom Vocab','','action','Manage'],
-    ['dSnip','Snippets','','action','Manage'],
-    ['dPunct','Punctuation Behaviour','','select',['Auto','Spoken','Off']],
-    ['dClip','Clipboard Behaviour','','select',['Paste','Copy only']],
-    ['dSound','Dictation sound','','toggle',true],
-    ['dDelete','Auto delete recordings','','select',['Never','After 1 day','After 7 days','After 30 days']],
-    ['dPTT','Push to talk','','toggle',false,1],
-    ['dWidget','Floating widget','','toggle',true,1],
-    ['dHideDock','Hide from dock','','toggle',false,1],
-    ['dPause','Auto-Pause Audio','Pause other output while recording','toggle',false,1],
-    ['dStart','Start / Stop dictation','','key','⌥ D',1],
-    ['dCancel','Cancel Shortcut','','key','Esc',1],
-    ['dMute','Mute system audio while recording','','toggle',false,1],
-    ['dVol','Volume','','slider',[0,100,80]],
+  ['About', SI.about, [
+    ['version','Version','','info','0.1.0 · Meetings'],
+    ['appUpdates','Automatic updates','','toggle',true,1],
+    ['support','Support the creator','','action','Open',1],
   ]],
 ];
 const store={get(k,d){try{const v=localStorage.getItem('set.'+k);return v==null?d:JSON.parse(v)}catch{return d}},
@@ -409,17 +411,24 @@ function renderAIModel(body){
 }
 
 let curTab=0;
+function openSettings(){ const m=$('#settingsModal'); m.hidden=false; m.classList.add('on'); renderSettings(); }
+function closeSettings(){ const m=$('#settingsModal'); m.classList.remove('on'); m.hidden=true; }
 function renderSettings(){
   const tabs=$('#setTabs');tabs.innerHTML='';
-  SETTINGS.forEach(([g],i)=>{const b=document.createElement('button');b.className='subtab'+(i===curTab?' on':'');b.textContent=g;
-    b.onclick=()=>{curTab=i;renderSettings()};tabs.append(b)});
+  SETTINGS.forEach(([g,icon],i)=>{const b=document.createElement('button');b.className='m-tab'+(i===curTab?' on':'');
+    b.innerHTML=icon+'<span>'+g+'</span>';b.onclick=()=>{curTab=i;renderSettings()};tabs.append(b)});
+  $('#setHead').textContent=SETTINGS[curTab][0];
   const body=$('#setBody');body.innerHTML='';
   if(SETTINGS[curTab][0]==='AI Model'){ renderAIModel(body); return; }
-  for(const f of SETTINGS[curTab][1]) body.append(settingRow(f));
-  if(['Dictation','Writing Assistant'].includes(SETTINGS[curTab][0])){
-    const n=document.createElement('div');n.className='note';n.textContent='Model-specific settings appear here based on the model you choose.';body.append(n);
-  }
+  for(const f of SETTINGS[curTab][2]) body.append(settingRow(f));
 }
+$('#setClose').onclick=closeSettings;
+$('#settingsModal').addEventListener('click',e=>{ if(e.target.id==='settingsModal') closeSettings(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape' && !$('#settingsModal').hidden) closeSettings(); });
+
+/* native (Tauri) bridge — stealth hides the window from screen-share / screenshots */
+function isTauri(){ return !!(window.__TAURI__ && window.__TAURI__.core); }
+async function setStealth(on){ try{ await window.__TAURI__.core.invoke('set_stealth',{on}); }catch(e){} }
 function settingRow([key,label,hint,type,opt,desktop,def]){
   const row=document.createElement('div');row.className='srow';
   const lab=document.createElement('div');lab.className='slabel';
@@ -428,6 +437,12 @@ function settingRow([key,label,hint,type,opt,desktop,def]){
   if(type==='toggle'){
     const sw=document.createElement('button');sw.className='sw'+(store.get(key,opt)?' on':'');sw.disabled=dis;
     sw.onclick=()=>{const v=!sw.classList.contains('on');sw.classList.toggle('on',v);store.set(key,v)};ctl.append(sw);
+  }else if(type==='stealth'){
+    const native=isTauri();
+    const sw=document.createElement('button');sw.className='sw'+(native&&store.get(key,false)?' on':'');sw.disabled=!native;
+    sw.onclick=()=>{const v=!sw.classList.contains('on');sw.classList.toggle('on',v);store.set(key,v);setStealth(v)};
+    ctl.append(sw);
+    if(!native) lab.querySelector('.l').insertAdjacentHTML('beforeend','<span class="badge">DESKTOP</span>');
   }else if(type==='select'){
     const sel=document.createElement('select');sel.className='sel';sel.disabled=dis;const cur=store.get(key,opt[0]);
     opt.forEach(o=>sel.add(new Option(o,o,false,o===cur)));sel.onchange=()=>store.set(key,sel.value);ctl.append(sel);
@@ -604,8 +619,9 @@ es.onerror=()=>{connEl.textContent='reconnecting…';connEl.className=''};
 es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
   if(m.type==='state'&&m.state)onState(m.state);else if(m.type==='caption')addCaption(m)};
 
-setView((()=>{try{return localStorage.getItem('route')||'meetings'}catch{return 'meetings'}})());
+setView((()=>{try{const r=localStorage.getItem('route');return (r&&r!=='settings')?r:'meetings'}catch{return 'meetings'}})());
 mtShow('library');   // populate the meetings library on load (auto-switches to live when a call starts)
+if(isTauri() && store.get('stealth',false)) setStealth(true);   // re-apply saved stealth on launch
 </script>
 </body>
 </html>
