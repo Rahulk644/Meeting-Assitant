@@ -56,7 +56,7 @@ function finalizeMeeting() {
 // detection poll) must NOT end the call and split it into a second meeting. Only a sustained absence
 // finalizes; if inMeeting comes back within the grace window, it's the same meeting.
 let finalizeTimer = null;
-const FINALIZE_GRACE_MS = 45000;
+const FINALIZE_GRACE_MS = 15000; // brief drops only — the capturer now also detects the call while you screen-share
 function scheduleFinalize() { if (!finalizeTimer && cur) finalizeTimer = setTimeout(() => { finalizeTimer = null; finalizeMeeting(); }, FINALIZE_GRACE_MS); }
 function cancelFinalize() { if (finalizeTimer) { clearTimeout(finalizeTimer); finalizeTimer = null; } }
 function record(obj) {
@@ -245,7 +245,11 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/config" && req.method === "POST") { // UI sets the screen-recording mode (off/always/share)
     readBody(req).then(b => {
-      try { const j = JSON.parse(b); if (typeof j.videoMode === "string") broadcast({ type: "state", state: { videoMode: j.videoMode } }); } catch {}
+      try {
+        const j = JSON.parse(b);
+        if (typeof j.videoMode === "string") broadcast({ type: "state", state: { videoMode: j.videoMode } });
+        if (typeof j.translate === "boolean") broadcast({ type: "state", state: { translate: j.translate } });
+      } catch {}
       res.writeHead(204); res.end();
     });
     return;

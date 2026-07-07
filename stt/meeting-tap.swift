@@ -279,8 +279,12 @@ func writeWav16(_ samples: [Float], to url: URL) {
 // Ask whisper-server for verbose_json → (full text, mean per-word confidence). Whisper reports a
 // probability per word; averaged, it separates real speech (~0.9) from noise/hallucination (low).
 func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
-    // language=auto → Whisper detects the spoken language; translate=true → output is always English.
-    let out = curl(["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json", "-F", "language=auto", "-F", "translate=true"])
+    // language=auto → Whisper detects the language and TRANSCRIBES it (accurate, incl. Hinglish code-switching).
+    // translate is OFF by default (Settings toggle): forcing English garbles code-switched speech and misfires
+    // language detection (the "کن کن کن" hallucination). Matches how Handy runs Whisper.
+    var args = ["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json", "-F", "language=auto"]
+    if curTranslate { args += ["-F", "translate=true"] }
+    let out = curl(args)
     guard let data = out.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
     let text = (obj["text"] as? String) ?? ""
@@ -441,15 +445,15 @@ func postRecording(_ file: String, _ startedAt: Int) {
 }
 
 let cap = Capture()
-var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0
+var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = false
 // Poll the server ONLY for UI-set config (video mode + share state). inMeeting is SELF-DETECTED below.
-func fetchConfig() -> (sharing: Bool, videoMode: String) {
+func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool) {
     let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
     guard let d = out.data(using: .utf8),
           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
-        return (curSharing, curVideoMode)
+        return (curSharing, curVideoMode, curTranslate)
     }
-    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0)
+    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? false)
 }
 // Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
 // capture needs anyway), NOT Accessibility. A native meeting app showing its in-call window = we're in a
@@ -467,7 +471,11 @@ func detectMeetingApp(_ done: @escaping (String?) -> Void) {
         for w in (content?.windows ?? []) {
             guard let bid = w.owningApplication?.bundleIdentifier, NATIVE_MEETING.contains(bid) else { continue }
             let t = (w.title ?? "").lowercased()
-            let inCall = (bid == "us.zoom.xos") ? t.contains("zoom meeting") : t.contains("meeting")
+            // Zoom hides the "Zoom Meeting" window while YOU screen-share, leaving the floating video /
+            // share-statusbar windows — match those too, so sharing doesn't read as "call ended".
+            let inCall = (bid == "us.zoom.xos")
+                ? (t.contains("zoom meeting") || t.contains("floating video") || t.contains("share statusbar"))
+                : t.contains("meeting")
             if inCall { hit = (bid == "us.zoom.xos") ? "zoom" : (bid.hasPrefix("com.microsoft.teams") ? "teams" : "call"); break }
         }
         done(hit)
@@ -489,7 +497,7 @@ func setInCall(_ app: String?) {
 }
 func tick() {
     let cfg = fetchConfig()
-    curSharing = cfg.sharing; curVideoMode = cfg.videoMode
+    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate
     cap.updateShare()
     if !GATE { setInCall("call"); return }                   // --gate off: always capture
     detectMeetingApp { app in DispatchQueue.main.async { setInCall(app) } }
