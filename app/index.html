@@ -168,8 +168,14 @@
   .mcard{display:flex;gap:14px;align-items:center;padding:14px 16px;border:1px solid var(--hair);border-radius:var(--r-lg);
         margin-bottom:8px;cursor:pointer;transition:.12s;background:var(--canvas)}
   .mcard:hover{border-color:var(--hair-2);background:var(--s1)}
-  .mcard .mi{width:40px;height:40px;border-radius:10px;background:var(--s2);display:grid;place-items:center;color:var(--sub);flex:0 0 auto}
+  .mcard .mi{width:44px;height:44px;border-radius:10px;background:var(--s2);display:grid;place-items:center;color:var(--sub);flex:0 0 auto;position:relative;overflow:hidden}
   .mcard .mi svg{width:19px;height:19px}
+  .mcard .mi.logo{background:var(--pri);color:#fff;font-weight:700;font-size:16px}   /* fallback = app logo */
+  .mcard .mthumb{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}  /* screen-recording frame */
+  .det-rename{background:none;border:none;color:var(--ter);cursor:pointer;padding:3px;border-radius:6px;display:inline-flex;vertical-align:middle;margin-left:8px}
+  .det-rename svg{width:15px;height:15px}
+  .det-rename:hover{color:var(--ink);background:var(--s2)}
+  .titleedit{font-size:22px;font-weight:650;border:1px solid var(--pri);border-radius:8px;padding:2px 9px;background:var(--s1);color:var(--ink);max-width:72%}
   .mcard .mb{flex:1;min-width:0}
   .mcard .ct{font-weight:600;font-size:14.5px;letter-spacing:-0.01em;display:flex;align-items:center;gap:8px;min-width:0}
   .mcard .ct .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -293,7 +299,7 @@
       <div class="mt-pane" id="mt-detail">
         <div class="vhead">
           <button class="back" id="detBack">‹ Meetings</button>
-          <h1 id="det-title">Meeting</h1><p id="det-meta"></p>
+          <h1 id="det-title">Meeting</h1><button class="det-rename" id="det-rename" title="Rename meeting" aria-label="Rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button><p id="det-meta"></p>
         </div>
         <section class="feed"><div class="wrap" id="det-wrap"></div></section>
       </div>
@@ -603,7 +609,7 @@ function meetingCard(m){
   const live=m.live?'<span class="livepill"><span class="ld"></span>LIVE</span>':'';
   const notes=m.summarized?`<span class="sumtag">${IC_SPARK}Notes</span>`:'';
   card.innerHTML=
-    `<div class="mi">${IC_VID}</div>
+    `<div class="mi logo">A${m.hasVideo?`<img class="mthumb" src="/api/meetings/${m.id}/thumb" alt="" onerror="this.remove()">`:''}</div>
      <div class="mb">
        <div class="ct"><span class="nm">${esc(m.title)}</span>${live}${notes}</div>
        <div class="cs">${esc(m.snippet||'No transcript captured')}</div>
@@ -613,7 +619,21 @@ function meetingCard(m){
   card.onclick=()=> m.live? mtShow('live') : openMeeting(m.id);
   return card;
 }
+let curMeetingId=null;
+$('#det-rename').onclick=()=>{                                   // inline-edit the meeting title
+  const h=$('#det-title'), old=h.textContent;
+  const inp=document.createElement('input'); inp.className='titleedit'; inp.value=old; inp.maxLength=120;
+  h.replaceWith(inp); inp.focus(); inp.select();
+  let done=false;
+  const finish=(save)=>{ if(done)return; done=true;
+    const t=inp.value.trim(), nh=document.createElement('h1'); nh.id='det-title';
+    nh.textContent=(save&&t)?t:old; inp.replaceWith(nh);
+    if(save&&t&&t!==old&&curMeetingId) fetch('/api/meetings/'+curMeetingId+'/title',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t})}).catch(()=>{});
+  };
+  inp.onblur=()=>finish(true); inp.onkeydown=e=>{ if(e.key==='Enter'){e.preventDefault();inp.blur();} else if(e.key==='Escape'){inp.value=old;inp.blur();} };
+};
 async function openMeeting(id){
+  curMeetingId=id;
   let m; try{ m=await (await fetch('/api/meetings/'+id)).json() }catch{ return }
   $('#det-title').textContent=m.title;
   const when=new Date(m.startedAt).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});

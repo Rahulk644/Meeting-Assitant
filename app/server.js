@@ -7,7 +7,7 @@ const http = require("http");
 const fs = require("fs");
 const net = require("net");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, execFile } = require("child_process");
 
 const DEMO = process.argv.includes("--demo");
 const INGEST = process.argv.includes("--ingest"); // captions arrive via POST /ingest (from meeting-tap)
@@ -17,6 +17,9 @@ let lastState = {}; // so a client connecting mid-meeting gets current title/par
 let msProc = null, msShutdown = false; // meeting-state child + shutdown flag (respawn it if it dies mid-session)
 const MEETINGS_DIR = path.join(__dirname, "..", "data", "meetings");
 const REC_DIR = path.join(MEETINGS_DIR, "rec"); // screen recordings (.mp4), written by meeting-tap
+// Resolve tool paths explicitly — a packaged (GUI-spawned) node has no shell PATH.
+function findBin(name) { for (const d of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) { const p = path.join(d, name); if (fs.existsSync(p)) return p; } return name; }
+const FFMPEG = findBin("ffmpeg"); // for meeting thumbnails from the screen recording
 fs.mkdirSync(REC_DIR, { recursive: true });
 let cur = null; // the in-progress meeting being recorded to disk
 
@@ -51,6 +54,13 @@ function finalizeMeeting() {
   if (cur.lines.length) saveMeeting(cur); // skip empty meetings
   cur = null;
 }
+// Debounce finalize: brief inMeeting=false blips (a screen-share toggle, a view switch, one missed
+// detection poll) must NOT end the call and split it into a second meeting. Only a sustained absence
+// finalizes; if inMeeting comes back within the grace window, it's the same meeting.
+let finalizeTimer = null;
+const FINALIZE_GRACE_MS = 45000;
+function scheduleFinalize() { if (!finalizeTimer && cur) finalizeTimer = setTimeout(() => { finalizeTimer = null; finalizeMeeting(); }, FINALIZE_GRACE_MS); }
+function cancelFinalize() { if (finalizeTimer) { clearTimeout(finalizeTimer); finalizeTimer = null; } }
 function record(obj) {
   if (obj.type === "caption") {
     if (!cur) startMeeting(lastState);
@@ -59,8 +69,8 @@ function record(obj) {
     if (!cur) startMeeting(lastState);
     cur.video = obj.file; saveMeeting(cur); // meeting-tap tells us the call's screen-recording file
   } else if (obj.type === "state" && obj.state) {
-    if (obj.state.inMeeting === false) finalizeMeeting();
-    else if (obj.state.inMeeting === true && !cur) startMeeting(obj.state);
+    if (obj.state.inMeeting === false) scheduleFinalize();          // debounced — a brief drop won't split the call
+    else if (obj.state.inMeeting === true) { cancelFinalize(); if (!cur) startMeeting(obj.state); else updateMeta(obj.state); }
     else updateMeta(obj.state);
   }
 }
@@ -242,6 +252,34 @@ http.createServer((req, res) => {
     if (!one) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(one));
+  }
+  const mtitle = req.url.match(/^\/api\/meetings\/([\w-]+)\/title$/); // rename a meeting
+  if (mtitle && req.method === "POST") {
+    readBody(req).then(b => {
+      let t; try { t = String(JSON.parse(b).title || "").trim().slice(0, 120); } catch {}
+      if (!t) { res.writeHead(400); return res.end(); }
+      if (cur && cur.id === mtitle[1]) { cur.title = t; saveMeeting(cur); }
+      else {
+        const p = path.join(MEETINGS_DIR, mtitle[1] + ".json");
+        if (!fs.existsSync(p)) { res.writeHead(404); return res.end(); }
+        try { const m = JSON.parse(fs.readFileSync(p)); m.title = t; fs.writeFileSync(p, JSON.stringify(m)); } catch { res.writeHead(500); return res.end(); }
+      }
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ title: t }));
+    });
+    return;
+  }
+  const mthumb = req.url.match(/^\/api\/meetings\/([\w-]+)\/thumb$/); // a frame of the screen recording (generated once, cached)
+  if (mthumb && req.method === "GET") {
+    const m = readMeeting(mthumb[1]);
+    if (!m || !m.video) { res.writeHead(404); return res.end(); }
+    const video = path.join(REC_DIR, m.video), thumb = video.replace(/\.\w+$/, ".jpg");
+    const send = () => { res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" }); fs.createReadStream(thumb).pipe(res); };
+    if (fs.existsSync(thumb)) return send();
+    if (!fs.existsSync(video)) { res.writeHead(404); return res.end(); }
+    execFile(FFMPEG, ["-y", "-ss", "1", "-i", video, "-frames:v", "1", "-vf", "scale=480:-1", thumb], () => {
+      if (fs.existsSync(thumb)) send(); else { res.writeHead(404); res.end(); }
+    });
+    return;
   }
   const msum = req.url.match(/^\/api\/meetings\/([\w-]+)\/summary$/);
   if (msum && req.method === "POST") {

@@ -62,7 +62,7 @@ let ME = { let n = NSFullUserName(); return opt("--me", n.isEmpty ? "Me" : n) }(
 let SR = 16000.0
 let SILENCE_HANGOVER = 0.7          // seconds of quiet that ends an utterance
 let MIN_SEG = 0.5                   // ignore blips shorter than this
-let MAX_SEG = 8.0                   // force-flush long speech (lower = snappier captions)
+let MAX_SEG = Double(opt("--max-seg", "4")) ?? 4.0   // force-flush long speech every N s (lower = snappier, less lag)
 
 // Native meeting apps we auto-scope to (browsers excluded on purpose — a browser may just be YouTube).
 let NATIVE_MEETING: Set<String> = [
