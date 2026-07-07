@@ -65,7 +65,7 @@ function meetingSummary(m) {
   return { id: m.id, title: m.title, app: m.app, startedAt: m.startedAt, endedAt: m.endedAt,
            participants: m.participants, lineCount: m.lines.length,
            snippet: ((m.lines.find(l => l.text && l.text.length > 1) || {}).text || "").slice(0, 140),
-           live: m.endedAt == null };
+           summarized: !!m.summary, live: m.endedAt == null };
 }
 function listMeetings() {
   const out = [];
