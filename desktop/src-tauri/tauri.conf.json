@@ -11,7 +11,6 @@
     "windows": [
       {
         "label": "main",
-        "url": "http://localhost:8790/",
         "title": "Assistant",
         "width": 1120,
         "height": 720,
