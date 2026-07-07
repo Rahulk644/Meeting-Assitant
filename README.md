@@ -8,8 +8,9 @@ Apple GPU — **no bot joins the call, no audio leaves your machine, no meeting-
 **Status:** the Meetings module works end-to-end — mic + the other participants, auto-scoped, with live
 speaker names. Every call is **saved on-device** into a browsable history, with **post-call summaries,
 action items, and "ask this meeting"** from an on-device LLM. It runs today in a browser GUI (a minimal
-light/dark UI); the app is headed for a lightweight cross-platform [Tauri](https://tauri.app) shell, and
-real-time in-call **coaching** is the next milestone — see the [roadmap](#roadmap).
+light/dark UI) and now also in a native, cross-platform [Tauri](https://tauri.app) shell — a real window
+with a menu-bar tray and **screen-share stealth** (`desktop/`). Real-time in-call **coaching** is the
+next milestone — see the [roadmap](#roadmap).
 
 ## How it works
 
@@ -104,6 +105,7 @@ Zoom/Teams/Webex/FaceTime** window (so a background YouTube tab is ignored) and 
 | `meeting-state/` | AX layer: speaker names + in-meeting / mute / share |
 | `stt/llm/` | on-device LLM (git-ignored; fetched by `setup.sh`) for post-call AI |
 | `data/meetings/` | saved meeting history (git-ignored, on-device) |
+| `desktop/` | Tauri desktop shell — native window + menu-bar tray + screen-share stealth |
 
 ## Design notes
 
@@ -140,8 +142,9 @@ Zoom/Teams/Webex/FaceTime** window (so a background YouTube tab is ignored) and 
 - [x] **Meeting history** — every call saved on-device; browsable Library + per-meeting detail
 - [x] **Post-call AI** — summary, action items, "ask this meeting" (on-device LLM; API/cloud tiers pluggable)
 - [x] **AI Model picker** in Settings — choose on-device (LiteRT-LM, started on demand) or a BYO-key API provider
-- [ ] Wrap in a **Tauri** shell (tray, global shortcuts, invisible-on-screen-share overlay, cross-platform)
-- [ ] **Real-time Copilot** — in-call coaching in an always-on overlay (needs the Tauri shell first)
+- [x] **Desktop shell (Tauri)** — native window hosting the UI, menu-bar tray, screen-share **stealth** (`desktop/`)
+- [ ] Desktop, cont. — app-managed sidecars, migrate the capture grant onto the signed app, global shortcut + launch-at-login, packaged installers
+- [ ] **Real-time Copilot** — in-call coaching in an always-on **stealth** overlay (built on the shell above)
 - [ ] Sharper names in **large gallery calls**; in-GUI device pickers
 - [ ] The other modules — **Dictation, Writing Assistant, Agents**
 
