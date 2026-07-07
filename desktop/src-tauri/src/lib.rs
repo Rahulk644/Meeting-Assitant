@@ -38,9 +38,6 @@ fn port_open(port: u16) -> bool {
         .and_then(|a| TcpStream::connect_timeout(&a, Duration::from_millis(300)).ok())
         .is_some()
 }
-fn is_running(name: &str) -> bool {
-    Command::new("/usr/bin/pgrep").arg("-f").arg(name).output().map(|o| o.status.success()).unwrap_or(false)
-}
 
 // Bring up the on-device stack. The Node GUI/relay server is always needed for the UI (it also spawns
 // meeting-state for names + in-call detection). whisper-server + the capturer are the transcription
@@ -66,11 +63,12 @@ fn start_stack() {
         }
     }
     let tap = format!("{}/stt/meeting-tap", REPO);
-    if Path::new(&tap).exists() && !is_running("meeting-tap") {
+    if Path::new(&tap).exists() {
         let recdir = format!("{}/data/meetings/rec", REPO);
+        let log = std::fs::File::create("/tmp/assistant-tap.log").map(Stdio::from).unwrap_or_else(|_| Stdio::null());
         track(Command::new(tap)
             .args(["8790", "http://127.0.0.1:8091/inference", "--gate", "on", "--rec-dir", &recdir])
-            .stdout(Stdio::null()).stderr(Stdio::null()).spawn());
+            .stdout(Stdio::null()).stderr(log).spawn());
     }
 }
 
