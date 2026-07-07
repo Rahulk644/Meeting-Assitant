@@ -7,6 +7,9 @@
 #
 # Captures YOU (mic) + the other participants (meeting-app audio) → Whisper (Metal GPU) → live GUI.
 # Auto-scopes to a running Zoom/Teams/Webex/FaceTime window so background audio isn't transcribed.
+# Capture is GATED: the mic + system taps run ONLY while you're actually in a call (--gate on, default)
+# and are released otherwise — so your mic isn't held when you're idle. Pass --gate off to always
+# capture (e.g. Google Meet, which the Accessibility layer can't detect).
 # No captions toggle, multilingual, fully on-device. Flags after ./run.sh pass through to the capturer.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -182,6 +182,10 @@ http.createServer((req, res) => {
     req.on("close", () => clients.delete(res));
     return;
   }
+  if (req.url === "/api/state" && req.method === "GET") { // meeting-tap polls this to gate capture
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify(lastState || {}));
+  }
   if (req.url === "/api/meetings" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(listMeetings()));
@@ -228,7 +232,8 @@ http.createServer((req, res) => {
 }).listen(PORT, () => {
   console.log(`\n  Live transcript → http://localhost:${PORT}   ${DEMO ? "(demo)" : "(live)"}\n`);
   if (DEMO) { startDemo(); return; }
-  if (INGEST) lastState = { inMeeting: true, title: "Live transcript" }; // captions POST to /ingest
+  // No hard-coded "inMeeting" — meeting-state drives it, so the app is only "live" during a real call
+  // (and meeting-tap, which polls /api/state, only captures then). INGEST just means captions POST in.
   startMeetingState(); // state + active-speaker (names). Harmless if not built yet.
 });
 

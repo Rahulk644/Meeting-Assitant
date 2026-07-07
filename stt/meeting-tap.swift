@@ -19,6 +19,8 @@
 //               (system 0.006, mic 0.02 — the mic is higher because a room is noisier than the feed).
 //   --min-conf 0.5   drop utterances below this mean word-confidence (kills noise hallucinations).
 //   --expressions    keep Whisper's *sigh* / (laughs) cues as [sigh] tags for a sentiment read.
+//   --gate on|off    on (default) captures ONLY while you're in a call (polls the server's meeting-state,
+//                    releasing the mic otherwise); off = always capture (Google Meet — AX can't detect it).
 //   NOTE: use HEADPHONES. On speakers, the mic re-hears the remote voices → duplicate/misattributed
 //         lines. Headphones give a clean split: mic = you, system audio = them.
 //
@@ -50,6 +52,7 @@ let SPEECH_RMS = Float(opt("--rms", "0.006")) ?? 0.006       // system-audio gat
 let MIC_RMS    = Float(opt("--mic-rms", "0.02")) ?? 0.02     // mic gate — higher: a room is noisier than the feed
 let MIN_CONF   = Float(opt("--min-conf", "0.5")) ?? 0.5      // drop utterances below this mean word-confidence
 let EXPRESSIONS = A.contains("--expressions")                // keep *sigh*/(laughs) as [sigh] sentiment cues
+let GATE = opt("--gate", "on") != "off"                      // capture ONLY while in a call (polls /api/state)
 let ME = { let n = NSFullUserName(); return opt("--me", n.isEmpty ? "Me" : n) }()  // shown as "<name> (Me)"
 
 // VAD / segmentation tuning
@@ -78,6 +81,7 @@ final class Segmenter {
         self.speaker = speaker; self.isSelf = isSelf; self.tag = tag; self.threshold = threshold
         self.procQ = DispatchQueue(label: "stt.process.\(tag)")
     }
+    func reset() { seg.removeAll(keepingCapacity: true); inSpeech = false; silentDur = 0 }   // between calls
 
     func feed(_ s: [Float]) {
         guard !s.isEmpty else { return }
@@ -185,6 +189,11 @@ final class Mic {
         do { try engine.start(); err(">> mic capture started (\(Int(inFmt.sampleRate))Hz \(inFmt.channelCount)ch → 16k mono)") }
         catch { err("mic: engine.start failed: \(error) — grant Microphone permission, or --mic off") }
     }
+    func stop() {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        err(">> mic capture stopped (mic released)")
+    }
 }
 
 // MARK: - shared helpers
@@ -283,41 +292,73 @@ func makeFilter(_ display: SCDisplay, _ apps: [SCRunningApplication]) -> SCConte
 
 let sysSeg = Segmenter(speaker: "Speaker", isSelf: false, tag: "sys", threshold: SPEECH_RMS)
 let micSeg = Segmenter(speaker: ME, isSelf: true, tag: "mic", threshold: MIC_RMS)
-var theStream: SCStream?
-var sckOut: SCKOut?
-var mic: Mic?
 
-if MIC_ON { mic = Mic(micSeg); mic?.start() }
-
-SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
-    if let error = error { err("SCShareableContent error: \(error)"); exit(1) }
-    let apps = content?.applications ?? []
-
-    if LIST_APPS {
-        for a in apps.sorted(by: { $0.applicationName.lowercased() < $1.applicationName.lowercased() }) {
+// --list-apps: enumerate capturable apps + bundle ids, then exit.
+if LIST_APPS {
+    SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, _ in
+        for a in (content?.applications ?? []).sorted(by: { $0.applicationName.lowercased() < $1.applicationName.lowercased() }) {
             print("\(a.bundleIdentifier)\t\(a.applicationName)")
         }
         exit(0)
     }
-
-    guard let display = content?.displays.first else { err("no display"); exit(1) }
-    let cfg = SCStreamConfiguration()
-    cfg.capturesAudio = true
-    cfg.excludesCurrentProcessAudio = false   // we play no audio; excluding wedges capture on some states
-    cfg.sampleRate = 16000
-    cfg.channelCount = 1
-    cfg.width = 2; cfg.height = 2
-    cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-    let out = SCKOut(sysSeg); sckOut = out
-    do {
-        let stream = SCStream(filter: makeFilter(display, apps), configuration: cfg, delegate: out)
-        try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio"))
-        theStream = stream
-        stream.startCapture { e in
-            if let e = e { err("startCapture error: \(e)"); exit(1) }
-            err(">> live transcription started (gui:\(guiPort) whisper:\(whisperURL) app:\(APP_SEL) mic:\(MIC_ON) me:\(ME))")
-        }
-    } catch { err("SCStream setup failed: \(error)"); exit(1) }
+    RunLoop.main.run()
 }
+
+// Capture is GATED on being in a real call: the mic + system taps run only while the server's
+// meeting-state reports inMeeting, and are torn down (releasing the mic) otherwise — so nothing is
+// captured when you're not in a meeting. `--gate off` = always capture (Google Meet, which the
+// Accessibility layer can't see).
+final class Capture {
+    var stream: SCStream?, sckOut: SCKOut?, mic: Mic?, running = false
+    func start() {
+        guard !running else { return }
+        running = true
+        err(">> in a call — starting capture")
+        sysSeg.reset(); micSeg.reset()
+        if MIC_ON { let m = Mic(micSeg); m.start(); mic = m }
+        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
+            guard self.running else { return }                 // call ended during the async fetch
+            if let error = error { err("SCShareableContent error: \(error)"); return }
+            guard let display = content?.displays.first else { err("no display"); return }
+            let cfg = SCStreamConfiguration()
+            cfg.capturesAudio = true
+            cfg.excludesCurrentProcessAudio = false            // we play no audio; excluding wedges capture
+            cfg.sampleRate = 16000; cfg.channelCount = 1
+            cfg.width = 2; cfg.height = 2
+            cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            let out = SCKOut(sysSeg)
+            do {
+                let stream = SCStream(filter: makeFilter(display, content?.applications ?? []), configuration: cfg, delegate: out)
+                try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio"))
+                stream.startCapture { e in if let e = e { err("startCapture error: \(e)") } }
+                self.stream = stream; self.sckOut = out
+                err(">> system-audio capture started")
+            } catch { err("SCStream setup failed: \(error)") }
+        }
+    }
+    func stop() {
+        guard running else { return }
+        running = false
+        err(">> not in a call — stopping capture")
+        mic?.stop(); mic = nil
+        stream?.stopCapture { _ in }
+        stream = nil; sckOut = nil
+    }
+}
+
+let cap = Capture()
+var wasInCall = false
+func inCallNow() -> Bool {
+    if !GATE { return true }                                   // --gate off: always capture
+    let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
+    guard let d = out.data(using: .utf8),
+          let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return wasInCall }
+    return (o["inMeeting"] as? Bool) ?? false
+}
+func tick() { let now = inCallNow(); if now != wasInCall { wasInCall = now; now ? cap.start() : cap.stop() } }
+
+err(">> meeting-tap ready — gate:\(GATE ? "on (captures only during a call)" : "off (always captures)") gui:\(guiPort) whisper:\(whisperURL) app:\(APP_SEL) mic:\(MIC_ON) me:\(ME)")
+Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in tick() }
+tick()   // check immediately
 
 RunLoop.main.run()   // run until killed
