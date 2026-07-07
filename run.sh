@@ -59,4 +59,4 @@ echo
 
 # 3) capturer — foreground, under THIS Terminal's Screen-Recording grant.
 #    "$@" forwards flags like --app / --mic to meeting-tap.
-exec "$ROOT/stt/meeting-tap" "$GUI_PORT" "http://127.0.0.1:$WHISPER_PORT/inference" "$@"
+exec "$ROOT/stt/meeting-tap" "$GUI_PORT" "http://127.0.0.1:$WHISPER_PORT/inference" --rec-dir "$ROOT/data/meetings/rec" "$@"

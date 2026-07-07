@@ -67,8 +67,9 @@ fn start_stack() {
     }
     let tap = format!("{}/stt/meeting-tap", REPO);
     if Path::new(&tap).exists() && !is_running("meeting-tap") {
+        let recdir = format!("{}/data/meetings/rec", REPO);
         track(Command::new(tap)
-            .args(["8790", "http://127.0.0.1:8091/inference", "--gate", "on"])
+            .args(["8790", "http://127.0.0.1:8091/inference", "--gate", "on", "--rec-dir", &recdir])
             .stdout(Stdio::null()).stderr(Stdio::null()).spawn());
     }
 }

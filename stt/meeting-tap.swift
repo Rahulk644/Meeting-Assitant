@@ -53,6 +53,9 @@ let MIC_RMS    = Float(opt("--mic-rms", "0.02")) ?? 0.02     // mic gate — hig
 let MIN_CONF   = Float(opt("--min-conf", "0.5")) ?? 0.5      // drop utterances below this mean word-confidence
 let EXPRESSIONS = A.contains("--expressions")                // keep *sigh*/(laughs) as [sigh] sentiment cues
 let GATE = opt("--gate", "on") != "off"                      // capture ONLY while in a call (polls /api/state)
+let VIDEO_MODE0 = opt("--video", "off")                      // off | always | share — server config overrides live
+let REC_DIR = opt("--rec-dir", "data/meetings/rec")          // where screen recordings (.mp4) are written
+let VIDEO_FPS: Int32 = 10                                    // screen content doesn't need 30fps; 10 keeps files small
 let ME = { let n = NSFullUserName(); return opt("--me", n.isEmpty ? "Me" : n) }()  // shown as "<name> (Me)"
 
 // VAD / segmentation tuning
@@ -196,6 +199,65 @@ final class Mic {
     }
 }
 
+// MARK: - screen recording (ScreenCaptureKit video → H.264 .mp4 via AVAssetWriter)
+
+final class VideoRecorder {
+    let url: URL
+    private var writer: AVAssetWriter?
+    private var input: AVAssetWriterInput?
+    private var started = false
+    private(set) var wroteAny = false
+    var record = false                          // gated by mode (always) / share-state (share)
+    private let q = DispatchQueue(label: "video.write")
+
+    init(dir: String, name: String) {
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        url = URL(fileURLWithPath: (dir as NSString).appendingPathComponent(name))
+        try? FileManager.default.removeItem(at: url)
+    }
+    func append(_ sb: CMSampleBuffer) {
+        guard record, CMSampleBufferDataIsReady(sb) else { return }
+        q.sync {
+            if writer == nil { setup(sb) }
+            guard let w = writer, let inp = input, w.status == .writing, inp.isReadyForMoreMediaData else { return }
+            if !started { w.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(sb)); started = true }
+            inp.append(sb); wroteAny = true
+        }
+    }
+    private func setup(_ sb: CMSampleBuffer) {
+        guard let fmt = CMSampleBufferGetFormatDescription(sb) else { return }
+        let dim = CMVideoFormatDescriptionGetDimensions(fmt)
+        guard let w = try? AVAssetWriter(url: url, fileType: .mp4) else { err("video: writer init failed"); return }
+        let s: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264,
+                                AVVideoWidthKey: Int(dim.width), AVVideoHeightKey: Int(dim.height)]
+        let inp = AVAssetWriterInput(mediaType: .video, outputSettings: s)
+        inp.expectsMediaDataInRealTime = true
+        if w.canAdd(inp) { w.add(inp) }
+        w.startWriting()
+        writer = w; input = inp
+        err(">> screen recording → \(url.lastPathComponent) (\(dim.width)x\(dim.height))")
+    }
+    func finish(_ done: @escaping (Bool) -> Void) {
+        q.async {
+            guard let w = self.writer, self.started, self.wroteAny else { done(false); return }
+            self.input?.markAsFinished()
+            w.finishWriting { done(w.status == .completed) }
+        }
+    }
+}
+
+final class VideoOut: NSObject, SCStreamOutput {
+    let rec: VideoRecorder
+    init(_ rec: VideoRecorder) { self.rec = rec }
+    func stream(_ s: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen else { return }
+        // append only "complete" frames (skip idle/blank ones SCK emits when nothing changed)
+        guard let att = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+              let raw = att.first?[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete else { return }
+        rec.append(sb)
+    }
+}
+
 // MARK: - shared helpers
 
 func writeWav16(_ samples: [Float], to url: URL) {
@@ -309,11 +371,13 @@ if LIST_APPS {
 // captured when you're not in a meeting. `--gate off` = always capture (Google Meet, which the
 // Accessibility layer can't see).
 final class Capture {
-    var stream: SCStream?, sckOut: SCKOut?, mic: Mic?, running = false
-    func start() {
+    var stream: SCStream?, sckOut: SCKOut?, videoOut: VideoOut?, rec: VideoRecorder?, mic: Mic?
+    var running = false, mode = "off", recFile = ""
+    func start(mode: String) {
         guard !running else { return }
-        running = true
-        err(">> in a call — starting capture")
+        running = true; self.mode = mode
+        let wantVideo = mode == "always" || mode == "share"
+        err(">> in a call — starting capture (video: \(mode))")
         sysSeg.reset(); micSeg.reset()
         if MIC_ON { let m = Mic(micSeg); m.start(); mic = m }
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
@@ -324,41 +388,88 @@ final class Capture {
             cfg.capturesAudio = true
             cfg.excludesCurrentProcessAudio = false            // we play no audio; excluding wedges capture
             cfg.sampleRate = 16000; cfg.channelCount = 1
-            cfg.width = 2; cfg.height = 2
-            cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            if wantVideo {
+                cfg.width = Int(display.width); cfg.height = Int(display.height)
+                cfg.minimumFrameInterval = CMTime(value: 1, timescale: VIDEO_FPS)
+                cfg.pixelFormat = kCVPixelFormatType_32BGRA
+                cfg.queueDepth = 6
+            } else {
+                cfg.width = 2; cfg.height = 2
+                cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            }
             let out = SCKOut(sysSeg)
             do {
                 let stream = SCStream(filter: makeFilter(display, content?.applications ?? []), configuration: cfg, delegate: out)
                 try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio"))
+                if wantVideo {
+                    let stamp = Int(Date().timeIntervalSince1970 * 1000)
+                    let file = "\(stamp).mp4"
+                    let r = VideoRecorder(dir: REC_DIR, name: file)
+                    r.record = (mode == "always") ? true : curSharing   // share mode: only while a screen is shared
+                    let vout = VideoOut(r)
+                    try stream.addStreamOutput(vout, type: .screen, sampleHandlerQueue: DispatchQueue(label: "video"))
+                    self.rec = r; self.videoOut = vout; self.recFile = file
+                    postRecording(file, stamp)                          // reserve cur.video on the server
+                }
                 stream.startCapture { e in if let e = e { err("startCapture error: \(e)") } }
                 self.stream = stream; self.sckOut = out
-                err(">> system-audio capture started")
+                err(">> capture started (audio\(wantVideo ? "+video" : ""))")
             } catch { err("SCStream setup failed: \(error)") }
         }
     }
+    func updateShare() { if mode == "share", let r = rec { r.record = curSharing } }
     func stop() {
         guard running else { return }
         running = false
         err(">> not in a call — stopping capture")
         mic?.stop(); mic = nil
         stream?.stopCapture { _ in }
-        stream = nil; sckOut = nil
+        stream = nil; sckOut = nil; videoOut = nil
+        rec?.finish { ok in err(ok ? ">> screen recording saved" : ">> no screen recording written") }
+        rec = nil
     }
 }
 
+// Tell the server which file the current call's screen recording is in (it stamps cur.video).
+func postRecording(_ file: String, _ startedAt: Int) {
+    let obj: [String: Any] = ["type": "recording", "file": file, "startedAt": startedAt]
+    guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
+    let f = "/tmp/mt_rec.json"; try? data.write(to: URL(fileURLWithPath: f))
+    _ = curl(["-s", "-X", "POST", "http://127.0.0.1:\(guiPort)/ingest",
+              "-H", "Content-Type: application/json", "--data-binary", "@\(f)"])
+}
+
 let cap = Capture()
-var wasInCall = false
-func inCallNow() -> Bool {
-    if !GATE { return true }                                   // --gate off: always capture
+var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0
+// Poll the server: are we in a call? is a screen being shared? which video mode? (off/always/share)
+func fetchState() -> (inCall: Bool, sharing: Bool, videoMode: String) {
     let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
     guard let d = out.data(using: .utf8),
-          let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return wasInCall }
-    return (o["inMeeting"] as? Bool) ?? false
+          let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
+        return (GATE ? wasInCall : true, curSharing, curVideoMode)
+    }
+    let inCall = GATE ? ((o["inMeeting"] as? Bool) ?? false) : true
+    return (inCall, (o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0)
 }
-func tick() { let now = inCallNow(); if now != wasInCall { wasInCall = now; now ? cap.start() : cap.stop() } }
+func tick() {
+    let s = fetchState()
+    curSharing = s.sharing; curVideoMode = s.videoMode
+    cap.updateShare()
+    if s.inCall != wasInCall { wasInCall = s.inCall; s.inCall ? cap.start(mode: s.videoMode) : cap.stop() }
+}
 
 err(">> meeting-tap ready — gate:\(GATE ? "on (captures only during a call)" : "off (always captures)") gui:\(guiPort) whisper:\(whisperURL) app:\(APP_SEL) mic:\(MIC_ON) me:\(ME)")
 Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in tick() }
 tick()   // check immediately
+
+// On Ctrl-C / SIGTERM, finalize any in-progress screen recording (write the moov atom) before exiting.
+var sigSources: [DispatchSourceSignal] = []   // retained for the program's life, else the source never fires
+for sig in [SIGINT, SIGTERM] {
+    signal(sig, SIG_IGN)
+    let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    src.setEventHandler { err(">> shutting down — finalizing"); cap.stop(); DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { exit(0) } }
+    src.resume()
+    sigSources.append(src)
+}
 
 RunLoop.main.run()   // run until killed

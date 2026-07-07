@@ -190,6 +190,8 @@
   .livepill .ld{width:5px;height:5px}
   #mt-detail .feed{padding-top:8px}
   #det-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .recvid{width:100%;border-radius:var(--r-lg);background:#000;margin-bottom:18px;display:block;max-height:58vh;border:1px solid var(--hair)}
+  .vtag{display:inline-flex;align-items:center;color:var(--ter)}.vtag svg{width:13px;height:13px}
   .sumcard{border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;margin-bottom:20px;background:var(--s1)}
   .sum-h{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--sub);margin-bottom:11px;display:flex;align-items:center;gap:6px}
   .sum-h svg{width:13px;height:13px;color:var(--pri-hi)}
@@ -379,6 +381,7 @@ const SETTINGS=[
   ['Meetings', SI.meet, [
     ['mTemplate','Notes template','Layout for summaries & notes','select',['Fathom','Snaply','Fireflies','Zoom']],
     ['mAutoDetect','Auto-detect meetings','Start & end on Zoom, Meet, Teams…','toggle',true],
+    ['videoMode','Screen recording','Record the shared screen / video during calls','video',['Off','Always','When shared']],
     ['mReason','Deeper reasoning','Slower, higher-quality summaries','toggle',false],
     ['mAudioGB','Audio storage','Local cap, GB (cloud sync = Pro)','slider',[1,100,10]],
   ]],
@@ -447,6 +450,7 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape' && !$('#settingsMod
 /* native (Tauri) bridge — stealth hides the window from screen-share / screenshots */
 function isTauri(){ return !!(window.__TAURI__ && window.__TAURI__.core); }
 async function setStealth(on){ try{ await window.__TAURI__.core.invoke('set_stealth',{on}); }catch(e){} }
+async function setVideoMode(mode){ try{ await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({videoMode:mode})}); }catch{} }
 function settingRow([key,label,hint,type,opt,desktop,def]){
   const row=document.createElement('div');row.className='srow';
   const lab=document.createElement('div');lab.className='slabel';
@@ -461,6 +465,11 @@ function settingRow([key,label,hint,type,opt,desktop,def]){
     sw.onclick=()=>{const v=!sw.classList.contains('on');sw.classList.toggle('on',v);store.set(key,v);setStealth(v)};
     ctl.append(sw);
     if(!native) lab.querySelector('.l').insertAdjacentHTML('beforeend','<span class="badge">DESKTOP</span>');
+  }else if(type==='video'){
+    const map={'Off':'off','Always':'always','When shared':'share'}, rmap={off:'Off',always:'Always',share:'When shared'};
+    const sel=document.createElement('select');sel.className='sel';const cur=rmap[store.get('videoMode','off')]||'Off';
+    opt.forEach(o=>sel.add(new Option(o,o,false,o===cur)));
+    sel.onchange=()=>{const mode=map[sel.value]||'off';store.set('videoMode',mode);setVideoMode(mode)};ctl.append(sel);
   }else if(type==='select'){
     const sel=document.createElement('select');sel.className='sel';sel.disabled=dis;const cur=store.get(key,opt[0]);
     opt.forEach(o=>sel.add(new Option(o,o,false,o===cur)));sel.onchange=()=>store.set(key,sel.value);ctl.append(sel);
@@ -580,7 +589,7 @@ function meetingCard(m){
      <div class="mb">
        <div class="ct"><span class="nm">${esc(m.title)}</span>${live}${notes}</div>
        <div class="cs">${esc(m.snippet||'No transcript captured')}</div>
-       <div class="cm">${avatarStack(ppl)}<span>${m.lineCount} line${m.lineCount===1?'':'s'}</span></div>
+       <div class="cm">${avatarStack(ppl)}<span>${m.lineCount} line${m.lineCount===1?'':'s'}</span>${m.hasVideo?`<span class="vtag" title="Screen recording">${IC_VID}</span>`:''}</div>
      </div>
      <div class="cr"><span class="crt">${t}</span><span>${fmtDur(m)}</span></div>`;
   card.onclick=()=> m.live? mtShow('live') : openMeeting(m.id);
@@ -592,6 +601,11 @@ async function openMeeting(id){
   const when=new Date(m.startedAt).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
   $('#det-meta').innerHTML=avatarStack(m.participants||[],5)+`<span>${esc(when)} · ${fmtDur(m)} · ${m.lines.length} line${m.lines.length===1?'':'s'}</span>`;
   const w=$('#det-wrap'); w.innerHTML='';
+  if(m.video){
+    const v=document.createElement('video'); v.className='recvid'; v.controls=true; v.preload='metadata';
+    v.src='/api/rec/'+encodeURIComponent(m.video); v.onerror=()=>v.remove(); // missing/broken → hide
+    w.append(v);
+  }
   w.append(aiPanel(m));
   const tl=document.createElement('div'); tl.className='sum-h'; tl.style.margin='2px 0 10px'; tl.textContent='Transcript'; w.append(tl);
   for(const l of m.lines) w.append(lineRow(l));
@@ -669,6 +683,7 @@ es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
 setView((()=>{try{const r=localStorage.getItem('route');return (r&&r!=='settings')?r:'meetings'}catch{return 'meetings'}})());
 mtShow('library');   // populate the meetings library on load (auto-switches to live when a call starts)
 if(isTauri() && store.get('stealth',false)) setStealth(true);   // re-apply saved stealth on launch
+setVideoMode(store.get('videoMode','off'));                     // sync screen-recording mode to the capturer
 </script>
 </body>
 </html>

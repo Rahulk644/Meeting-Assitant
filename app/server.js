@@ -15,7 +15,8 @@ const PORT = process.env.PORT || 8787; // respect preview's assigned port; 8787 
 const clients = new Set();
 let lastState = {}; // so a client connecting mid-meeting gets current title/participants/speaker
 const MEETINGS_DIR = path.join(__dirname, "..", "data", "meetings");
-fs.mkdirSync(MEETINGS_DIR, { recursive: true });
+const REC_DIR = path.join(MEETINGS_DIR, "rec"); // screen recordings (.mp4), written by meeting-tap
+fs.mkdirSync(REC_DIR, { recursive: true });
 let cur = null; // the in-progress meeting being recorded to disk
 
 function broadcast(obj) {
@@ -53,6 +54,9 @@ function record(obj) {
   if (obj.type === "caption") {
     if (!cur) startMeeting(lastState);
     cur.lines.push({ speaker: obj.speaker, text: obj.text, ts: obj.ts || Date.now(), self: !!obj.self });
+  } else if (obj.type === "recording") {
+    if (!cur) startMeeting(lastState);
+    cur.video = obj.file; saveMeeting(cur); // meeting-tap tells us the call's screen-recording file
   } else if (obj.type === "state" && obj.state) {
     if (obj.state.inMeeting === false) finalizeMeeting();
     else if (obj.state.inMeeting === true && !cur) startMeeting(obj.state);
@@ -65,7 +69,8 @@ function meetingSummary(m) {
   return { id: m.id, title: m.title, app: m.app, startedAt: m.startedAt, endedAt: m.endedAt,
            participants: m.participants, lineCount: m.lines.length,
            snippet: ((m.lines.find(l => l.text && l.text.length > 1) || {}).text || "").slice(0, 140),
-           summarized: !!m.summary, live: m.endedAt == null };
+           summarized: !!m.summary, hasVideo: !!(m.video && fs.existsSync(path.join(REC_DIR, m.video))),
+           live: m.endedAt == null };
 }
 // A server killed mid-call leaves a meeting with endedAt=null; on restart it isn't actually live, so
 // finalize any such orphans (else they show "LIVE" forever). Only the in-memory `cur` is ever live.
@@ -97,7 +102,9 @@ function listMeetings() {
 }
 function readMeeting(id) {
   if (cur && cur.id === id) return cur;
-  try { return JSON.parse(fs.readFileSync(path.join(MEETINGS_DIR, id + ".json"))); } catch { return null; }
+  let m; try { m = JSON.parse(fs.readFileSync(path.join(MEETINGS_DIR, id + ".json"))); } catch { return null; }
+  if (m && m.video && !fs.existsSync(path.join(REC_DIR, m.video))) delete m.video; // recording missing → no player
+  return m;
 }
 
 // ---- LLM backend (local-first) -----------------------------------------------
@@ -199,9 +206,30 @@ http.createServer((req, res) => {
     req.on("close", () => clients.delete(res));
     return;
   }
-  if (req.url === "/api/state" && req.method === "GET") { // meeting-tap polls this to gate capture
+  if (req.url === "/api/state" && req.method === "GET") { // meeting-tap polls this to gate capture + video mode
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(lastState || {}));
+  }
+  if (req.url === "/api/config" && req.method === "POST") { // UI sets the screen-recording mode (off/always/share)
+    readBody(req).then(b => {
+      try { const j = JSON.parse(b); if (typeof j.videoMode === "string") broadcast({ type: "state", state: { videoMode: j.videoMode } }); } catch {}
+      res.writeHead(204); res.end();
+    });
+    return;
+  }
+  const rec = req.url.match(/^\/api\/rec\/([\w.\-]+)$/); // serve a saved screen recording (with range for seeking)
+  if (rec && req.method === "GET") {
+    const file = path.join(REC_DIR, rec[1]);
+    if (!file.startsWith(REC_DIR + path.sep) || !fs.existsSync(file)) { res.writeHead(404); return res.end(); }
+    const size = fs.statSync(file).size;
+    const range = req.headers.range && /bytes=(\d+)-(\d*)/.exec(req.headers.range);
+    if (range) {
+      const start = parseInt(range[1], 10), end = range[2] ? parseInt(range[2], 10) : size - 1;
+      res.writeHead(206, { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": end - start + 1 });
+      return fs.createReadStream(file, { start, end }).pipe(res);
+    }
+    res.writeHead(200, { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Length": size });
+    return fs.createReadStream(file).pipe(res);
   }
   if (req.url === "/api/meetings" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
