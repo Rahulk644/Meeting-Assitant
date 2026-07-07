@@ -540,7 +540,8 @@ function onState(s){
   else if(s.inMeeting===false){ setRec(false); if(mtCurrent==='library') loadLibrary(); }
 }
 // Persistent recording indicator (floats over every view) + nav live-dot — driven by real inMeeting state.
-function setRec(on){ const r=$('#recInd'); if(r)r.hidden=!on; const d=$('#liveDot'); if(d)d.hidden=!on; }
+function setRec(on){ const r=$('#recInd'); if(r)r.hidden=!on; const d=$('#liveDot'); if(d)d.hidden=!on;
+  try{ window.__TAURI__?.core?.invoke('set_tray_recording',{on}); }catch{} }   // animate the menu-bar tray too
 function lineRow(c){
   const label=c.self?(c.speaker==='You'?'You':c.speaker+' (Me)'):c.speaker;
   const row=document.createElement('div');row.className='row'+(c.self?' self':'');

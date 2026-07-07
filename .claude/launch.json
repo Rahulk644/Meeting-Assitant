@@ -2,12 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "live-transcript-demo",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["app/server.js", "--demo"],
-      "autoPort": true
-    },
-    {
       "name": "live-transcript",
       "runtimeExecutable": "node",
       "runtimeArgs": ["app/server.js"],

@@ -46,7 +46,7 @@ fi
 
 # 2) GUI + caption relay
 pkill -f 'app/server.js' 2>/dev/null
-PORT="$GUI_PORT" node "$ROOT/app/server.js" --ingest >/tmp/mt-gui.log 2>&1 &
+PORT="$GUI_PORT" node "$ROOT/app/server.js" >/tmp/mt-gui.log 2>&1 &
 PIDS+=($!)
 
 until curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$WHISPER_PORT/" 2>/dev/null; do sleep 1; done

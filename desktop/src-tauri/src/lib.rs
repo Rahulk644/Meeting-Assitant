@@ -2,6 +2,7 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tauri::{
@@ -70,7 +71,7 @@ fn start_stack() {
     if !port_open(8790) {
         if let Some(node) = find_bin("node") {
             track(Command::new(node)
-                .arg(format!("{}/app/server.js", REPO)).arg("--ingest")
+                .arg(format!("{}/app/server.js", REPO))
                 .env("PORT", "8790")
                 // Packaged: the app spawns meeting-state itself (a DIRECT child, so it gets the AX grant) —
                 // tell node to skip its own copy. In dev (debug), node owns meeting-state under Terminal's grant.
@@ -80,14 +81,8 @@ fn start_stack() {
     }
     if cfg!(debug_assertions) { return; } // dev: capture comes from ./run.sh
 
-    if !port_open(8091) {
-        let model = format!("{}/stt/whisper/ggml-large-v3-turbo-q8_0.bin", REPO);
-        if let (Some(ws), true) = (find_bin("whisper-server"), Path::new(&model).exists()) {
-            track(Command::new(ws)
-                .args(["-m", &model, "--host", "127.0.0.1", "--port", "8091", "-t", "4"])
-                .stdout(Stdio::null()).stderr(Stdio::null()).spawn());
-        }
-    }
+    // whisper-server is NOT started here — node spawns it on demand when a call begins and unloads it when
+    // idle (it's ~1.5 GB), so it's off RAM between calls.
     let tap = format!("{}/stt/meeting-tap", REPO);
     if Path::new(&tap).exists() {
         let recdir = format!("{}/data/meetings/rec", REPO);
@@ -104,6 +99,27 @@ fn start_stack() {
 #[tauri::command]
 fn set_stealth(window: tauri::WebviewWindow, on: bool) -> Result<(), String> {
     window.set_content_protected(on).map_err(|e| e.to_string())
+}
+
+// Animate the menu-bar tray with an audio-wave title while a call records (the UI calls this on start/stop).
+static TRAY_REC: AtomicBool = AtomicBool::new(false);
+#[tauri::command]
+fn set_tray_recording(app: tauri::AppHandle, on: bool) {
+    if on {
+        if TRAY_REC.swap(true, Ordering::SeqCst) { return; } // already animating
+        std::thread::spawn(move || {
+            let frames = ["▁▂▃▅▃▂", "▂▃▅▇▅▃", "▃▅▇▅▃▂", "▂▄▆▄▂▁"];
+            let mut i = 0usize;
+            while TRAY_REC.load(Ordering::SeqCst) {
+                if let Some(t) = app.tray_by_id("tray") { let _ = t.set_title(Some(format!(" {}", frames[i % frames.len()]))); }
+                i += 1;
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            if let Some(t) = app.tray_by_id("tray") { let _ = t.set_title(None::<&str>); }
+        });
+    } else {
+        TRAY_REC.store(false, Ordering::SeqCst);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -125,7 +141,7 @@ pub fn run() {
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Assistant", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &hide, &sep, &quit])?;
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .tooltip("Assistant")
@@ -139,7 +155,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![set_stealth])
+        .invoke_handler(tauri::generate_handler![set_stealth, set_tray_recording])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {

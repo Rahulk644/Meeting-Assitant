@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Live speaker-attributed transcript app.
-//   node server.js         -> spawn ../meeting-state/meeting-state, stream its JSON to the GUI
-//   node server.js --demo  -> emit scripted sample lines so you can see the GUI with no call
+//   node server.js  -> spawn ../meeting-state/meeting-state, stream its JSON to the GUI + relay captions.
 // No dependencies. Open http://localhost:8787
 const http = require("http");
 const fs = require("fs");
@@ -9,8 +8,6 @@ const net = require("net");
 const path = require("path");
 const { spawn, execFile } = require("child_process");
 
-const DEMO = process.argv.includes("--demo");
-const INGEST = process.argv.includes("--ingest"); // captions arrive via POST /ingest (from meeting-tap)
 const PORT = process.env.PORT || 8787; // respect preview's assigned port; 8787 for manual runs
 const clients = new Set();
 let lastState = {}; // so a client connecting mid-meeting gets current title/participants/speaker
@@ -53,6 +50,7 @@ function finalizeMeeting() {
   cur.endedAt = Date.now();
   if (cur.lines.length) saveMeeting(cur); // skip empty meetings
   cur = null;
+  unloadWhisperSoon(); // free ~1.5 GB after the call
 }
 // Debounce finalize: brief inMeeting=false blips (a screen-share toggle, a view switch, one missed
 // detection poll) must NOT end the call and split it into a second meeting. Only a sustained absence
@@ -70,7 +68,7 @@ function record(obj) {
     cur.video = obj.file; saveMeeting(cur); // meeting-tap tells us the call's screen-recording file
   } else if (obj.type === "state" && obj.state) {
     if (obj.state.inMeeting === false) scheduleFinalize();          // debounced — a brief drop won't split the call
-    else if (obj.state.inMeeting === true) { cancelFinalize(); if (!cur) startMeeting(obj.state); else updateMeta(obj.state); }
+    else if (obj.state.inMeeting === true) { cancelFinalize(); ensureWhisper(); if (!cur) startMeeting(obj.state); else updateMeta(obj.state); }
     else updateMeta(obj.state);
   }
 }
@@ -156,8 +154,32 @@ function touchLLM() { // unload our LLM after idle so it doesn't hold ~1 GB betw
   clearTimeout(llmIdle);
   llmIdle = setTimeout(() => { if (llmProc) { llmProc.kill(); llmProc = null; } }, LLM_IDLE_MS);
 }
-["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => { msShutdown = true; if (llmProc) llmProc.kill(); if (msProc) msProc.kill(); process.exit(0); }));
-process.on("exit", () => { msShutdown = true; if (llmProc) llmProc.kill(); if (msProc) msProc.kill(); });
+
+// ---- Whisper (transcription) — started on demand, unloaded when idle -----------------------------
+// A packaged build no longer keeps whisper-server (~1.5 GB) resident: node spawns it when a call starts
+// and kills it WHISPER_IDLE_MS after the call ends, so it's off RAM between calls. In dev, run.sh already
+// has it up on :8091 → node sees the open port and neither spawns nor kills it (not ours to manage).
+const WHISPER_PORT = +(process.env.WHISPER_PORT || 8091);
+const WHISPER_MODEL = path.join(__dirname, "..", "stt", "whisper", "ggml-large-v3-turbo-q8_0.bin");
+const WHISPER_IDLE_MS = 2 * 60 * 1000;
+let whisperProc = null, whisperIdle = null; // the whisper-server child WE started (null if not ours)
+async function ensureWhisper() {
+  if (whisperIdle) { clearTimeout(whisperIdle); whisperIdle = null; }
+  if (whisperProc) return;                                        // ours, already up
+  if (await portOpen("127.0.0.1", WHISPER_PORT)) return;          // someone else's (dev) — leave it
+  const bin = findBin("whisper-server");
+  if (bin === "whisper-server" || !fs.existsSync(WHISPER_MODEL)) return; // not installed here — skip
+  whisperProc = spawn(bin, ["-m", WHISPER_MODEL, "--host", "127.0.0.1", "--port", String(WHISPER_PORT), "-t", "4"], { stdio: "ignore" });
+  whisperProc.on("exit", () => { whisperProc = null; });
+  console.error("whisper-server: starting (call detected)…");
+}
+function unloadWhisperSoon() { // only unloads the one WE started
+  if (!whisperProc || whisperIdle) return;
+  whisperIdle = setTimeout(() => { if (whisperProc) { whisperProc.kill(); whisperProc = null; console.error("whisper-server: unloaded (idle)"); } }, WHISPER_IDLE_MS);
+}
+const killKids = () => { msShutdown = true; if (llmProc) llmProc.kill(); if (msProc) msProc.kill(); if (whisperProc) whisperProc.kill(); };
+["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => { killKids(); process.exit(0); }));
+process.on("exit", killKids);
 
 async function chat(messages, opts = {}) {
   const llm = opts.llm || {};
@@ -314,11 +336,9 @@ http.createServer((req, res) => {
   res.writeHead(404);
   res.end();
 }).listen(PORT, () => {
-  console.log(`\n  Live transcript → http://localhost:${PORT}   ${DEMO ? "(demo)" : "(live)"}\n`);
+  console.log(`\n  Live transcript → http://localhost:${PORT}\n`);
   finalizeOrphans(); // meetings a prior (killed) server left open aren't live — close them
-  if (DEMO) { startDemo(); return; }
-  // No hard-coded "inMeeting" — meeting-state drives it, so the app is only "live" during a real call
-  // (and meeting-tap, which polls /api/state, only captures then). INGEST just means captions POST in.
+  // No hard-coded "inMeeting" — meeting-state (names) + meeting-tap (self-detect) drive "live", only in a real call.
   startMeetingState(); // state + active-speaker (names). Harmless if not built yet.
 });
 
@@ -349,29 +369,3 @@ function startMeetingState() {
   });
 }
 
-// DEMO: a scripted snippet using real teammate names so the GUI looks like a real standup.
-function startDemo() {
-  const YOU = "You";
-  const script = [
-    ["Vikram Prasanna", "The export bug — it fails if the file's been modified but not saved."],
-    [YOU, "So we auto-save before export? That's the clean fix."],
-    ["John Lee", "I hit that in testing too — it loses the work silently."],
-    ["Rajat Prakash", "Let's land it before the Valencia launch Monday."],
-    ["Vikram Prasanna", "Agreed. Mohit takes the auto-save, I'll fix the dashboard string."],
-    [YOU, "Perfect. Ashi, can you add the default refresh status on the LTI dashboard?"],
-    ["Ashi Khetan", "Yep, pushing that today."],
-  ];
-  const participants = ["You", "Vikram Prasanna", "John Lee", "Rajat Prakash", "Ashi Khetan"];
-  const first = () =>
-    broadcast({ type: "state", state: { app: "zoom", inMeeting: true, title: "PREP Canvas LTI : Debrief", participants } });
-  setTimeout(first, 400);
-  let i = 0;
-  const tick = () => {
-    const [speaker, text] = script[i % script.length];
-    broadcast({ type: "state", state: { app: "zoom", inMeeting: true, activeSpeaker: speaker, participants } });
-    broadcast({ type: "caption", speaker, text, ts: Date.now(), self: speaker === YOU });
-    i++;
-    setTimeout(tick, 2600);
-  };
-  setTimeout(tick, 900);
-}
