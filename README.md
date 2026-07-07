@@ -5,12 +5,14 @@ Agents** in one minimal shell. **Meetings ships first:** real-time transcription
 participants* in any Mac video call (Zoom / Meet / Teams), with speaker names. Whisper runs on the
 Apple GPU — **no bot joins the call, no audio leaves your machine, no meeting-app captions toggle.**
 
-**Status:** the Meetings module works end-to-end — mic + the other participants, auto-scoped, with live
-speaker names. Every call is **saved on-device** into a browsable history, with **post-call summaries,
-action items, and "ask this meeting"** from an on-device LLM. It runs today in a browser GUI (a minimal
-light/dark UI) and now also in a native, cross-platform [Tauri](https://tauri.app) shell — a real window
-with a menu-bar tray and **screen-share stealth** (`desktop/`). Real-time in-call **coaching** is the
-next milestone — see the [roadmap](#roadmap).
+**Status:** the Meetings module works end-to-end and ships as a **double-click desktop app**
+([Tauri](https://tauri.app), `desktop/`) — no terminal, no dev commands. It transcribes *you and the
+other participants* (auto-scoped, with live speaker names, and **capturing only while you're in a
+call**), **saves every call on-device** into a browsable history with **post-call summaries, action
+items, and "ask this meeting"**, can **screen-record** the call (whole call, or only while a screen is
+shared), and can make its window **invisible to screen sharing**. The same UI also runs in a plain
+browser for development. Real-time in-call **coaching** — the Copilot — is the next milestone; see the
+[roadmap](#roadmap).
 
 ## How it works
 
@@ -52,60 +54,82 @@ pluggable across three tiers (Settings → *AI Model*):
 
 Without a model configured, the AI panel simply shows a "set one up" hint — transcription is unaffected.
 
+## Screen recording
+
+Optionally capture the call's **video** (the meeting window / shared screen) alongside the transcript —
+**Settings → Meetings → Screen recording**:
+
+- **Off** *(default)* — audio + transcript only.
+- **Always** — record the whole call.
+- **Only when shared** — record just the parts where a screen is being shared (saves space; keeps the
+  demos and slides).
+
+Recordings are H.264 `.mp4` in `data/meetings/rec/` (on-device, git-ignored) and play back in the
+meeting's detail view. Capture — mic, system audio, and video — runs **only while you're in a call**.
+
 ## Requirements
 
 - macOS 13+ on Apple Silicon
 - Xcode Command Line Tools (`xcode-select --install`), [Homebrew](https://brew.sh), Node
 
-## Setup
+## Install & run the app
 
 ```bash
-./setup.sh     # installs whisper-cpp + LiteRT-LM, downloads the models (~3.2 GB), builds the helpers
+./setup.sh                          # one-time: whisper-cpp + LiteRT-LM + models (~3.2 GB) + native helpers
+cd desktop && npm install           # one-time: the Tauri CLI (needs Rust — https://rustup.rs)
+npx tauri build --bundles app       # build Assistant.app
+cp -R src-tauri/target/release/bundle/macos/Assistant.app /Applications/
 ```
 
-Then grant **your Terminal** these permissions (System Settings → Privacy & Security):
+Then **double-click Assistant.app**. On the first call macOS prompts for **Microphone**, **Screen
+Recording**, and **Accessibility** — grant each once and it sticks. The app starts everything itself (no
+terminal); get on a Zoom/Teams call and it transcribes, and — if you enable screen recording in Settings
+— records.
 
-- **Screen & System Audio Recording** — to hear the other participants
-- **Accessibility** — for the speaker-names layer (when enabled)
+> This build reuses the models/binaries `setup.sh` installed on *this* machine; it isn't a portable
+> installer yet (that needs code-signing + notarization — on the roadmap).
 
-## Usage
+## Development
+
+Iterate on the UI in a browser, with capture from the shell:
 
 ```bash
-./run.sh       # then open http://localhost:8790 · Ctrl-C to stop
+./run.sh                            # whisper + server on :8790, then the capturer · Ctrl-C to stop
+                                    # open http://localhost:8790
+cd desktop && npm run dev           # (optional) the native window instead of a browser tab
 ```
 
-Get on a call and captions stream in live. By default it **auto-scopes to a running
-Zoom/Teams/Webex/FaceTime** window (so a background YouTube tab is ignored) and also transcribes
-**your own mic** as `You`. Flags pass straight through to the capturer:
+Capture **auto-scopes to a running Zoom/Teams/Webex/FaceTime** window (a background YouTube tab is
+ignored), transcribes **your mic**, and runs **only while you're in a call**. Flags pass through:
 
 ```bash
-./run.sh --app all                 # capture ALL system audio (use for Google Meet in a browser)
-./run.sh --app com.google.Chrome   # scope to a specific app  (list them: stt/meeting-tap --list-apps)
+./run.sh --app all                 # capture ALL system audio (e.g. Google Meet in a browser)
+./run.sh --gate off                # capture even when no call is detected (Google Meet, which AX can't see)
 ./run.sh --mic off                 # don't transcribe your own mic
-./run.sh --me "Niket"              # your label (default: your macOS name) → shown as "Niket (Me)"
-./run.sh --expressions             # keep *sigh* / (laughs) as [sigh] cues (sentiment read)
+./run.sh --me "Niket"              # your label (default: your macOS name) → "Niket (Me)"
 ```
 
 > **Use headphones.** On speakers the mic re-hears the remote voices, so their words can show up twice.
 
-> **Run it from a Terminal that has the Screen-Recording grant.** `run.sh` execs the capturer directly
-> for this reason — macOS won't reliably persist screen-recording grants for ad-hoc-signed standalone
-> apps, but Terminal's grant is stable.
+> Run `./run.sh` from a Terminal that has the **Screen-Recording grant** — dev builds are ad-hoc-signed
+> (grants don't persist across rebuilds), so dev capture rides on Terminal's stable grant. The packaged
+> `.app` gets its own grant that sticks.
 
 ## Project layout
 
 | Path | Role |
 |---|---|
-| `run.sh` | one-command launcher |
-| `setup.sh` | one-time install (engine + model + build) |
-| `stt/meeting-tap.swift` | ScreenCaptureKit capture + VAD + POST to whisper-server |
+| `desktop/` | **Tauri app** — self-starts the stack; native window, tray, screen-share stealth |
+| `run.sh` | dev launcher (whisper + server + capturer) |
+| `setup.sh` | one-time install (engine + model + native helpers) |
+| `stt/meeting-tap.swift` | ScreenCaptureKit capture (audio **and video**) + VAD + POST to whisper-server |
 | `stt/whisper/` | Whisper model (git-ignored; fetched by `setup.sh`) |
-| `app/server.js` | SSE relay + meeting recording + summary / ask API |
-| `app/index.html` | the app shell — nav, live transcript, Library + detail, settings; light/dark UI |
+| `app/server.js` | SSE relay + meeting recording + summary/ask + video serving (no deps) |
+| `app/index.html` | the UI — nav, live transcript, Library + detail (with player), settings; light/dark |
 | `meeting-state/` | AX layer: speaker names + in-meeting / mute / share |
-| `stt/llm/` | on-device LLM (git-ignored; fetched by `setup.sh`) for post-call AI |
-| `data/meetings/` | saved meeting history (git-ignored, on-device) |
-| `desktop/` | Tauri desktop shell — native window + menu-bar tray + screen-share stealth |
+| `data/meetings/` | saved history + `rec/` screen recordings (git-ignored, on-device) |
+
+The on-device LLM (LiteRT-LM + Gemma 4 E2B) is installed by `setup.sh` into `~/.litert-lm` — not in the repo.
 
 ## Design notes
 
@@ -136,15 +160,23 @@ Zoom/Teams/Webex/FaceTime** window (so a background YouTube tab is ignored) and 
 
 ## Roadmap
 
-- [x] Transcribe **your own mic** + **scope capture to the meeting app** (`--app auto`)
+**Shipped**
+
+- [x] Transcribe **your mic** + the other participants, scoped to the meeting app, **only while in a call**
 - [x] Speaker **names** from Zoom's AX tree (1-on-1 solid)
-- [x] **App shell** — module nav, settings, minimal **light/dark** UI
-- [x] **Meeting history** — every call saved on-device; browsable Library + per-meeting detail
-- [x] **Post-call AI** — summary, action items, "ask this meeting" (on-device LLM; API/cloud tiers pluggable)
-- [x] **AI Model picker** in Settings — choose on-device (LiteRT-LM, started on demand) or a BYO-key API provider
-- [x] **Desktop shell (Tauri)** — native window hosting the UI, menu-bar tray, screen-share **stealth** (`desktop/`)
-- [ ] Desktop, cont. — app-managed sidecars, migrate the capture grant onto the signed app, global shortcut + launch-at-login, packaged installers
-- [ ] **Real-time Copilot** — in-call coaching in an always-on **stealth** overlay (built on the shell above)
+- [x] **Meeting history** + **post-call AI** — summary, action items, "ask this meeting"
+- [x] **AI Model picker** — on-device (LiteRT-LM, started on demand) or an OpenAI-compatible provider
+- [x] Minimal **light/dark UI** — Snaply-style settings modal, Fathom-style meetings
+- [x] **Desktop app (Tauri)** — double-click `Assistant.app`, self-starts the whole stack, menu-bar tray
+- [x] **Screen-share stealth** — window invisible to screenshots / shared screens
+- [x] **Video screen recording** — whole call, or only while a screen is shared
+
+**Next**
+
+- [ ] **Real-time Copilot** — in-call coaching in an always-on **stealth** overlay (the keystone)
+- [ ] **Slack huddles** — capture + detection (an Electron app; closer to the Meet path than Zoom)
+- [ ] **Portable installer** — bundle the models, code-sign + notarize, so any Mac runs it (no `setup.sh`)
+- [ ] Record-only-when-shared for the **remote's** share; **audio in the video**; global shortcut + launch-at-login
 - [ ] Sharper names in **large gallery calls**; in-GUI device pickers
 - [ ] The other modules — **Dictation, Writing Assistant, Agents**
 

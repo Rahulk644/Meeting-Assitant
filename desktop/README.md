@@ -1,32 +1,47 @@
-# Assistant — desktop shell (Tauri)
+# Assistant — desktop app (Tauri)
 
-Wraps the Meetings UI in a native, cross-platform window (Rust + the OS WebView), adding what a browser
-tab can't: a **menu-bar tray** and a **screen-share-invisible** window (`content-protected` →
-`NSWindow.sharingType = .none` on macOS, `WDA_EXCLUDEFROMCAPTURE` on Windows) — the foundation for the
-in-call Copilot overlay.
+A native, cross-platform window (Rust + the OS WebView) around the Meetings UI. A **release build is
+self-contained**: it starts the whole stack itself — Node relay, `whisper-server`, the gated capturer,
+and `meeting-state` — and cleans them up on quit, so the app is a **double-click, no dev commands**. It
+also adds what a browser tab can't: a **menu-bar tray** and a **screen-share-invisible** window
+(`set_content_protected` → `NSWindow.sharingType = .none` on macOS, `WDA_EXCLUDEFROMCAPTURE` on Windows).
 
-The window loads the app from the local server (`http://localhost:8790`), so the capture + AI stack is
-shared with the browser build — no logic is duplicated.
+The window loads the UI from the local server (`http://localhost:8790`), so the packaged app and the
+browser build share one codebase.
 
-## Run (dev)
-
-The capture stack (whisper-server + Swift helpers) needs your Terminal's Screen-Recording grant, so
-start it the usual way first, then launch the shell:
+## Build
 
 ```bash
-./run.sh                    # repo root — starts whisper + the GUI server on :8790
-cd desktop && npm run dev   # native window (Rust compiles on first run, ~1 min)
+npm install                         # once — the Tauri CLI (needs Rust: https://rustup.rs)
+npx tauri build --bundles app       # → src-tauri/target/release/bundle/macos/Assistant.app
+cp -R src-tauri/target/release/bundle/macos/Assistant.app /Applications/
 ```
 
-**Settings → Privacy → "Invisible to screen-share"** toggles content protection (off by default) —
-the window stays visible to you but is excluded from screenshots and shared screens. Tray → **Quit** exits.
+Double-click it. First launch prompts for **Microphone**, **Screen Recording**, and **Accessibility** —
+grant once and it sticks. This build references the `setup.sh`-installed models/binaries on *this*
+machine; a portable, signed, notarized installer is on the roadmap.
 
-Prereqs: [Rust](https://rustup.rs) and Node. Run `npm install` in `desktop/` once for the Tauri CLI.
+## Dev
+
+```bash
+../run.sh                    # whisper + server on :8790 (dev capture rides on Terminal's Screen-Recording grant)
+npm run dev                  # the native window against that server
+```
+
+In dev the app does **not** host capture (it leaves that to `run.sh`, whose Terminal grant is stable
+across rebuilds); a release build hosts everything itself.
+
+## Notes
+
+- `src-tauri/src/lib.rs` — `start_stack()` (release-only) spawns the stack, resolving tool paths with
+  `find_bin` (GUI apps lack the shell PATH); the `set_stealth` command; the tray; kills children on
+  `RunEvent::Exit`. Capturer stderr → `/tmp/assistant-tap.log`.
+- `src-tauri/Info.plist` — `NSMicrophoneUsageDescription` + `NSAppTransportSecurity` (needed so the
+  packaged WebView can load `http://localhost:8790`).
 
 ## Status
 
-- [x] Native window hosting the UI · menu-bar tray · Snaply-style no-scroll **Settings** modal
-- [x] **Screen-share stealth** — Settings toggle → `set_stealth` command; verified (capture refused on macOS 26)
-- [ ] App starts the whole stack as sidecars (today `run.sh` still runs capture)
-- [ ] Migrate the Screen-Recording grant onto the signed `.app` (dev rebuilds churn the TCC grant)
-- [ ] Global shortcut · launch-at-login · packaged installers · the invisible Copilot overlay
+- [x] Self-contained release build — self-starts the stack; double-click, no dev commands
+- [x] Menu-bar tray · Snaply-style no-scroll **Settings** modal · **screen-share stealth** (verified)
+- [ ] Portable installer — bundle models, code-sign + notarize (today: reuses this machine's `setup.sh` install)
+- [ ] Global shortcut · launch-at-login · the invisible Copilot overlay
