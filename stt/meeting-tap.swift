@@ -279,10 +279,10 @@ func writeWav16(_ samples: [Float], to url: URL) {
 // Ask whisper-server for verbose_json → (full text, mean per-word confidence). Whisper reports a
 // probability per word; averaged, it separates real speech (~0.9) from noise/hallucination (low).
 func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
-    // language=auto → Whisper detects the language and TRANSCRIBES it (accurate, incl. Hinglish code-switching).
-    // translate is OFF by default (Settings toggle): forcing English garbles code-switched speech and misfires
-    // language detection (the "کن کن کن" hallucination). Matches how Handy runs Whisper.
-    var args = ["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json", "-F", "language=auto"]
+    // Language is EXPLICIT (Settings → default English), not auto — like Handy. `auto` misfires on
+    // code-switched speech and, with translate, hallucinates a wrong script (the "کن کن کن" bug). With the
+    // language pinned, both transcribe and translate are accurate. translate (→ English) is an opt-in toggle.
+    var args = ["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json", "-F", "language=\(curLanguage)"]
     if curTranslate { args += ["-F", "translate=true"] }
     let out = curl(args)
     guard let data = out.data(using: .utf8),
@@ -445,15 +445,15 @@ func postRecording(_ file: String, _ startedAt: Int) {
 }
 
 let cap = Capture()
-var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = false
+var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = false, curLanguage = "en"
 // Poll the server ONLY for UI-set config (video mode + share state). inMeeting is SELF-DETECTED below.
-func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool) {
+func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, language: String) {
     let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
     guard let d = out.data(using: .utf8),
           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
-        return (curSharing, curVideoMode, curTranslate)
+        return (curSharing, curVideoMode, curTranslate, curLanguage)
     }
-    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? false)
+    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? false, (o["language"] as? String) ?? "en")
 }
 // Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
 // capture needs anyway), NOT Accessibility. A native meeting app showing its in-call window = we're in a
@@ -497,7 +497,7 @@ func setInCall(_ app: String?) {
 }
 func tick() {
     let cfg = fetchConfig()
-    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate
+    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language
     cap.updateShare()
     if !GATE { setInCall("call"); return }                   // --gate off: always capture
     detectMeetingApp { app in DispatchQueue.main.async { setInCall(app) } }

@@ -249,6 +249,7 @@ http.createServer((req, res) => {
         const j = JSON.parse(b);
         if (typeof j.videoMode === "string") broadcast({ type: "state", state: { videoMode: j.videoMode } });
         if (typeof j.translate === "boolean") broadcast({ type: "state", state: { translate: j.translate } });
+        if (typeof j.language === "string") broadcast({ type: "state", state: { language: j.language } });
       } catch {}
       res.writeHead(204); res.end();
     });

@@ -404,7 +404,8 @@ const SETTINGS=[
     ['mTemplate','Notes template','Layout for summaries & notes','select',['Fathom','Snaply','Fireflies','Zoom']],
     ['mAutoDetect','Auto-detect meetings','Start & end on Zoom, Meet, Teams…','toggle',true],
     ['videoMode','Screen recording','Record the shared screen / video during calls','video',['Off','Always','When shared']],
-    ['translate','Translate to English','Off = transcribe each language as spoken (most accurate). On = force English (weaker on Hinglish).','translate',null,null,false],
+    ['language','Transcription language','Pin the spoken language for accuracy (like Handy). Auto-detect can misfire on code-switched speech.','language',null,null,'en'],
+    ['translate','Translate to English','Transcribe in the language above, then translate the output to English.','translate',null,null,false],
     ['mReason','Deeper reasoning','Slower, higher-quality summaries','toggle',false],
     ['mAudioGB','Audio storage','Local cap, GB (cloud sync = Pro)','slider',[1,100,10]],
   ]],
@@ -475,6 +476,7 @@ function isTauri(){ return !!(window.__TAURI__ && window.__TAURI__.core); }
 async function setStealth(on){ try{ await window.__TAURI__.core.invoke('set_stealth',{on}); }catch(e){} }
 async function setVideoMode(mode){ try{ await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({videoMode:mode})}); }catch{} }
 async function setTranslate(on){ try{ await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({translate:on})}); }catch{} }
+async function setLanguage(lang){ try{ await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({language:lang})}); }catch{} }
 function settingRow([key,label,hint,type,opt,desktop,def]){
   const row=document.createElement('div');row.className='srow';
   const lab=document.createElement('div');lab.className='slabel';
@@ -492,6 +494,12 @@ function settingRow([key,label,hint,type,opt,desktop,def]){
   }else if(type==='translate'){
     const sw=document.createElement('button');sw.className='sw'+(store.get(key,false)?' on':'');
     sw.onclick=()=>{const v=!sw.classList.contains('on');sw.classList.toggle('on',v);store.set(key,v);setTranslate(v)};ctl.append(sw);
+  }else if(type==='language'){
+    const map={'Auto-detect':'auto','English':'en','Hindi':'hi','Spanish':'es','French':'fr','German':'de','Portuguese':'pt','Chinese':'zh','Japanese':'ja','Arabic':'ar','Russian':'ru'};
+    const rmap=Object.fromEntries(Object.entries(map).map(([k,v])=>[v,k]));
+    const sel=document.createElement('select');sel.className='sel';const cur=rmap[store.get('language','en')]||'English';
+    Object.keys(map).forEach(o=>sel.add(new Option(o,o,false,o===cur)));
+    sel.onchange=()=>{const code=map[sel.value]||'en';store.set('language',code);setLanguage(code)};ctl.append(sel);
   }else if(type==='video'){
     const map={'Off':'off','Always':'always','When shared':'share'}, rmap={off:'Off',always:'Always',share:'When shared'};
     const sel=document.createElement('select');sel.className='sel';const cur=rmap[store.get('videoMode','off')]||'Off';
@@ -728,6 +736,7 @@ setView((()=>{try{const r=localStorage.getItem('route');return (r&&r!=='settings
 mtShow('library');   // populate the meetings library on load (auto-switches to live when a call starts)
 if(isTauri() && store.get('stealth',false)) setStealth(true);   // re-apply saved stealth on launch
 setVideoMode(store.get('videoMode','off'));                     // sync screen-recording mode to the capturer
+setLanguage(store.get('language','en'));                        // sync transcription language to the capturer
 setTranslate(store.get('translate',false));                     // sync translate mode to the capturer (default: transcribe)
 </script>
 </body>
