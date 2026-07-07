@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_DIR="$ROOT/stt/whisper"
 MODEL="$MODEL_DIR/ggml-large-v3-turbo-q8_0.bin"
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin"
+VAD="$MODEL_DIR/ggml-silero-v5.1.2.bin"
+VAD_URL="https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"
 
 command -v swiftc >/dev/null || { echo "Xcode Command Line Tools required: xcode-select --install"; exit 1; }
 command -v brew   >/dev/null || { echo "Homebrew required: https://brew.sh"; exit 1; }
@@ -15,6 +17,7 @@ command -v whisper-server >/dev/null || brew install whisper-cpp
 echo "2/4  Whisper model — large-v3-turbo q8_0, ~830 MB…"
 mkdir -p "$MODEL_DIR"
 [ -f "$MODEL" ] || curl -L --fail --progress-bar -o "$MODEL" "$MODEL_URL"
+[ -f "$VAD" ]   || curl -L --fail --progress-bar -o "$VAD"   "$VAD_URL"   # Silero VAD — anti-hallucination pre-filter
 
 echo "3/4  Post-call AI — LiteRT-LM + Gemma 4 E2B (text-only; effective-2B ≈ 1 GB RAM, 2.4 GB disk)…"
 command -v uv >/dev/null || brew install uv

@@ -445,7 +445,7 @@ func postRecording(_ file: String, _ startedAt: Int) {
 }
 
 let cap = Capture()
-var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = false, curLanguage = "en"
+var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto"
 // Poll the server ONLY for UI-set config (video mode + share state). inMeeting is SELF-DETECTED below.
 func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, language: String) {
     let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
@@ -453,7 +453,7 @@ func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, langua
           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
         return (curSharing, curVideoMode, curTranslate, curLanguage)
     }
-    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? false, (o["language"] as? String) ?? "en")
+    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto")
 }
 // Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
 // capture needs anyway), NOT Accessibility. A native meeting app showing its in-call window = we're in a

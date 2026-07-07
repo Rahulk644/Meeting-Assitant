@@ -115,10 +115,11 @@ fn set_tray_recording(app: tauri::AppHandle, on: bool) {
                 i += 1;
                 std::thread::sleep(Duration::from_millis(300));
             }
-            if let Some(t) = app.tray_by_id("tray") { let _ = t.set_title(None::<&str>); }
+            if let Some(t) = app.tray_by_id("tray") { let _ = t.set_title(Some("")); } // clear — None doesn't clear on macOS
         });
     } else {
         TRAY_REC.store(false, Ordering::SeqCst);
+        if let Some(t) = app.tray_by_id("tray") { let _ = t.set_title(Some("")); } // clear now, don't wait for the animation tick
     }
 }
 

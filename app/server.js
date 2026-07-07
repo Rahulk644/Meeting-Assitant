@@ -161,6 +161,7 @@ function touchLLM() { // unload our LLM after idle so it doesn't hold ~1 GB betw
 // has it up on :8091 → node sees the open port and neither spawns nor kills it (not ours to manage).
 const WHISPER_PORT = +(process.env.WHISPER_PORT || 8091);
 const WHISPER_MODEL = path.join(__dirname, "..", "stt", "whisper", "ggml-large-v3-turbo-q8_0.bin");
+const WHISPER_VAD = path.join(__dirname, "..", "stt", "whisper", "ggml-silero-v5.1.2.bin"); // Silero VAD — drops noise/silence before decoding (kills hallucinations like Handy)
 const WHISPER_IDLE_MS = 2 * 60 * 1000;
 let whisperProc = null, whisperIdle = null; // the whisper-server child WE started (null if not ours)
 async function ensureWhisper() {
@@ -169,7 +170,9 @@ async function ensureWhisper() {
   if (await portOpen("127.0.0.1", WHISPER_PORT)) return;          // someone else's (dev) — leave it
   const bin = findBin("whisper-server");
   if (bin === "whisper-server" || !fs.existsSync(WHISPER_MODEL)) return; // not installed here — skip
-  whisperProc = spawn(bin, ["-m", WHISPER_MODEL, "--host", "127.0.0.1", "--port", String(WHISPER_PORT), "-t", "4"], { stdio: "ignore" });
+  const args = ["-m", WHISPER_MODEL, "--host", "127.0.0.1", "--port", String(WHISPER_PORT), "-t", "4", "--suppress-nst"];
+  if (fs.existsSync(WHISPER_VAD)) args.push("--vad", "--vad-model", WHISPER_VAD); // Silero VAD → no hallucinations on noise
+  whisperProc = spawn(bin, args, { stdio: "ignore" });
   whisperProc.on("exit", () => { whisperProc = null; });
   console.error("whisper-server: starting (call detected)…");
 }

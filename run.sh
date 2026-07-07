@@ -30,7 +30,8 @@ trap cleanup INT TERM
 # 1) whisper-server — loads the model once, stays hot on the GPU
 if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$WHISPER_PORT/" 2>/dev/null; then
   echo "starting whisper-server (loading large-v3-turbo, ~10s)…"
-  "$WHISPER_BIN" -m "$MODEL" --host 127.0.0.1 --port "$WHISPER_PORT" -t 4 >/tmp/mt-whisper.log 2>&1 &
+  VAD="$ROOT/stt/whisper/ggml-silero-v5.1.2.bin"; [ -f "$VAD" ] && VADARGS="--vad --vad-model $VAD" || VADARGS=""
+  "$WHISPER_BIN" -m "$MODEL" --host 127.0.0.1 --port "$WHISPER_PORT" -t 4 --suppress-nst $VADARGS >/tmp/mt-whisper.log 2>&1 &
   PIDS+=($!)
 fi
 
