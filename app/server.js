@@ -14,6 +14,7 @@ const INGEST = process.argv.includes("--ingest"); // captions arrive via POST /i
 const PORT = process.env.PORT || 8787; // respect preview's assigned port; 8787 for manual runs
 const clients = new Set();
 let lastState = {}; // so a client connecting mid-meeting gets current title/participants/speaker
+let msProc = null, msShutdown = false; // meeting-state child + shutdown flag (respawn it if it dies mid-session)
 const MEETINGS_DIR = path.join(__dirname, "..", "data", "meetings");
 const REC_DIR = path.join(MEETINGS_DIR, "rec"); // screen recordings (.mp4), written by meeting-tap
 fs.mkdirSync(REC_DIR, { recursive: true });
@@ -145,8 +146,8 @@ function touchLLM() { // unload our LLM after idle so it doesn't hold ~1 GB betw
   clearTimeout(llmIdle);
   llmIdle = setTimeout(() => { if (llmProc) { llmProc.kill(); llmProc = null; } }, LLM_IDLE_MS);
 }
-["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => { if (llmProc) llmProc.kill(); process.exit(0); }));
-process.on("exit", () => { if (llmProc) llmProc.kill(); });
+["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => { msShutdown = true; if (llmProc) llmProc.kill(); if (msProc) msProc.kill(); process.exit(0); }));
+process.on("exit", () => { msShutdown = true; if (llmProc) llmProc.kill(); if (msProc) msProc.kill(); });
 
 async function chat(messages, opts = {}) {
   const llm = opts.llm || {};
@@ -285,12 +286,14 @@ http.createServer((req, res) => {
 
 // LIVE: forward meeting-state's NDJSON (state + caption events) straight through.
 function startMeetingState() {
+  if (process.env.ASSISTANT_RUST_MEETING_STATE === "1") return; // packaged: the app spawns it directly (so it gets the AX grant)
   const bin = path.join(__dirname, "..", "meeting-state", "meeting-state");
   if (!fs.existsSync(bin)) {
     console.error(`! meeting-state not built. Run: (cd ../meeting-state && swiftc -O meeting-state.swift -o meeting-state)`);
     return;
   }
   const p = spawn(bin, [], { stdio: ["ignore", "pipe", "inherit"] });
+  msProc = p;
   let buf = "";
   p.stdout.on("data", (d) => {
     buf += d;
@@ -302,7 +305,10 @@ function startMeetingState() {
       try { broadcast(JSON.parse(line)); } catch {}
     }
   });
-  p.on("exit", (c) => console.error(`meeting-state exited (${c})`));
+  p.on("exit", (c) => {
+    console.error(`meeting-state exited (${c})`);
+    if (!msShutdown) setTimeout(startMeetingState, 1000); // died mid-session — respawn so the app doesn't go blind to calls
+  });
 }
 
 // DEMO: a scripted snippet using real teammate names so the GUI looks like a real standup.

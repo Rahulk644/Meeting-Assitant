@@ -39,6 +39,29 @@ fn port_open(port: u16) -> bool {
         .is_some()
 }
 
+// Spawn the Accessibility detector (speaker names + in-call state) DIRECTLY — not via node — so macOS
+// attributes its Accessibility check to the app itself. A grandchild spawned through node is NOT covered by
+// the app's Accessibility grant (mic/screen-recording DO reach a direct child, but AX does not reach a
+// grandchild), which is why names never showed. Its NDJSON is forwarded to the server's /ingest.
+fn start_meeting_state() {
+    let ms = format!("{}/meeting-state/meeting-state", REPO);
+    if !Path::new(&ms).exists() { return; }
+    if let Ok(mut child) = Command::new(&ms).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
+        if let Some(out) = child.stdout.take() {
+            std::thread::spawn(move || {
+                for line in std::io::BufRead::lines(std::io::BufReader::new(out)).map_while(Result::ok) {
+                    if line.trim().is_empty() { continue; }
+                    let _ = Command::new("curl")
+                        .args(["-s", "-X", "POST", "http://127.0.0.1:8790/ingest",
+                               "-H", "Content-Type: application/json", "-d", line.as_str()])
+                        .stdout(Stdio::null()).stderr(Stdio::null()).status();
+                }
+            });
+        }
+        if let Ok(mut v) = CHILDREN.lock() { v.push(child); }
+    }
+}
+
 // Bring up the on-device stack. The Node GUI/relay server is always needed for the UI (it also spawns
 // meeting-state for names + in-call detection). whisper-server + the capturer are the transcription
 // pipeline: a PACKAGED build hosts them itself (no dev commands), while `npm run dev` leaves them to
@@ -49,6 +72,9 @@ fn start_stack() {
             track(Command::new(node)
                 .arg(format!("{}/app/server.js", REPO)).arg("--ingest")
                 .env("PORT", "8790")
+                // Packaged: the app spawns meeting-state itself (a DIRECT child, so it gets the AX grant) —
+                // tell node to skip its own copy. In dev (debug), node owns meeting-state under Terminal's grant.
+                .env("ASSISTANT_RUST_MEETING_STATE", if cfg!(debug_assertions) { "0" } else { "1" })
                 .stdout(Stdio::null()).stderr(Stdio::null()).spawn());
         }
     }
@@ -70,6 +96,7 @@ fn start_stack() {
             .args(["8790", "http://127.0.0.1:8091/inference", "--gate", "on", "--rec-dir", &recdir])
             .stdout(Stdio::null()).stderr(log).spawn());
     }
+    start_meeting_state(); // names + participants — direct child so Accessibility works
 }
 
 // Hide/show the window from screen-share & screenshots (NSWindow.sharingType = .none on macOS,

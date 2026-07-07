@@ -188,6 +188,18 @@
   .livepill{font-size:9.5px;font-weight:700;letter-spacing:.04em;color:var(--ok);border:1px solid var(--ok);
         border-radius:20px;padding:1px 7px 1px 6px;display:inline-flex;align-items:center;gap:5px;flex:0 0 auto}
   .livepill .ld{width:5px;height:5px}
+  /* Persistent recording indicator — floats over EVERY view while a call is captured (fixes view-bound live). */
+  .rec-ind{position:fixed;top:11px;right:13px;z-index:70;align-items:center;gap:8px;padding:5px 11px 5px 9px;
+    border-radius:999px;background:var(--s2);border:1px solid var(--ok);cursor:pointer;font-size:11.5px;
+    font-weight:650;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.10)}
+  .rec-ind:not([hidden]){display:flex}
+  .rec-ind:hover{box-shadow:0 2px 9px rgba(0,0,0,.17)}
+  .rec-wave{display:flex;align-items:center;gap:2px;height:13px}
+  .rec-wave i{width:2.5px;height:4px;border-radius:2px;background:var(--ok);animation:rw .9s ease-in-out infinite}
+  .rec-wave i:nth-child(2){animation-delay:.12s}.rec-wave i:nth-child(3){animation-delay:.24s}
+  .rec-wave i:nth-child(4){animation-delay:.36s}.rec-wave i:nth-child(5){animation-delay:.48s}
+  @keyframes rw{0%,100%{height:4px}50%{height:13px}}
+  @media (prefers-reduced-motion:reduce){.rec-wave i{animation:none;height:9px}}
   #mt-detail .feed{padding-top:8px}
   #det-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .recvid{width:100%;border-radius:var(--r-lg);background:#000;margin-bottom:18px;display:block;max-height:58vh;border:1px solid var(--hair)}
@@ -223,7 +235,7 @@
     <nav id="nav-main">
       <button class="nav" data-view="dictation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>Dictation</button>
       <button class="nav" data-view="writing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>Writing Assistant</button>
-      <button class="nav" data-view="meetings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>Meetings<span class="livedot"></span></button>
+      <button class="nav" data-view="meetings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>Meetings<span class="livedot" id="liveDot" hidden></span></button>
       <button class="nav" data-view="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 8V4M8 2h8"/><circle cx="8.5" cy="14" r="1.3"/><circle cx="15.5" cy="14" r="1.3"/></svg>Agents</button>
       <button class="nav" data-view="feedback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Feedback &amp; Support</button>
     </nav>
@@ -238,6 +250,9 @@
     </nav>
   </aside>
 
+  <button class="rec-ind" id="recInd" hidden title="Recording — open live transcript">
+    <span class="rec-wave"><i></i><i></i><i></i><i></i><i></i></span><span>Recording</span>
+  </button>
   <div class="main">
     <section id="v-meetings" class="view on">
       <!-- LIBRARY (default landing) -->
@@ -321,6 +336,7 @@ function setView(name){
   try{localStorage.setItem('route',name)}catch{}
 }
 document.querySelectorAll('.nav[data-view]').forEach(n=> n.onclick=()=> n.dataset.view==='settings' ? openSettings() : setView(n.dataset.view));
+$('#recInd').onclick=()=>{ setView('meetings'); if(typeof mtShow==='function') mtShow('live'); };  // click the indicator → jump to live, from any view
 
 /* ---------- theme (light default · dark · system) ---------- */
 function effTheme(m){return m==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):m}
@@ -514,9 +530,11 @@ function onState(s){
   if(s.inMeeting!==undefined)subEl.textContent=s.inMeeting?(s.app?('on '+s.app):'in a call'):'Not in a call';
   if(s.participants&&s.participants.length)renderPeople(s.participants,s.activeSpeaker);
   if(s.activeSpeaker){speakingEl.hidden=false;activeEl.textContent=s.activeSpeaker;renderPeople(null,s.activeSpeaker)}
-  if(s.inMeeting===true){ $('#goLive').hidden=false; if(!liveShown && mtCurrent==='library'){ liveShown=true; mtShow('live'); } }
-  else if(s.inMeeting===false && mtCurrent==='library') loadLibrary();
+  if(s.inMeeting===true){ setRec(true); $('#goLive').hidden=false; if(!liveShown && mtCurrent==='library'){ liveShown=true; mtShow('live'); } }
+  else if(s.inMeeting===false){ setRec(false); if(mtCurrent==='library') loadLibrary(); }
 }
+// Persistent recording indicator (floats over every view) + nav live-dot — driven by real inMeeting state.
+function setRec(on){ const r=$('#recInd'); if(r)r.hidden=!on; const d=$('#liveDot'); if(d)d.hidden=!on; }
 function lineRow(c){
   const label=c.self?(c.speaker==='You'?'You':c.speaker+' (Me)'):c.speaker;
   const row=document.createElement('div');row.className='row'+(c.self?' self':'');

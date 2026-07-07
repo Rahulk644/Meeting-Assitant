@@ -225,6 +225,15 @@ private func nameFromProfileDesc(_ d: String) -> String? {
     return validName(name) ? name : nil
 }
 
+/// "Talking: rajat prakash" -> "Rajat Prakash". Zoom shows this AXValue for the active speaker in the
+/// floating video window — and it's the ONE name still reachable while YOU are screen-sharing (which
+/// collapses the video tiles the other selectors read). Authoritative for who's speaking now.
+private func nameFromTalking(_ s: String) -> String? {
+    guard s.lowercased().hasPrefix("talking:") else { return nil }
+    let raw = String(s.dropFirst("talking:".count)).trimmingCharacters(in: .whitespaces)
+    return validName(raw) ? raw.capitalized : nil
+}
+
 /// Walk the app's windows harvesting tile/profile names. The floating video window's tile
 /// is the active speaker; all harvested names form the roster.
 private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], active: String?) {
@@ -235,6 +244,10 @@ private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], active:
         if let d = axStr(el, kDesc), let n = nameFromTileDesc(d) ?? nameFromProfileDesc(d) {
             if !names.contains(n) { names.append(n) }
             if inFloat && active == nil { active = n }   // first tile in the floating window = who's on screen
+        }
+        if let v = axGet(el, kValue) as? String, let n = nameFromTalking(v) {   // "Talking: X" — works even while sharing
+            if !names.contains(n) { names.append(n) }
+            active = n
         }
         for k in axKids(el) { walk(k, floating: inFloat, depth: depth + 1) }
     }
@@ -322,10 +335,13 @@ case .watch:
     var prompted = false
     while true {
         if !axTrusted(prompt: false) {
-            emit(Line(type: "status", axTrusted: false,
-                      msg: "Grant Accessibility: System Settings > Privacy & Security > Accessibility"))
+            // meeting-state is now spawned as a DIRECT child of the app, so Accessibility CAN be granted to it
+            // (via the app's grant). Request it once per launch; once granted, a valid app signature makes it
+            // stick, so it won't nag again. Detection still works without it (the capturer self-detects); this
+            // only enables speaker names.
+            emit(Line(type: "status", axTrusted: false, msg: "Grant Accessibility for speaker names: System Settings > Privacy & Security > Accessibility"))
             if !prompted { _ = axTrusted(prompt: true); prompted = true }
-            Thread.sleep(forTimeInterval: interval)
+            Thread.sleep(forTimeInterval: max(interval, 3))
             continue
         }
         let s = snapshot()

@@ -279,7 +279,8 @@ func writeWav16(_ samples: [Float], to url: URL) {
 // Ask whisper-server for verbose_json → (full text, mean per-word confidence). Whisper reports a
 // probability per word; averaged, it separates real speech (~0.9) from noise/hallucination (low).
 func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
-    let out = curl(["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json"])
+    // language=auto → Whisper detects the spoken language; translate=true → output is always English.
+    let out = curl(["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json", "-F", "language=auto", "-F", "translate=true"])
     guard let data = out.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
     let text = (obj["text"] as? String) ?? ""
@@ -441,21 +442,57 @@ func postRecording(_ file: String, _ startedAt: Int) {
 
 let cap = Capture()
 var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0
-// Poll the server: are we in a call? is a screen being shared? which video mode? (off/always/share)
-func fetchState() -> (inCall: Bool, sharing: Bool, videoMode: String) {
+// Poll the server ONLY for UI-set config (video mode + share state). inMeeting is SELF-DETECTED below.
+func fetchConfig() -> (sharing: Bool, videoMode: String) {
     let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
     guard let d = out.data(using: .utf8),
           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
-        return (GATE ? wasInCall : true, curSharing, curVideoMode)
+        return (curSharing, curVideoMode)
     }
-    let inCall = GATE ? ((o["inMeeting"] as? Bool) ?? false) : true
-    return (inCall, (o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0)
+    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0)
+}
+// Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
+// capture needs anyway), NOT Accessibility. A native meeting app showing its in-call window = we're in a
+// meeting. This is what lets the PACKAGED app detect calls itself: the AX-based meeting-state can't run
+// as a grandchild-of-the-app under macOS TCC, but the capturer is a direct child so its grants work.
+// Returns the app key ("zoom"/"teams"/"call") or nil when not in a call.
+var detectErrLogged = false
+func detectMeetingApp(_ done: @escaping (String?) -> Void) {
+    SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
+        if let error = error {   // almost always: Screen Recording not granted to this app
+            if !detectErrLogged { err(">> can't read the window list to detect the call — grant Screen Recording to Assistant. (\(error.localizedDescription))"); detectErrLogged = true }
+            done(nil); return
+        }
+        var hit: String? = nil
+        for w in (content?.windows ?? []) {
+            guard let bid = w.owningApplication?.bundleIdentifier, NATIVE_MEETING.contains(bid) else { continue }
+            let t = (w.title ?? "").lowercased()
+            let inCall = (bid == "us.zoom.xos") ? t.contains("zoom meeting") : t.contains("meeting")
+            if inCall { hit = (bid == "us.zoom.xos") ? "zoom" : (bid.hasPrefix("com.microsoft.teams") ? "teams" : "call"); break }
+        }
+        done(hit)
+    }
+}
+// Push inMeeting to the server so the UI flips live + shows the recording indicator.
+func postInMeeting(_ on: Bool, _ app: String) {
+    let st: [String: Any] = on ? ["inMeeting": true, "app": app] : ["inMeeting": false]
+    guard let data = try? JSONSerialization.data(withJSONObject: ["type": "state", "state": st] as [String: Any]) else { return }
+    let f = "/tmp/mt_state.json"; try? data.write(to: URL(fileURLWithPath: f))
+    _ = curl(["-s", "-X", "POST", "http://127.0.0.1:\(guiPort)/ingest", "-H", "Content-Type: application/json", "--data-binary", "@\(f)"])
+}
+func setInCall(_ app: String?) {
+    let inCall = app != nil
+    guard inCall != wasInCall else { return }
+    wasInCall = inCall
+    postInMeeting(inCall, app ?? "")
+    inCall ? cap.start(mode: curVideoMode) : cap.stop()
 }
 func tick() {
-    let s = fetchState()
-    curSharing = s.sharing; curVideoMode = s.videoMode
+    let cfg = fetchConfig()
+    curSharing = cfg.sharing; curVideoMode = cfg.videoMode
     cap.updateShare()
-    if s.inCall != wasInCall { wasInCall = s.inCall; s.inCall ? cap.start(mode: s.videoMode) : cap.stop() }
+    if !GATE { setInCall("call"); return }                   // --gate off: always capture
+    detectMeetingApp { app in DispatchQueue.main.async { setInCall(app) } }
 }
 
 err(">> meeting-tap ready — gate:\(GATE ? "on (captures only during a call)" : "off (always captures)") gui:\(guiPort) whisper:\(whisperURL) app:\(APP_SEL) mic:\(MIC_ON) me:\(ME)")
