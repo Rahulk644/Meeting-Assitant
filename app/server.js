@@ -67,12 +67,29 @@ function meetingSummary(m) {
            snippet: ((m.lines.find(l => l.text && l.text.length > 1) || {}).text || "").slice(0, 140),
            summarized: !!m.summary, live: m.endedAt == null };
 }
+// A server killed mid-call leaves a meeting with endedAt=null; on restart it isn't actually live, so
+// finalize any such orphans (else they show "LIVE" forever). Only the in-memory `cur` is ever live.
+function finalizeOrphans() {
+  try {
+    for (const f of fs.readdirSync(MEETINGS_DIR)) {
+      if (!f.endsWith(".json")) continue;
+      const p = path.join(MEETINGS_DIR, f);
+      try {
+        const m = JSON.parse(fs.readFileSync(p));
+        if (m.endedAt == null) {
+          m.endedAt = (m.lines && m.lines.length && m.lines[m.lines.length - 1].ts) || m.startedAt || Date.now();
+          fs.writeFileSync(p, JSON.stringify(m));
+        }
+      } catch {}
+    }
+  } catch {}
+}
 function listMeetings() {
   const out = [];
   try {
     for (const f of fs.readdirSync(MEETINGS_DIR)) {
       if (!f.endsWith(".json")) continue;
-      try { out.push(meetingSummary(JSON.parse(fs.readFileSync(path.join(MEETINGS_DIR, f))))); } catch {}
+      try { const s = meetingSummary(JSON.parse(fs.readFileSync(path.join(MEETINGS_DIR, f)))); s.live = false; out.push(s); } catch {}
     }
   } catch {}
   if (cur && cur.lines.length && !out.some(x => x.id === cur.id)) out.push(meetingSummary(cur));
@@ -231,6 +248,7 @@ http.createServer((req, res) => {
   res.end();
 }).listen(PORT, () => {
   console.log(`\n  Live transcript → http://localhost:${PORT}   ${DEMO ? "(demo)" : "(live)"}\n`);
+  finalizeOrphans(); // meetings a prior (killed) server left open aren't live — close them
   if (DEMO) { startDemo(); return; }
   // No hard-coded "inMeeting" — meeting-state drives it, so the app is only "live" during a real call
   // (and meeting-tap, which polls /api/state, only captures then). INGEST just means captions POST in.

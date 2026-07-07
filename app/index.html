@@ -24,6 +24,7 @@
     --pri:#5e6ad2; --pri-hi:#828fff; --pri-fo:#5e69d1; --ok:#27a644;
   }
   *{box-sizing:border-box}
+  [hidden]{display:none!important}   /* else display:flex on .live-btn/.speaking overrides the attribute */
   html,body{height:100%;margin:0}
   body{
     background:var(--canvas); color:var(--ink);
