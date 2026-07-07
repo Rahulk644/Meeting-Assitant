@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.assistant.app",
   "build": {
-    "frontendDist": "../../app",
+    "frontendDist": "http://localhost:8790/",
     "devUrl": "http://localhost:8790"
   },
   "app": {
