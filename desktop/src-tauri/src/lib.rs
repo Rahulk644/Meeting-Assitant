@@ -156,6 +156,15 @@ pub fn run() {
 
             Ok(())
         })
+        .on_window_event(|window, event| {
+            // macOS convention: the red X HIDES the window (the app keeps running in the menu-bar tray);
+            // Quit is Cmd-Q or the tray's "Quit Assistant". Without this, closing the only window exits the
+            // whole app — which would also tear down capture mid-call. Re-open from the tray's "Show".
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![set_stealth, set_tray_recording])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
