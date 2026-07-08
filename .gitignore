@@ -1,10 +1,13 @@
-# Whisper model — downloaded by ./setup.sh (too large for git)
+# Transcription models — downloaded by ./setup.sh (too large for git)
 stt/whisper/*.bin
+stt/whisper/*.gguf
 stt/whisper/bin/
 
 # Native build artifacts — built by ./setup.sh
 stt/meeting-tap
 meeting-state/meeting-state
+stt/transcribe-server/transcribe-server
+stt/transcribe-server/.transcribe.cpp/
 
 # macOS / editor
 .DS_Store

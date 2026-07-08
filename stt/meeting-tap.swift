@@ -1,7 +1,9 @@
 // meeting-tap.swift (v3) — continuous meeting transcription from TWO sources.
 //   • System audio (ScreenCaptureKit), scoped to the meeting app  → the other participants.
 //   • Microphone   (AVAudioEngine)                                → you.
-// Both → energy-VAD → per-utterance WAV → hot whisper-server → caption POSTed to the GUI.
+// Both → energy-VAD splits on natural pauses → WHOLE-utterance WAV → on-demand transcribe-server
+// (transcribe.cpp on the Metal GPU) → caption POSTed to the GUI. Feeding whole utterances (not fixed-length
+// chunks) is what makes it accurate — a mid-sentence cut severs context and the model hallucinates.
 //
 // Build:  swiftc -O -target arm64-apple-macos13.0 meeting-tap.swift -o meeting-tap \
 //           -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
@@ -19,14 +21,15 @@
 //               (system 0.006, mic 0.02 — the mic is higher because a room is noisier than the feed).
 //   --min-conf 0.5   drop utterances below this mean word-confidence (kills noise hallucinations).
 //   --expressions    keep Whisper's *sigh* / (laughs) cues as [sigh] tags for a sentiment read.
-//   --gate on|off    on (default) captures ONLY while you're in a call (polls the server's meeting-state,
-//                    releasing the mic otherwise); off = always capture (Google Meet — AX can't detect it).
+//   --gate on|off    on (default) captures ONLY while you're in a call (self-detected from the SCK window
+//                    list, releasing the mic otherwise); off = always capture (Google Meet — no native window).
 //   NOTE: use HEADPHONES. On speakers, the mic re-hears the remote voices → duplicate/misattributed
 //         lines. Headphones give a clean split: mic = you, system audio = them.
 //
-// ponytail: energy-threshold VAD (not Silero) — simplest thing that segments; swap in Silero if it
-// mis-segments in noisy calls. Core Audio process taps (Fathom's per-app method) need the macOS 14.2+
-// SDK, which this toolchain (13.3) lacks — hence ScreenCaptureKit app-scoping instead.
+// ponytail: the SEGMENTER is a simple energy threshold — it only decides utterance BOUNDARIES (speech vs
+// pause) and gates out sub-threshold silence/noise upstream; transcribe-server then does the anti-
+// hallucination (temperature=0, no fallback) on what reaches it. Core Audio process taps (Fathom's per-app
+// method) need the macOS 14.2+ SDK, which this toolchain (13.3) lacks — hence ScreenCaptureKit app-scoping.
 
 import Foundation
 import ScreenCaptureKit
@@ -52,7 +55,7 @@ let SPEECH_RMS = Float(opt("--rms", "0.006")) ?? 0.006       // system-audio gat
 let MIC_RMS    = Float(opt("--mic-rms", "0.02")) ?? 0.02     // mic gate — higher: a room is noisier than the feed
 let MIN_CONF   = Float(opt("--min-conf", "0.5")) ?? 0.5      // drop utterances below this mean word-confidence
 let EXPRESSIONS = A.contains("--expressions")                // keep *sigh*/(laughs) as [sigh] sentiment cues
-let GATE = opt("--gate", "on") != "off"                      // capture ONLY while in a call (polls /api/state)
+let GATE = opt("--gate", "on") != "off"                      // capture ONLY while in a call (self-detected from the window list)
 let VIDEO_MODE0 = opt("--video", "off")                      // off | always | share — server config overrides live
 let REC_DIR = opt("--rec-dir", "data/meetings/rec")          // where screen recordings (.mp4) are written
 let VIDEO_FPS: Int32 = 10                                    // screen content doesn't need 30fps; 10 keeps files small
@@ -62,7 +65,10 @@ let ME = { let n = NSFullUserName(); return opt("--me", n.isEmpty ? "Me" : n) }(
 let SR = 16000.0
 let SILENCE_HANGOVER = 0.7          // seconds of quiet that ends an utterance
 let MIN_SEG = 0.5                   // ignore blips shorter than this
-let MAX_SEG = Double(opt("--max-seg", "4")) ?? 4.0   // force-flush long speech every N s (lower = snappier, less lag)
+// Safety cap only — the REAL utterance boundary is SILENCE_HANGOVER (a natural pause). Whisper needs the
+// whole utterance for context; chopping at 4 s severed words mid-sentence and made it hallucinate. Handy
+// feeds the entire utterance (25 s is fine — under Whisper's 30 s window). Cut only a nonstop monologue.
+let MAX_SEG = Double(opt("--max-seg", "25")) ?? 25.0
 
 // Native meeting apps we auto-scope to (browsers excluded on purpose — a browser may just be YouTube).
 let NATIVE_MEETING: Set<String> = [
@@ -228,14 +234,25 @@ final class VideoRecorder {
         guard let fmt = CMSampleBufferGetFormatDescription(sb) else { return }
         let dim = CMVideoFormatDescriptionGetDimensions(fmt)
         guard let w = try? AVAssetWriter(url: url, fileType: .mp4) else { err("video: writer init failed"); return }
+        // Screen content is mostly static → cap at 4 Mbps with sparse keyframes; hardware H.264 (VideoToolbox,
+        // the default on Apple Silicon) does the encode. Keeps a long-meeting file small and the encoder light.
+        let compression: [String: Any] = [
+            AVVideoAverageBitRateKey: 4_000_000,
+            AVVideoMaxKeyFrameIntervalKey: Int(VIDEO_FPS) * 10,   // a keyframe every ~10 s
+            AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+        ]
         let s: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264,
-                                AVVideoWidthKey: Int(dim.width), AVVideoHeightKey: Int(dim.height)]
+                                AVVideoWidthKey: Int(dim.width), AVVideoHeightKey: Int(dim.height),
+                                AVVideoCompressionPropertiesKey: compression]
         let inp = AVAssetWriterInput(mediaType: .video, outputSettings: s)
         inp.expectsMediaDataInRealTime = true
         if w.canAdd(inp) { w.add(inp) }
+        // Flush a movie fragment every 10 s: RAM stays flat over a long call, and a half-written file (hard
+        // crash / power loss) is still playable up to the last fragment — "record in chunks", but one file.
+        w.movieFragmentInterval = CMTime(value: 10, timescale: 1)
         w.startWriting()
         writer = w; input = inp
-        err(">> screen recording → \(url.lastPathComponent) (\(dim.width)x\(dim.height))")
+        err(">> screen recording → \(url.lastPathComponent) (\(dim.width)x\(dim.height)) @\(VIDEO_FPS)fps ≤4Mbps")
     }
     func finish(_ done: @escaping (Bool) -> Void) {
         q.async {
@@ -279,9 +296,10 @@ func writeWav16(_ samples: [Float], to url: URL) {
 // Ask whisper-server for verbose_json → (full text, mean per-word confidence). Whisper reports a
 // probability per word; averaged, it separates real speech (~0.9) from noise/hallucination (low).
 func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
-    // Language is EXPLICIT (Settings → default English), not auto — like Handy. `auto` misfires on
-    // code-switched speech and, with translate, hallucinates a wrong script (the "کن کن کن" bug). With the
-    // language pinned, both transcribe and translate are accurate. translate (→ English) is an opt-in toggle.
+    // Two independent knobs: `language` = DETECTION (default `auto` — Rahul speaks Hindi + English, so let
+    // Whisper detect per utterance), `translate` = OUTPUT (default on → English). The old "auto hallucinates
+    // a wrong script" (کن کن کن) was really our 4 s fragments starving detection — on whole utterances `auto`
+    // is accurate (A/B-verified against Handy's own WAVs). Both overridable in Settings → Meetings.
     var args = ["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json", "-F", "language=\(curLanguage)"]
     if curTranslate { args += ["-F", "translate=true"] }
     let out = curl(args)
@@ -371,10 +389,10 @@ if LIST_APPS {
     RunLoop.main.run()
 }
 
-// Capture is GATED on being in a real call: the mic + system taps run only while the server's
-// meeting-state reports inMeeting, and are torn down (releasing the mic) otherwise — so nothing is
-// captured when you're not in a meeting. `--gate off` = always capture (Google Meet, which the
-// Accessibility layer can't see).
+// Capture is GATED on being in a real call: the mic + system taps run only while we self-detect a call
+// in the ScreenCaptureKit window list (see detectMeetingApp), and are torn down (releasing the mic)
+// otherwise — so nothing is captured when you're not in a meeting. `--gate off` = always capture
+// (Google Meet, whose window we can't yet recognize).
 final class Capture {
     var stream: SCStream?, sckOut: SCKOut?, videoOut: VideoOut?, rec: VideoRecorder?, mic: Mic?
     var running = false, mode = "off", recFile = ""
@@ -394,7 +412,12 @@ final class Capture {
             cfg.excludesCurrentProcessAudio = false            // we play no audio; excluding wedges capture
             cfg.sampleRate = 16000; cfg.channelCount = 1
             if wantVideo {
-                cfg.width = Int(display.width); cfg.height = Int(display.height)
+                // Cap capture at 1080p tall (preserve aspect, even dims for H.264). A meeting recording
+                // doesn't need full retina, and fewer pixels = less capture bandwidth AND less encoder work
+                // on long calls — the main lever against lag. Downscale is done by SCK on the GPU (free).
+                let sc = min(1.0, 1080.0 / Double(display.height))
+                cfg.width  = Int(Double(display.width)  * sc) & ~1
+                cfg.height = Int(Double(display.height) * sc) & ~1
                 cfg.minimumFrameInterval = CMTime(value: 1, timescale: VIDEO_FPS)
                 cfg.pixelFormat = kCVPixelFormatType_32BGRA
                 cfg.queueDepth = 6
@@ -471,11 +494,15 @@ func detectMeetingApp(_ done: @escaping (String?) -> Void) {
         for w in (content?.windows ?? []) {
             guard let bid = w.owningApplication?.bundleIdentifier, NATIVE_MEETING.contains(bid) else { continue }
             let t = (w.title ?? "").lowercased()
-            // Zoom hides the "Zoom Meeting" window while YOU screen-share, leaving the floating video /
-            // share-statusbar windows — match those too, so sharing doesn't read as "call ended".
+            // Zoom keeps an OFF-SCREEN "zoom floating video window" alive even when idle (no call), so matching
+            // it unconditionally false-detected a call whenever Zoom was merely open. The real "Zoom Meeting"
+            // window exists ONLY during a call → match it unconditionally. The floating-video / share-statusbar
+            // windows (the screen-share case, where Zoom hides the main window) count ONLY while on screen —
+            // during a share they're visible; idle they sit off-screen.
             let inCall = (bid == "us.zoom.xos")
-                ? (t.contains("zoom meeting") || t.contains("floating video") || t.contains("share statusbar"))
-                : t.contains("meeting")
+                ? (t.contains("zoom meeting")
+                   || (w.isOnScreen && (t.contains("floating video") || t.contains("share statusbar"))))
+                : (w.isOnScreen && t.contains("meeting"))
             if inCall { hit = (bid == "us.zoom.xos") ? "zoom" : (bid.hasPrefix("com.microsoft.teams") ? "teams" : "call"); break }
         }
         done(hit)

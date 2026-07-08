@@ -15,23 +15,31 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUI_PORT="${GUI_PORT:-8790}"
 WHISPER_PORT="${WHISPER_PORT:-8091}"
-MODEL="$ROOT/stt/whisper/ggml-large-v3-turbo-q8_0.bin"
+TS_BIN="$ROOT/stt/transcribe-server/transcribe-server"       # primary: transcribe.cpp (faster, lighter, cleaner)
+TS_MODEL="$ROOT/stt/whisper/whisper-large-v3-turbo-Q8_0.gguf"
+MODEL="$ROOT/stt/whisper/ggml-large-v3-turbo-q8_0.bin"       # whisper.cpp fallback (GGML)
 WHISPER_BIN="$(command -v whisper-server || true)"
 
 [ -x "$ROOT/stt/meeting-tap" ] || { echo "Not built. Run ./setup.sh first."; exit 1; }
-[ -f "$MODEL" ]               || { echo "Model missing. Run ./setup.sh first."; exit 1; }
-[ -n "$WHISPER_BIN" ]         || { echo "whisper-server not found — run: brew install whisper-cpp"; exit 1; }
 command -v node >/dev/null    || { echo "node is required — brew install node"; exit 1; }
+if   [ -x "$TS_BIN" ] && [ -f "$TS_MODEL" ]; then :
+elif [ -n "$WHISPER_BIN" ] && [ -f "$MODEL" ]; then :
+else echo "No STT engine. Run ./setup.sh first (builds transcribe-server), or: brew install whisper-cpp"; exit 1; fi
 
 PIDS=()
 cleanup() { echo; echo "stopping…"; kill "${PIDS[@]}" 2>/dev/null; pkill -f 'app/server.js' 2>/dev/null; exit 0; }
 trap cleanup INT TERM
 
-# 1) whisper-server — loads the model once, stays hot on the GPU
+# 1) STT server — loads the model once, stays hot on the GPU. Prefer transcribe.cpp; fall back to whisper.cpp
+#    (no Silero VAD — it degraded clean speech; whole-utterance capture + conf gate handle noise).
 if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$WHISPER_PORT/" 2>/dev/null; then
-  echo "starting whisper-server (loading large-v3-turbo, ~10s)…"
-  VAD="$ROOT/stt/whisper/ggml-silero-v5.1.2.bin"; [ -f "$VAD" ] && VADARGS="--vad --vad-model $VAD" || VADARGS=""
-  "$WHISPER_BIN" -m "$MODEL" --host 127.0.0.1 --port "$WHISPER_PORT" -t 4 --suppress-nst $VADARGS >/tmp/mt-whisper.log 2>&1 &
+  if [ -x "$TS_BIN" ] && [ -f "$TS_MODEL" ]; then
+    echo "starting transcribe-server (transcribe.cpp, large-v3-turbo)…"
+    "$TS_BIN" -m "$TS_MODEL" --host 127.0.0.1 --port "$WHISPER_PORT" >/tmp/mt-whisper.log 2>&1 &
+  else
+    echo "starting whisper-server (fallback, large-v3-turbo, ~10s)…"
+    "$WHISPER_BIN" -m "$MODEL" --host 127.0.0.1 --port "$WHISPER_PORT" -t 4 --suppress-nst >/tmp/mt-whisper.log 2>&1 &
+  fi
   PIDS+=($!)
 fi
 

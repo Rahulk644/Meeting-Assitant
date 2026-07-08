@@ -160,21 +160,31 @@ function touchLLM() { // unload our LLM after idle so it doesn't hold ~1 GB betw
 // and kills it WHISPER_IDLE_MS after the call ends, so it's off RAM between calls. In dev, run.sh already
 // has it up on :8091 → node sees the open port and neither spawns nor kills it (not ours to manage).
 const WHISPER_PORT = +(process.env.WHISPER_PORT || 8091);
-const WHISPER_MODEL = path.join(__dirname, "..", "stt", "whisper", "ggml-large-v3-turbo-q8_0.bin");
-const WHISPER_VAD = path.join(__dirname, "..", "stt", "whisper", "ggml-silero-v5.1.2.bin"); // Silero VAD — drops noise/silence before decoding (kills hallucinations like Handy)
+// Primary STT engine: transcribe.cpp (handy-computer) held hot behind our transcribe-server — ~half the RAM
+// and ~2x the speed of whisper-server on Apple Silicon, and cleaner output (proper punctuation, no dropped
+// onsets). Falls back to whisper.cpp's whisper-server if transcribe-server isn't built on this machine.
+const TS_BIN = path.join(__dirname, "..", "stt", "transcribe-server", "transcribe-server");
+const TS_MODEL = path.join(__dirname, "..", "stt", "whisper", "whisper-large-v3-turbo-Q8_0.gguf");
+const WHISPER_MODEL = path.join(__dirname, "..", "stt", "whisper", "ggml-large-v3-turbo-q8_0.bin"); // whisper.cpp fallback
 const WHISPER_IDLE_MS = 2 * 60 * 1000;
-let whisperProc = null, whisperIdle = null; // the whisper-server child WE started (null if not ours)
+let whisperProc = null, whisperIdle = null; // the STT-server child WE started (null if not ours)
 async function ensureWhisper() {
   if (whisperIdle) { clearTimeout(whisperIdle); whisperIdle = null; }
   if (whisperProc) return;                                        // ours, already up
   if (await portOpen("127.0.0.1", WHISPER_PORT)) return;          // someone else's (dev) — leave it
-  const bin = findBin("whisper-server");
-  if (bin === "whisper-server" || !fs.existsSync(WHISPER_MODEL)) return; // not installed here — skip
-  const args = ["-m", WHISPER_MODEL, "--host", "127.0.0.1", "--port", String(WHISPER_PORT), "-t", "4", "--suppress-nst"];
-  if (fs.existsSync(WHISPER_VAD)) args.push("--vad", "--vad-model", WHISPER_VAD); // Silero VAD → no hallucinations on noise
+  let bin, args;
+  if (fs.existsSync(TS_BIN) && fs.existsSync(TS_MODEL)) {         // primary: transcribe.cpp
+    bin = TS_BIN;
+    args = ["-m", TS_MODEL, "--host", "127.0.0.1", "--port", String(WHISPER_PORT)];
+  } else {                                                        // fallback: whisper.cpp — no Silero VAD (it
+    const ws = findBin("whisper-server");                         // degraded clean speech: dropped onsets, lost
+    if (ws === "whisper-server" || !fs.existsSync(WHISPER_MODEL)) return; // punctuation). Whole-utterance capture
+    bin = ws;                                                     // + the mic energy-gate + conf gate handle noise.
+    args = ["-m", WHISPER_MODEL, "--host", "127.0.0.1", "--port", String(WHISPER_PORT), "-t", "4", "--suppress-nst"];
+  }
   whisperProc = spawn(bin, args, { stdio: "ignore" });
   whisperProc.on("exit", () => { whisperProc = null; });
-  console.error("whisper-server: starting (call detected)…");
+  console.error(`STT: starting ${path.basename(bin)} (call detected)…`);
 }
 function unloadWhisperSoon() { // only unloads the one WE started
   if (!whisperProc || whisperIdle) return;

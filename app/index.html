@@ -404,7 +404,7 @@ const SETTINGS=[
     ['mTemplate','Notes template','Layout for summaries & notes','select',['Fathom','Snaply','Fireflies','Zoom']],
     ['mAutoDetect','Auto-detect meetings','Start & end on Zoom, Meet, Teams…','toggle',true],
     ['videoMode','Screen recording','Record the shared screen / video during calls','video',['Off','Always','When shared']],
-    ['language','Transcription language','Auto-detect works well (VAD filters noise). Pin a language only if detection ever slips.','language',null,null,'auto'],
+    ['language','Transcription language','Auto-detect by default — handles Hindi + English. Output is set by the Translate toggle below. Pin a language only if detection slips.','language',null,null,'auto'],
     ['translate','Translate to English','On: any language comes out in English (auto-detect + translate, like Handy). Off: transcribe as spoken.','translate',null,null,true],
     ['mReason','Deeper reasoning','Slower, higher-quality summaries','toggle',false],
     ['mAudioGB','Audio storage','Local cap, GB (cloud sync = Pro)','slider',[1,100,10]],
@@ -736,7 +736,7 @@ setView((()=>{try{const r=localStorage.getItem('route');return (r&&r!=='settings
 mtShow('library');   // populate the meetings library on load (auto-switches to live when a call starts)
 if(isTauri() && store.get('stealth',false)) setStealth(true);   // re-apply saved stealth on launch
 setVideoMode(store.get('videoMode','off'));                     // sync screen-recording mode to the capturer
-setLanguage(store.get('language','auto'));                      // sync transcription language to the capturer (auto-detect)
+setLanguage(store.get('language','auto'));                      // sync detection language to the capturer (auto — Hindi + English); output English via translate
 setTranslate(store.get('translate',true));                      // sync translate mode (default: auto-detect → English, like Handy)
 </script>
 </body>
