@@ -202,15 +202,32 @@ private func enableManualAX(_ el: AXUIElement) {
 // (participants panel, gallery) give the roster.
 
 private func validName(_ s: String) -> Bool {
-    s.count >= 2 && s.count <= 60 && s.rangeOfCharacter(from: .letters) != nil
-        && !s.lowercased().contains("zoom")
+    let n = s.trimmingCharacters(in: .whitespaces)
+    guard n.count >= 2, n.count <= 40, n.rangeOfCharacter(from: .letters) != nil else { return false }
+    guard n.split(separator: " ").count <= 5 else { return false }   // names are 1–5 words; Zoom UI hints run long
+    // Zoom labels non-people ("Set up professional audio in Audio settings", "Waiting for host…") with the same
+    // kind of AX string as tiles. Reject anything containing a UI/state word — by WHOLE word, so real names that
+    // merely embed one as a substring ("Sharen", "Mike") survive.
+    // ponytail: English word-list; add locale variants if names ever come through localized.
+    let tokens = Set(n.lowercased().split { !$0.isLetter }.map(String.init))
+    let uiWords: Set<String> = ["zoom","audio","video","mute","unmute","muted","share","sharing",
+        "settings","setting","microphone","mic","speaker","camera","waiting","participants",
+        "participant","reactions","reaction","profile","record","recording","screen","gallery"]
+    return tokens.isDisjoint(with: uiWords)
+}
+
+/// Drop Zoom's trailing annotation so the same person dedupes:
+/// "Rahul Khatri (Me)" / "Rahul Khatri (Host, me)" -> "Rahul Khatri".
+private func canonName(_ s: String) -> String {
+    let base = s.firstIndex(of: "(").map { String(s[..<$0]) } ?? s
+    return base.trimmingCharacters(in: .whitespaces)
 }
 
 /// "Rahul Khatri, Computer audio muted, Video off" -> "Rahul Khatri"
 private func nameFromTileDesc(_ d: String) -> String? {
     let low = d.lowercased()
     guard d.contains(","), low.contains("audio") || low.contains("video") || low.contains("muted") else { return nil }
-    let name = d.components(separatedBy: ",").first!.trimmingCharacters(in: .whitespaces)
+    let name = canonName(d.components(separatedBy: ",").first!.trimmingCharacters(in: .whitespaces))
     return validName(name) ? name : nil
 }
 
@@ -221,7 +238,7 @@ private func nameFromProfileDesc(_ d: String) -> String? {
     for suffix in ["'s profile", "\u{2019}s profile", " profile"] {
         if let r = name.range(of: suffix) { name = String(name[..<r.lowerBound]); break }
     }
-    name = name.trimmingCharacters(in: .whitespaces)
+    name = canonName(name.trimmingCharacters(in: .whitespaces))
     return validName(name) ? name : nil
 }
 
@@ -230,7 +247,7 @@ private func nameFromProfileDesc(_ d: String) -> String? {
 /// collapses the video tiles the other selectors read). Authoritative for who's speaking now.
 private func nameFromTalking(_ s: String) -> String? {
     guard s.lowercased().hasPrefix("talking:") else { return nil }
-    let raw = String(s.dropFirst("talking:".count)).trimmingCharacters(in: .whitespaces)
+    let raw = canonName(String(s.dropFirst("talking:".count)).trimmingCharacters(in: .whitespaces))
     return validName(raw) ? raw.capitalized : nil
 }
 
@@ -279,7 +296,17 @@ private func selftest() -> Never {
     var n = State(); deriveControls(from: ["File", "Edit", "Help"], into: &n)
     check(n.selfMuted == nil && !n.inMeeting, "no-meeting derive stays nil")
 
-    // 3. Detection runs without crashing
+    // 3. Name filtering — reject Zoom UI chrome, keep real names, canonicalize "(Me)"
+    check(!validName("Set up professional audio in Audio settings"), "reject UI-chrome as a name")
+    check(!validName("Waiting for host to start the meeting"), "reject waiting-room hint")
+    check(validName("Rahul Khatri"), "accept a real name")
+    check(validName("Sharen"), "keep a name that merely embeds a ui-word substring")
+    check(canonName("Rahul Khatri (Me)") == "Rahul Khatri", "canon strips (Me)")
+    check(canonName("Rahul Khatri (Host, me)") == "Rahul Khatri", "canon strips (Host, me)")
+    check(nameFromTileDesc("Rahul Khatri (Me), Computer audio muted") == "Rahul Khatri", "tile desc -> canonical name")
+    check(nameFromTileDesc("Set up professional audio in Audio settings, Muted") == nil, "tile-shaped UI hint rejected")
+
+    // 4. Detection runs without crashing
     _ = runningMeetingApp()
     err("SELFTEST OK")
     exit(0)
