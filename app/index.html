@@ -63,7 +63,10 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .nav.on{background:var(--accent-soft);color:var(--ink);font-weight:600}
   .nav .livedot{width:7px;height:7px;border-radius:50%;background:var(--live);margin-left:auto;
         box-shadow:0 0 0 0 rgba(229,72,77,.5);animation:pulse 2.4s infinite}
-  .side .foot{font-size:13px}.side .foot .nav{padding:7px 10px;margin:1px 0;font-size:13px}
+  /* the sidebar foot nav shares the class name with the live-transcript footer (.foot at :245) —
+     neutralize that bleed (gap/padding/border/centering) so it stacks flush like the main nav */
+  .side .foot{display:flex;flex-direction:column;gap:0;padding:0;border-top:none;align-items:stretch;color:inherit;font-size:13px}
+  .side .foot .nav{padding:7px 10px;margin:1px 0;font-size:13px}
   .side .spacer{flex:1}
   .side hr{border:none;border-top:1px solid var(--line);margin:9px 6px}
   .pro{margin-top:9px;padding:13px;border-radius:11px;border:1px solid var(--line);cursor:pointer;
