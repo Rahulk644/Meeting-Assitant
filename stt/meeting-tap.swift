@@ -36,8 +36,8 @@ import Foundation
 import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
-import AppKit          // NSPasteboard + NSSound for dictation paste + start/stop tick
-import CoreGraphics    // CGEvent tap (global hotkey) + synthesized ⌘V (text injection)
+import AppKit          // NSFullUserName (the "(Me)" label). Dictation's hotkey + ⌘V paste now live in the
+import CoreGraphics    // app process itself (see desktop/src-tauri) — this binary only records audio.
 
 func err(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
 func f2(_ v: Float) -> String { String(format: "%.4f", v) }
@@ -393,6 +393,51 @@ if LIST_APPS {
     RunLoop.main.run()
 }
 
+// --dictate <wav>: one-shot dictation capture for the app's in-process dictation. The APP owns the hotkey
+// and the ⌘V paste now (so ONE Accessibility grant on "My Assistant" covers them — no fragmented helper);
+// this only records the mic — as a DIRECT child it inherits the app's Mic grant — and writes a 16k-mono WAV
+// when the app sends SIGTERM. No key tap, no paste here (that was the old design's TCC-identity trap).
+final class DictRecorder {
+    let engine = AVAudioEngine(); var samples = [Float](); let out: String
+    init(_ out: String) { self.out = out }
+    func start() {
+        let input = engine.inputNode
+        let inFmt = input.inputFormat(forBus: 0)
+        guard inFmt.sampleRate > 0, inFmt.channelCount > 0,
+              let outFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: SR, channels: 1, interleaved: false),
+              let conv = AVAudioConverter(from: inFmt, to: outFmt) else { err("dictate: mic init failed"); exit(1) }
+        input.installTap(onBus: 0, bufferSize: 4096, format: inFmt) { [weak self] b, _ in
+            guard let self = self else { return }
+            let capN = AVAudioFrameCount(Double(b.frameLength) * SR / inFmt.sampleRate) + 1024
+            guard let o = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: capN) else { return }
+            var e: NSError?; var fed = false
+            conv.convert(to: o, error: &e) { _, st in if fed { st.pointee = .noDataNow; return nil }; fed = true; st.pointee = .haveData; return b }
+            if let ch = o.floatChannelData, o.frameLength > 0 { self.samples.append(contentsOf: UnsafeBufferPointer(start: ch[0], count: Int(o.frameLength))) }
+        }
+        engine.prepare()
+        do { try engine.start() } catch { err("dictate: engine.start failed: \(error)"); exit(1) }
+        err("dictate: recording → \(out)")
+    }
+    func finishAndExit() -> Never {
+        engine.inputNode.removeTap(onBus: 0); engine.stop()
+        writeWav16(samples, to: URL(fileURLWithPath: out))
+        err("dictate: wrote \(samples.count) samples (\(f1(Double(samples.count) / SR))s)")
+        exit(0)
+    }
+}
+if let di = A.firstIndex(of: "--dictate"), di + 1 < A.count {
+    let rec = DictRecorder(A[di + 1]); rec.start()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 120) { rec.finishAndExit() }   // safety cap: never hold the mic > 2 min
+    var dsig: [DispatchSourceSignal] = []
+    for s in [SIGTERM, SIGINT] {
+        signal(s, SIG_IGN)
+        let src = DispatchSource.makeSignalSource(signal: s, queue: .main)
+        src.setEventHandler { rec.finishAndExit() }
+        src.resume(); dsig.append(src)
+    }
+    RunLoop.main.run()   // record until the app SIGTERMs us on the second hotkey tap
+}
+
 // Capture is GATED on being in a real call: the mic + system taps run only while we self-detect a call
 // in the ScreenCaptureKit window list (see detectMeetingApp), and are torn down (releasing the mic)
 // otherwise — so nothing is captured when you're not in a meeting. `--gate off` = always capture
@@ -471,176 +516,8 @@ func postRecording(_ file: String, _ startedAt: Int) {
               "-H", "Content-Type: application/json", "--data-binary", "@\(f)"])
 }
 
-// MARK: - dictation (Handy-style push-to-talk): global key tap → mic → transcribe → paste into the focused app.
-// Lives in meeting-tap because THIS process is a direct child of the app, so it already holds Accessibility —
-// needed to POST the ⌘V keystroke (a separate binary would be a grandchild without that grant). The key tap
-// uses .defaultTap (Accessibility-backed) so it needs no extra Input-Monitoring grant on most setups. Config
-// comes from /api/state (curDict* below); results go back to the server via /ingest for the Dictation view.
-var curDictEnabled = false, curDictFn = true, curDictMode = "ptt", curDictLang = "auto"
-var curDictTranslate = false, curDictSound = true, curDictClipboard = "restore"
-var curDictKeycode: Int64 = -1, curDictCancel: Int64 = 53
-var curDictMods: [String] = []
-
-// C-compatible tap callback (no captured context) → trampoline to the Dictation instance via userInfo.
-func dictTapCallback(_ proxy: CGEventTapProxy, _ type: CGEventType, _ event: CGEvent, _ userInfo: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
-    if let ui = userInfo { Unmanaged<Dictation>.fromOpaque(ui).takeUnretainedValue().handle(type, event) }
-    return Unmanaged.passUnretained(event)   // pass the key through — we observe, we don't consume
-}
-
-final class Dictation {
-    var engine: AVAudioEngine?
-    var samples = [Float]()
-    var recording = false
-    var startTs = 0.0
-    var lastFn = false
-    var tap: CFMachPort?
-    var tapTried = false
-    let q = DispatchQueue(label: "stt.dictation")
-
-    // Install the tap ONCE when first enabled (not every tick): if it fails for lack of Input Monitoring /
-    // Accessibility, a later grant needs an app relaunch to take effect anyway — retrying every 2 s just
-    // storms the permission prompt + the log. Then just enable/disable the installed tap with the setting.
-    func reconfigure() {
-        if curDictEnabled && tap == nil && !tapTried { tapTried = true; install() }
-        if let t = tap { CGEvent.tapEnable(tap: t, enable: curDictEnabled) }
-    }
-    func install() {
-        let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
-        guard let t = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-                eventsOfInterest: CGEventMask(mask), callback: dictTapCallback,
-                userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-            err("dictation: couldn't create the key tap — grant My Assistant Accessibility (and Input Monitoring if macOS prompts); dictation stays off until then")
-            return
-        }
-        tap = t
-        let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, t, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
-        err("dictation: key tap installed (trigger: \(curDictFn ? "Fn" : "keycode \(curDictKeycode)"))")
-    }
-
-    func handle(_ type: CGEventType, _ event: CGEvent) {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {   // macOS disables a busy tap → re-arm
-            if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }; return
-        }
-        guard curDictEnabled else { return }
-        let kc = event.getIntegerValueField(.keyboardEventKeycode)
-        if type == .keyDown && recording && kc == curDictCancel { DispatchQueue.main.async { self.cancel() }; return }
-        if curDictFn {
-            guard type == .flagsChanged else { return }
-            let fn = event.flags.contains(.maskSecondaryFn)
-            if fn != lastFn { lastFn = fn; DispatchQueue.main.async { self.trigger(down: fn) } }   // only on a real Fn transition
-        } else {
-            guard (type == .keyDown || type == .keyUp), kc == curDictKeycode, modsMatch(event.flags) else { return }
-            DispatchQueue.main.async { self.trigger(down: type == .keyDown) }
-        }
-    }
-    func modsMatch(_ f: CGEventFlags) -> Bool {   // exact match: every required modifier present, no extras
-        func ok(_ m: String, _ flag: CGEventFlags) -> Bool { curDictMods.contains(m) == f.contains(flag) }
-        return ok("cmd", .maskCommand) && ok("ctrl", .maskControl) && ok("alt", .maskAlternate) && ok("shift", .maskShift)
-    }
-    func trigger(down: Bool) {
-        if curDictMode == "ptt" { down ? start() : finish() }
-        else if down { recording ? finish() : start() }   // toggle: act on the key-down edge only
-    }
-
-    func start() {
-        guard !recording else { return }
-        if cap.running { err("dictation: ignored — a meeting is using the mic"); return }   // never fight meeting capture
-        samples.removeAll(keepingCapacity: true)
-        let eng = AVAudioEngine(); let input = eng.inputNode
-        let inFmt = input.inputFormat(forBus: 0)
-        guard inFmt.sampleRate > 0, inFmt.channelCount > 0,
-              let outFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: SR, channels: 1, interleaved: false),
-              let conv = AVAudioConverter(from: inFmt, to: outFmt) else { err("dictation: mic init failed"); return }
-        input.installTap(onBus: 0, bufferSize: 4096, format: inFmt) { [weak self] b, _ in
-            guard let self = self else { return }
-            let capN = AVAudioFrameCount(Double(b.frameLength) * SR / inFmt.sampleRate) + 1024
-            guard let out = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: capN) else { return }
-            var e: NSError?; var fed = false
-            conv.convert(to: out, error: &e) { _, st in if fed { st.pointee = .noDataNow; return nil }; fed = true; st.pointee = .haveData; return b }
-            if let ch = out.floatChannelData, out.frameLength > 0 { self.samples.append(contentsOf: UnsafeBufferPointer(start: ch[0], count: Int(out.frameLength))) }
-        }
-        eng.prepare()
-        do { try eng.start() } catch { err("dictation: engine.start failed: \(error)"); return }
-        engine = eng; recording = true; startTs = Date().timeIntervalSince1970
-        sound("Tink"); reportPhase("listening")
-        err("dictation: listening…")
-    }
-    func stopEngine() {
-        engine?.inputNode.removeTap(onBus: 0); engine?.stop(); engine = nil; recording = false
-    }
-    func cancel() { guard recording else { return }; stopEngine(); samples.removeAll(); sound("Pop"); reportPhase("idle"); err("dictation: cancelled") }
-    func finish() {
-        guard recording else { return }
-        let ms = Int((Date().timeIntervalSince1970 - startTs) * 1000)
-        let s = samples; stopEngine(); sound("Pop")
-        guard Double(s.count) / SR >= 0.3 else { reportPhase("idle"); err("dictation: too short"); return }   // ignore an accidental tap
-        reportPhase("transcribing")
-        q.async { self.transcribeAndInject(s, ms) }
-    }
-    func transcribeAndInject(_ s: [Float], _ ms: Int) {
-        defer { reportPhase("idle") }   // pill hides once transcription is done (success or not)
-        let wav = URL(fileURLWithPath: "/tmp/dictation.wav")
-        writeWav16(s, to: wav)
-        // Route through the server (not straight to :8091) so node ensures the engine is up and, later, can pick
-        // a cloud provider. language/translate/prompt are the same Whisper knobs the meeting path uses.
-        var args = ["-s", "--max-time", "60", "http://127.0.0.1:\(guiPort)/api/transcribe",
-                    "-F", "file=@\(wav.path)", "-F", "language=\(curDictLang)"]
-        if curDictTranslate { args += ["-F", "translate=true"] }
-        if !curVocab.isEmpty { args += ["-F", "prompt=\(curVocab)"] }
-        let out = curl(args)
-        guard let d = out.data(using: .utf8), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-              let raw = o["text"] as? String else { err("dictation: transcribe failed (\(out.prefix(120)))"); return }
-        let text = cleanTranscript(raw)
-        guard !text.isEmpty else { err("dictation: empty result"); return }
-        err("dictation → '\(text)'")
-        DispatchQueue.main.async { self.inject(text) }
-        report(["type": "dictation", "text": text, "ms": ms, "ts": Int(Date().timeIntervalSince1970 * 1000)], "/tmp/mt_dresult.json")
-    }
-    // Paste via the clipboard + a synthesized ⌘V — works in every app; needs Accessibility (we have it).
-    func inject(_ text: String) {
-        let pb = NSPasteboard.general
-        let saved = pb.string(forType: .string)
-        pb.clearContents(); pb.setString(text, forType: .string)
-        let src = CGEventSource(stateID: .combinedSessionState)
-        let down = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true)   // 9 = V
-        let up   = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
-        down?.flags = .maskCommand; up?.flags = .maskCommand
-        down?.post(tap: .cgAnnotatedSessionEventTap); up?.post(tap: .cgAnnotatedSessionEventTap)
-        if curDictClipboard == "restore" {   // put the user's clipboard back once the paste has been read
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { pb.clearContents(); if let sv = saved { pb.setString(sv, forType: .string) } }
-        }
-    }
-    func sound(_ name: String) { if curDictSound { NSSound(named: NSSound.Name(name))?.play() } }
-    func report(_ obj: [String: Any], _ file: String) {
-        guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        try? data.write(to: URL(fileURLWithPath: file))
-        _ = curl(["-s", "-X", "POST", "http://127.0.0.1:\(guiPort)/ingest", "-H", "Content-Type: application/json", "--data-binary", "@\(file)"])
-    }
-    func reportPhase(_ p: String) { report(["type": "dictation-state", "phase": p], "/tmp/mt_dstate.json") } // listening | transcribing | idle → pill + view
-}
-
-// Pull the dictation config out of /api/state into the curDict* globals + (re)arm the key tap.
-func applyDictationConfig(_ dc: [String: Any]) {
-    curDictEnabled = (dc["enabled"] as? Bool) ?? false
-    if let tr = dc["trigger"] as? [String: Any] {
-        curDictFn = (tr["fn"] as? Bool) ?? false
-        curDictKeycode = Int64((tr["keycode"] as? Int) ?? -1)
-        curDictMods = (tr["mods"] as? [String]) ?? []
-    }
-    curDictMode = (dc["mode"] as? String) ?? "ptt"
-    curDictLang = (dc["language"] as? String) ?? "auto"
-    curDictTranslate = (dc["translate"] as? Bool) ?? false
-    curDictSound = (dc["sound"] as? Bool) ?? true
-    curDictClipboard = (dc["clipboard"] as? String) ?? "restore"
-    curDictCancel = Int64((dc["cancel"] as? Int) ?? 53)
-    dictation.reconfigure()
-}
-
 let cap = Capture()
-let dictation = Dictation()
 var curModuleMeetings = false   // Meetings opt-in — gates Screen-Recording detection + capture (no opt-in ⇒ no prompt)
-var lastDictStop = 0            // last dictStop seq acted on (pill/tray Stop → finish the current dictation)
 var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curVocab = ""
 // Poll the server for UI-set config (video mode + share state) AND the manual override (start/pause/stop).
 // inMeeting is SELF-DETECTED below; `manual` lets the UI force capture on/off on top of that — e.g. manually
@@ -651,9 +528,7 @@ func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, langua
           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
         return (curSharing, curVideoMode, curTranslate, curLanguage, curManual, curAutoDetect, curVocab)
     }
-    if let dc = o["dictation"] as? [String: Any] { applyDictationConfig(dc) }   // Handy-style dictation config (side-effect globals + tap)
     if let m = o["modules"] as? [String: Any] { curModuleMeetings = (m["meetings"] as? Bool) ?? false }   // Meetings opt-in gate
-    if let ds = o["dictStop"] as? Int, ds > lastDictStop { lastDictStop = ds; dictation.finish() }   // pill/tray Stop → finish now
     return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto", (o["autoDetect"] as? Bool) ?? true, (o["vocab"] as? String) ?? "")
 }
 // Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which

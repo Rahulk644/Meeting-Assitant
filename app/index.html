@@ -150,6 +150,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .permc .pn{font-weight:560;font-size:13.5px;color:var(--ink);display:flex;align-items:center;gap:7px}
   .permc .pn .opt{font-size:9.5px;font-weight:600;color:var(--ink-3);background:var(--surface-2);padding:1px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em}
   .permc .pw{font-size:12px;color:var(--ink-3);margin-top:1px}
+  .permnote{font-size:11.5px;color:var(--ink-3);line-height:1.45;padding:9px 11px;background:var(--win);border-radius:9px}
   .ob-go{margin-top:24px;width:100%;padding:12px;border:none;border-radius:12px;background:var(--accent);color:var(--accent-ink);font-size:14.5px;font-weight:620;cursor:pointer;transition:.12s}
   .ob-go:hover{filter:brightness(.96)}
   .nav.locked{opacity:.6}
@@ -758,6 +759,9 @@ $('#fcSupport').onclick=(e)=>{ e.stopPropagation(); toast('Thank you for the sup
 /* ---------- native (Tauri) bridge + server config ---------- */
 function isTauri(){ return !!(window.__TAURI__ && window.__TAURI__.core); }
 async function setStealth(on){ try{ await window.__TAURI__.core.invoke('set_stealth',{on}); }catch(e){} }
+// In-app dictation (the app itself owns the ⌃⇧D hotkey + paste). Tell Rust when the module is on/off; ask
+// for Accessibility only on an explicit enable (ask=true), so a relaunch with dictation already on never nags.
+function syncDictation(ask){ if(isTauri()){ try{ window.__TAURI__.core.invoke('set_dictation',{enabled:moduleOn('dictation'),ptt:!!store.get('push_to_talk',DEFAULTS.push_to_talk),prompt:!!ask}); }catch(e){} } }
 async function cfg(patch){ try{ await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)}); }catch{} }
 const setVideoMode=m=>cfg({videoMode:m}), setTranslate=on=>cfg({translate:on}), setLanguage=l=>cfg({language:l});
 
@@ -845,7 +849,7 @@ const IC_COPY='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 function renderDictations(){
   const list=$('#dictList'), empty=$('#dictEmpty'); if(!list) return;
   list.innerHTML='';
-  if(!dictItems.length){ if(empty) empty.hidden=false; return; }
+  if(!dictItems.length){ if(empty){ empty.hidden=false; paintDictEmpty(); } return; }
   if(empty) empty.hidden=true;
   for(const d of dictItems){
     const card=el('div','dcard'), body=el('div','dc-body');
@@ -854,6 +858,17 @@ function renderDictations(){
     const cp=el('div','dc-copy'); cp.innerHTML=IC_COPY; cp.title='Copy';
     cp.onclick=()=>{ try{navigator.clipboard.writeText(d.text)}catch{} toast('Copied'); };
     card.append(body,cp); list.append(card);
+  }
+}
+// Empty state adapts: dictation OFF → a button that turns it on (which asks for Accessibility); ON → the hotkey hint.
+function paintDictEmpty(){
+  const empty=$('#dictEmpty'); if(!empty) return;
+  if(moduleOn('dictation')){
+    empty.innerHTML='No dictations yet.<br/>Press <span class="kbd" id="dictHint"></span> anywhere to start your first one.';
+    paintDictHints();
+  } else {
+    empty.innerHTML='Dictation is off.<br/><button class="obtn solid dict-enable" style="margin-top:12px">Turn on dictation</button>';
+    const b=empty.querySelector('.dict-enable'); if(b) b.onclick=()=>{ setModule('dictation',true); pushDictation(); renderDictations(); toast('Dictation on — allow Accessibility, then relaunch My Assistant.'); };
   }
 }
 function onDictation(m){ if(!m||!m.text) return; dictItems.unshift({text:m.text,ts:m.ts||Date.now(),ms:m.ms||0}); dictItems=dictItems.slice(0,50); renderDictations(); }
@@ -879,7 +894,7 @@ const PANEL_ICONS={
 };
 const DEFAULTS={
   mic:'Auto (Default)', app_lang:'English', app_updates:'Always', show_tray:true, overlay_type:'Pill', overlay_pos:'Bottom center', start_login:false, start_hidden:false, stealth:false,
-  dict_enabled:true, dict_lang:'Auto-detect', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, auto_pause:true, mute_system:false, volume:70, push_to_talk:true, floating_widget:false, hide_dock:false, auto_delete:'Never', sc_start:'Fn', sc_cancel:'Esc',
+  dict_enabled:true, dict_lang:'Auto-detect', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, auto_pause:true, mute_system:false, volume:70, push_to_talk:false, floating_widget:false, hide_dock:false, auto_delete:'Never', sc_start:'⌃⇧D', sc_cancel:'Esc',
   wa_selection:true, wa_noneditable:true, wa_translate_lang:'English', wa_open:'⌃+Space', wa_close:'Esc',
   mtg_source:'Local', live_indicator:true, auto_detect:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, notes_path:'/Users/rahul/Documents/My Assistant/Meetings', mtg_shortcut:'Not set',
   unload_model:true, engine:'Whisper large-v3-turbo', log_dir:'~/Library/Logs/My Assistant', whats_new:true,
@@ -913,7 +928,7 @@ const SCHEMA={
   ],
   dictation:[
     {label:'CONFIGURATION', rows:[
-      {id:'dict_enabled',title:'Enable dictation',desc:'Global push-to-talk anywhere on your Mac — hold the shortcut, speak, release to insert.',type:'toggle'},
+      {id:'dict_enabled',title:'Enable dictation',desc:'Speak anywhere on your Mac — tap ⌃⇧D to start, tap again to insert. All on-device.',type:'toggle'},
       {id:'dict_lang',title:'Language',desc:'Spoken language. Auto-detect handles mixed speech per utterance.',type:'select',options:['Auto-detect','English','हिन्दी','Español','Deutsch','Français']},
       {id:'custom_vocab',title:'Custom vocabulary',desc:'Teach names, acronyms, and domain terms it should recognise.',type:'button',btn:'Configure'},
       {id:'snippets',title:'Snippets',desc:'Spoken shortcuts that expand into saved phrases, links, or templates.',type:'button',btn:'Configure'},
@@ -927,7 +942,7 @@ const SCHEMA={
       {id:'volume',title:'Feedback volume',desc:'',type:'range'},
     ]},
     {label:'BEHAVIOUR', rows:[
-      {id:'push_to_talk',title:'Push to talk',desc:'Hold the shortcut to dictate; release to stop.',type:'toggle'},
+      {id:'push_to_talk',title:'Push-to-talk',desc:'On: hold ⌃⇧D to dictate, release to insert. Off: tap ⌃⇧D to start, tap again to insert.',type:'toggle'},
       {id:'floating_widget',title:'Floating widget',desc:'Show a floating control at the edge of the screen.',type:'toggle'},
       {id:'hide_dock',title:'Hide from dock',desc:'Run from the menu bar only.',type:'toggle'},
       {id:'auto_delete',title:'Auto-delete recordings',desc:'',type:'select',options:['Never','After transcription','After 7 days','After 30 days']},
@@ -1091,8 +1106,8 @@ function settingRow(row){
     else if(id==='auto_detect'){ getV=()=>store.get('auto_detect',true); setV=v=>{store.set('auto_detect',v); cfg({autoDetect:v})}; }  // off → only manual start records
     else if(id==='unload_model'){ getV=()=>store.get('unload_model',true); setV=v=>{store.set('unload_model',v); cfg({unloadIdle:v})}; }  // off → keep the model hot
     else if(id==='live_indicator'){ getV=()=>store.get('live_indicator',true); setV=v=>{store.set('live_indicator',v); callRender()}; }  // reflect on the overlay immediately
-    else if(id==='dict_enabled'){ getV=()=>moduleOn('dictation'); setV=v=>{ setModule('dictation',v); pushDictation(); }; }        // master on/off = the Dictation module
-    else if(id==='push_to_talk'){ getV=()=>store.get('push_to_talk',DEFAULTS.push_to_talk); setV=v=>{store.set('push_to_talk',v); pushDictation()}; } // hold vs toggle
+    else if(id==='dict_enabled'){ getV=()=>moduleOn('dictation'); setV=v=>{ setModule('dictation',v); pushDictation(); renderDictations(); }; }        // master on/off = the Dictation module
+    else if(id==='push_to_talk'){ getV=()=>store.get('push_to_talk',DEFAULTS.push_to_talk); setV=v=>{store.set('push_to_talk',v); pushDictation(); syncDictation(false);}; } // push-to-talk vs tap-to-talk
     else if(id==='dict_sound'){ getV=()=>store.get('dict_sound',true); setV=v=>{store.set('dict_sound',v); pushDictation()}; }
     else if(id==='stealth'){ gate=!isTauri(); getV=()=>isTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
       if(gate) l.querySelector('.st').insertAdjacentHTML('beforeend','<span class="badge">DESKTOP</span>'); }
@@ -1277,20 +1292,19 @@ function openSnippets(){ openModal('Snippets', box=>{
 const IC_LISTEN='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M7 14.5h10"/></svg>';
 const IC_AGENTS='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l1.5 4.6 4.6 1.5-4.6 1.5L12 15.6l-1.5-4.6L5.9 9.5l4.6-1.5L12 3.4Z"/></svg>';
 const PERM_ICON={'Microphone':IC_MIC,'Screen Recording':IC_SCREEN,'Accessibility':IC_AXS,'Input Monitoring':IC_LISTEN};
+// Only the grants macOS makes you toggle in System Settings are listed. Microphone is NOT here — macOS
+// prompts for it automatically the first time we record, and stays granted after (like every other app).
 const MODULE_INFO={
   dictation:{name:'Dictation', blurb:'Speak anywhere and the words land in whatever you’re typing in — all on-device.',
-    perms:[{name:'Microphone',pane:'Privacy_Microphone',why:'Hear your voice.'},
-           {name:'Input Monitoring',pane:'Privacy_ListenEvent',why:'Detect the dictation hotkey.'},
-           {name:'Accessibility',pane:'Privacy_Accessibility',why:'Insert the text into the focused app.'}]},
+    perms:[{name:'Accessibility',pane:'Privacy_Accessibility',why:'Insert the text into the app you’re typing in, and catch the hotkey.'}]},
   meetings:{name:'Meetings', blurb:'Record and transcribe your calls — named notes, summaries, and search.',
-    perms:[{name:'Microphone',pane:'Privacy_Microphone',why:'Transcribe your side of the call.'},
-           {name:'Screen Recording',pane:'Privacy_ScreenCapture',why:'Detect calls and capture the shared screen.'},
+    perms:[{name:'Screen Recording',pane:'Privacy_ScreenCapture',why:'Detect calls and capture the shared screen.'},
            {name:'Accessibility',pane:'Privacy_Accessibility',why:'Read participant names (optional).',optional:true}]},
 };
 const SOON={writing:{name:'Writing Assistant',blurb:'Rewrite, fix grammar, or translate any selected text in place.'},agents:{name:'AI Agents',blurb:'Background automations that run your repetitive work.'}};
 function modules(){ const m=store.get('modules',null); return (m&&typeof m==='object')?{dictation:!!m.dictation,meetings:!!m.meetings,writing:!!m.writing}:{dictation:false,meetings:false,writing:false}; }
 function moduleOn(k){ return !!modules()[k]; }
-function setModule(k,on){ const m=modules(); m[k]=!!on; store.set('modules',m); cfg({modules:m}); paintNav(); }
+function setModule(k,on){ const m=modules(); m[k]=!!on; store.set('modules',m); cfg({modules:m}); if(k==='dictation') syncDictation(!!on); paintNav(); }
 async function openSettingsPane(pane){ try{ await fetch('/api/open-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pane})}); toast('Opening System Settings — enable “My Assistant”.'); }catch{ toast('Open System Settings › Privacy & Security.'); } }
 function permRows(k){
   const wrap=el('div','perms');
@@ -1300,6 +1314,7 @@ function permRows(k){
     const b=el('button','abtn'); b.textContent='Open System Settings'; b.onclick=()=>openSettingsPane(p.pane);
     row.append(ic,c,b); wrap.append(row);
   });
+  wrap.append(el('div','permnote','🎙️ Microphone is asked for automatically the first time you use it — nothing to set up here.'));
   return wrap;
 }
 function moduleCard(k){
@@ -1335,17 +1350,14 @@ function openModuleGate(k){
 }
 function navTo(v,force){
   if(v==='guide') return setView('feedback');
-  if(!force && (v==='dictation'||v==='meetings') && !moduleOn(v)) return openModuleGate(v);
-  setView(v);
+  setView(v);   // no gating — browse freely; a feature asks for its permission when you first use it
 }
-function paintNav(){ document.querySelectorAll('.nav[data-view]').forEach(n=>{ const v=n.dataset.view; n.classList.toggle('locked',(v==='dictation'||v==='meetings')&&!moduleOn(v)); }); }
+function paintNav(){ document.querySelectorAll('.nav[data-view]').forEach(n=>n.classList.remove('locked')); }   // no gating — nav never locked
 
 /* Permissions — real deep-links to the macOS Privacy panes (grants happen there). */
 const ALL_PERMS=[
-  {name:'Microphone',pane:'Privacy_Microphone',desc:'Transcribe your voice and the call audio.'},
-  {name:'Screen Recording',pane:'Privacy_ScreenCapture',desc:'Detect calls and capture shared screens.'},
-  {name:'Input Monitoring',pane:'Privacy_ListenEvent',desc:'The global dictation hotkey.'},
-  {name:'Accessibility',pane:'Privacy_Accessibility',desc:'Insert dictated text; read participant names.'},
+  {name:'Accessibility',pane:'Privacy_Accessibility',desc:'Insert dictated text into the focused app; catch the hotkey; read participant names.'},
+  {name:'Screen Recording',pane:'Privacy_ScreenCapture',desc:'Detect calls and capture shared screens (Meetings).'},
 ];
 function openPermissions(){ openModal('Permissions', box=>{
   box.append(el('div','msub','My Assistant only needs the permissions for the features you’ve enabled. Open a pane to grant it.'));
@@ -1434,7 +1446,7 @@ function mtShow(name){
 $('#liveBack').onclick=()=>mtShow('library');
 $('#detBack').onclick=()=>mtShow('library');
 $('#goLive').onclick=()=>mtShow('live');
-$('#goLiveBtn').onclick=()=>{ callControl('start'); mtShow('live'); };  // manual start — record even without an auto-detected call
+$('#goLiveBtn').onclick=()=>{ setModule('meetings',true); callControl('start'); mtShow('live'); };  // first Record turns Meetings on → macOS asks for Screen Recording here, not upfront
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function fmtDay(ts){
   const d=new Date(ts),n=new Date();
@@ -1755,8 +1767,8 @@ setLanguage(store.get('language','auto'));
 setTranslate(store.get('translate',true));
 cfg({autoDetect:store.get('auto_detect',true), unloadIdle:store.get('unload_model',true), vocab:vocabPrompt()});
 pushDictation(); initDictation();
-cfg({modules:modules()}); paintNav();
-if(!store.get('onboarded',false)) renderOnboard();
+cfg({modules:modules()}); paintNav(); syncDictation(false);
+// Onboarding removed — open straight to the app; each feature asks for its one permission the first time it's used.
 </script>
 </body>
 </html>

@@ -75,21 +75,21 @@ in a call**.
 
 ## Dictation
 
-Press-and-hold **Fn** anywhere on your Mac, speak, and release — the words are transcribed on-device and
-pasted straight into whatever text field is focused. It reuses the same transcribe.cpp engine as Meetings,
-so nothing leaves your machine.
+Press **⌃⇧D** anywhere on your Mac, speak, and press it again — the words are transcribed on-device and
+pasted straight into whatever text field is focused, **including full-screen apps**. It uses the same
+on-device transcription as Meetings, so nothing leaves your machine.
 
-- **Hold-to-talk** by default (or switch to tap-to-toggle in **Settings → Dictation**); **Esc** cancels.
-- **Rebindable** to any shortcut; **Custom Vocabulary** and language are shared with Meetings.
-- Capture → transcription → paste live in `meeting-tap` (a direct child of the app, so the **paste** reuses
-  Meetings' **Accessibility** grant). The **global hotkey** additionally needs **Input Monitoring** — a
-  one-time grant to My Assistant (macOS prompts on first use).
+- **Tap-to-toggle** by default — press to start, press to stop; or switch to **hold-to-talk** in
+  **Settings → Dictation**.
+- **Silence-aware** — a neural voice-activity detector (**Silero VAD**, bundled) strips the quiet around
+  your speech before transcription, so pauses and stray recordings don't turn into gibberish.
+- A small **pill** at the bottom of the screen shows it's listening and floats above every app — even
+  full-screen ones — without stealing focus from what you're typing into.
+- **Custom Vocabulary** and language are shared with Meetings.
 
-> **One-time setup:**
-> 1. **System Settings → Privacy & Security → Input Monitoring** → enable **My Assistant** (for the hotkey);
->    **Accessibility** should already be on from Meetings (for the paste).
-> 2. macOS lets the **🌐/Fn** key open Emoji or Dictation — set **System Settings → Keyboard → “Press 🌐 to”
->    → Do Nothing** (or rebind dictation to a key chord) so Fn is free.
+> **One-time setup:** on your first dictation macOS prompts once for **Microphone** — allow it.
+> **Accessibility** (already granted from Meetings) is what lets it paste. That's all — **no Input
+> Monitoring, no function-key changes** (the Carbon global shortcut needs no permission).
 
 ## Post-call AI
 
@@ -141,7 +141,9 @@ itself (no terminal); get on a call and it transcribes.
 > can't verify the app and re-asks for permissions on every launch. Re-signing makes it valid → grants
 > stick. This build still reuses the models/binaries `setup.sh` installed on *this* machine; a portable,
 > **Developer-ID-signed + notarized** installer (grants that survive rebuilds, runs on any Mac) is on the
-> roadmap.
+> roadmap. *Tip: if you rebuild often, sign with a **stable self-signed certificate*** (`--sign "My
+> Assistant Dev"` instead of `--sign -`) *and the grants survive rebuilds too — see
+> [ARCHITECTURE.md](ARCHITECTURE.md).*
 
 ## Development
 
@@ -214,7 +216,7 @@ For the full design rationale, the transcription/permissions deep-dives, and the
 - [x] **Meeting history** + **post-call AI** (summary, action items, "ask"), **rename**, recording **thumbnails**
 - [x] **Desktop app (Tauri)** — double-click, self-starts the stack, **menu-bar recording indicator**, ask-once permissions
 - [x] **Screen-share stealth** · **video screen recording** (whole call / only-when-shared)
-- [x] **Dictation** — hold **Fn** to speak into any app; on-device transcription pasted in place (push-to-talk or toggle, rebindable)
+- [x] **Dictation** — press **⌃⇧D** to speak into any app (even full-screen); on-device transcription with **Silero VAD** silence-stripping, pasted in place (tap-to-toggle or hold-to-talk)
 
 **Next**
 

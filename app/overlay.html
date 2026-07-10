@@ -10,31 +10,21 @@
 
   /* ---------------- Dictation Pill (always dark) ---------------- */
   #pillWrap{display:grid;place-items:center}
-  .pill{display:inline-flex;align-items:center;gap:11px;background:var(--pill);color:var(--ink);
-        border:1px solid var(--line);border-radius:999px;padding:8px 10px 8px 15px;
-        box-shadow:0 12px 34px rgba(0,0,0,.42);height:48px}
-  .pill .wave{display:flex;align-items:center;gap:3px;height:20px}
-  .pill .wave i{width:3px;height:6px;border-radius:2px;background:linear-gradient(180deg,#8fb0ff,#2f6bff);animation:wv 1s ease-in-out infinite}
-  .pill .wave i:nth-child(2){animation-delay:.12s} .pill .wave i:nth-child(3){animation-delay:.24s}
-  .pill .wave i:nth-child(4){animation-delay:.36s} .pill .wave i:nth-child(5){animation-delay:.48s}
-  .pill .wave i:nth-child(6){animation-delay:.60s} .pill .wave i:nth-child(7){animation-delay:.30s}
-  @keyframes wv{0%,100%{height:5px}50%{height:19px}}
-  .pill .timer{font-variant-numeric:tabular-nums;font-size:14px;font-weight:600;min-width:34px;text-align:center}
-  .pill .esc{font-size:11.5px;font-weight:600;color:var(--mut);background:var(--pill-2);border-radius:7px;padding:3px 8px}
-  .pill .ico{width:30px;height:30px;flex:none;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:var(--ink)}
-  .pill .ico:hover{background:var(--pill-2)}
-  .pill .ico svg{width:15px;height:15px}
-  .pill .stop{width:32px;height:32px;flex:none;border-radius:50%;background:var(--blue);display:grid;place-items:center;cursor:pointer}
-  .pill .stop:hover{filter:brightness(1.08)} .pill .stop .sq{width:11px;height:11px;border-radius:3px;background:#fff}
-  .pill .spin{width:17px;height:17px;border-radius:50%;border:2.4px solid rgba(255,255,255,.25);border-top-color:#fff;animation:sp .8s linear infinite}
+  /* small + cute, hugs the bottom rim (Handy-style) */
+  .pill{display:inline-flex;align-items:center;gap:9px;background:var(--pill);color:var(--ink);
+        border:1px solid var(--line);border-radius:999px;padding:0 13px;
+        box-shadow:0 6px 20px rgba(0,0,0,.45);height:32px}
+  .pill .rec{width:8px;height:8px;flex:none;border-radius:50%;background:var(--red);animation:pulse 1.5s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+  .pill .wave{display:flex;align-items:center;gap:2.5px;height:14px}
+  .pill .wave i{width:2.5px;height:4px;border-radius:2px;background:linear-gradient(180deg,#8fb0ff,#2f6bff);animation:wv 1s ease-in-out infinite}
+  .pill .wave i:nth-child(2){animation-delay:.14s} .pill .wave i:nth-child(3){animation-delay:.28s}
+  .pill .wave i:nth-child(4){animation-delay:.42s} .pill .wave i:nth-child(5){animation-delay:.20s}
+  @keyframes wv{0%,100%{height:4px}50%{height:14px}}
+  .pill .timer{font-variant-numeric:tabular-nums;font-size:12px;font-weight:600;min-width:28px;text-align:center}
+  .pill .spin{width:14px;height:14px;border-radius:50%;border:2.2px solid rgba(255,255,255,.25);border-top-color:#fff;animation:sp .8s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
-  .pill .lbl{font-size:14px;font-weight:560;padding-right:4px}
-  /* minimized chip */
-  .chip{display:inline-flex;align-items:center;gap:8px;background:var(--pill);border:1px solid var(--line);color:var(--ink);
-        border-radius:999px;padding:6px 12px 6px 8px;cursor:pointer;box-shadow:0 10px 28px rgba(0,0,0,.42);height:36px}
-  .chip img{width:22px;height:22px;border-radius:6px}
-  .chip .dots{letter-spacing:2px;color:var(--mut);font-weight:800;font-size:15px;line-height:1}
-  .chip .rdot{width:7px;height:7px;border-radius:50%;background:var(--red);margin-left:1px}
+  .pill .lbl{font-size:12px;font-weight:560}
 
   /* ---------------- Menu Bar Tray dropdown (theme-aware) ---------------- */
   #trayWrap{--bg:#ffffff;--tink:#1b1b1e;--tink2:#5b5b61;--tink3:#8b8b91;--tline:rgba(0,0,0,.08);--tsurf:#f4f3f1;--tblue:#2f6bff;--tred:#e5484d;
@@ -111,28 +101,20 @@ fetch('/api/state').then(r=>r.json()).then(s=>{ if(s.inMeeting){ call.rec=true; 
 function render(){ WIN==='tray' ? renderTray() : renderPill(); }
 
 function renderPill(){
+  // Rust owns the WINDOW show/hide (dict_feedback) — this only fills it with content, so the two no longer
+  // fight (that double-control was why the pill flickered / "came earlier, not now").
   const w=$('#pillWrap'), active=dict.phase==='listening'||dict.phase==='transcribing';
-  if(!active){ w.classList.add('hidden'); inv('pill_visible',{on:false}); return; }
-  w.classList.remove('hidden'); inv('pill_visible',{on:true});
-  if(minimized){
-    w.innerHTML=`<div class="chip" id="chip"><img src="/logo.png" alt=""><span class="rdot"></span><span class="dots">···</span></div>`;
-    $('#chip').onclick=()=>{ minimized=false; render(); };
-    inv('pill_size',{min:true}); return;
-  }
-  inv('pill_size',{min:false});
+  if(!active){ w.classList.add('hidden'); return; }
+  w.classList.remove('hidden');
   if(dict.phase==='transcribing'){
     w.innerHTML=`<div class="pill"><div class="spin"></div><span class="lbl">Transcribing…</span></div>`;
     return;
   }
   w.innerHTML=`<div class="pill">
-    <div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <span class="rec"></span>
+    <div class="wave"><i></i><i></i><i></i><i></i><i></i></div>
     <span class="timer">${fmt(dict.sec)}</span>
-    <span class="esc">Esc</span>
-    <div class="ico" id="pmin" title="Minimize">${IC.chev}</div>
-    <div class="stop" id="pstop" title="Stop"><span class="sq"></span></div>
   </div>`;
-  $('#pmin').onclick=()=>{ minimized=true; render(); };
-  $('#pstop').onclick=()=>post('/api/dictation/stop');
 }
 
 function renderTray(){
@@ -158,9 +140,8 @@ function renderTray(){
   w.querySelectorAll('[data-a]').forEach(elm=>elm.onclick=()=>{
     const a=elm.dataset.a;
     if(a==='stop_recording') post('/api/meeting/control',{action:'stop'});
-    else if(a==='stop_dictation') post('/api/dictation/stop');
-    else inv(a);          // open_main / settings / quit / open_writing → Rust
-    if(a!=='stop_dictation'&&a!=='stop_recording') inv('tray_hide');
+    else inv(a);          // stop_dictation / open_main / settings / quit → Rust (overlay_action)
+    if(a!=='stop_recording') inv('tray_hide');
   });
 }
 render();

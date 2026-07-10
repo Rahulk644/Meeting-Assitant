@@ -23,3 +23,11 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.3", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-log = "2"
+# In-app dictation (runs as the app itself, so one Accessibility grant covers it — no fragmented helper):
+tauri-plugin-global-shortcut = "2"          # Carbon hotkey — needs NO Input Monitoring / Accessibility
+core-graphics = "0.23"                      # synth ⌘V (explicit Command flag) to paste — the proven CGEvent method
+macos-accessibility-client = "0.0.2"        # prompt for Accessibility under the app's own identity
+objc2 = "0.5"                               # set the pill NSWindow to a high level + all-spaces so it floats over OTHER apps
+cpal = "0.15"                               # record the mic IN-PROCESS (like Handy) — no meeting-tap spawn, so no ~300ms start lag
+hound = "3.5"                               # encode the captured audio to a 16-bit PCM WAV for the STT server
+voice_activity_detector = "0.2"             # Silero VAD (same model family Handy bundles) — strips non-speech before Whisper so silence can't hallucinate; statically links onnxruntime via `ort`, so the binary stays self-contained

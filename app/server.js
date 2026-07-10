@@ -235,7 +235,7 @@ const WHISPER_PORT = +(process.env.WHISPER_PORT || 8091);
 const TS_BIN = path.join(__dirname, "..", "stt", "transcribe-server", "transcribe-server");
 const TS_MODEL = path.join(__dirname, "..", "stt", "whisper", "whisper-large-v3-turbo-Q8_0.gguf");
 const WHISPER_MODEL = path.join(__dirname, "..", "stt", "whisper", "ggml-large-v3-turbo-q8_0.bin"); // whisper.cpp fallback
-const WHISPER_IDLE_MS = 2 * 60 * 1000;
+const WHISPER_IDLE_MS = 10 * 60 * 1000; // keep the model hot 10 min so back-to-back dictation is fast (was 2 min → cold reloads felt slow)
 let whisperProc = null, whisperIdle = null; // the STT-server child WE started (null if not ours)
 async function ensureWhisper() {
   if (whisperIdle) { clearTimeout(whisperIdle); whisperIdle = null; }
@@ -383,7 +383,34 @@ http.createServer((req, res) => {
       try {
         await ensureWhisper();
         if (!await waitPort("127.0.0.1", WHISPER_PORT, 15000)) throw new Error("transcription engine did not start");
-        const r = await fetch(`http://127.0.0.1:${WHISPER_PORT}/inference`, { method: "POST", headers: { "Content-Type": ct }, body: buf });
+        // Dictation POSTs only the WAV; inject a language so speech isn't written in the wrong script.
+        // A/B-verified on a real clip: language=auto MIS-detects short Hinglish ("mera naam Rahul hai") as
+        // Tamil ("மேர் நாம்…") — that IS the bug; language=en yields clean "My name is Rahul." Handy pins en
+        // too. Honor an explicit Settings language; default (or "auto") → en for reliable English output.
+        let reqBody = buf;
+        const bm = /boundary=(?:"([^"]+)"|([^";,\s]+))/i.exec(ct);
+        if (bm) {
+          const b = bm[1] || bm[2];
+          // Match Handy's ACTUAL RUNTIME (from its debug log), not just its settings file. Handy's
+          // settings say translate_to_english=true, but its log shows every run is `task=Transcribe,
+          // language=en` — the Translate task only engages for a NON-English source; with the language
+          // pinned to en it always Transcribes. We were forcing translate=true (the Translate task),
+          // which is lower-quality for English/Hinglish audio — the reason our text read worse than
+          // Handy's. So: language=en + translate=false (Transcribe), byte-for-byte what Handy runs.
+          const lang = (dictationCfg.language && dictationCfg.language !== "auto") ? dictationCfg.language : "en";
+          // Match Handy's runtime: language=en + Transcribe task (translate=false). We deliberately do NOT
+          // enable Whisper's temperature fallback — without VAD it hallucinates fluent garbage on any silence
+          // in the clip (A/B-tested: fallback gave ZERO accuracy gain on clean speech but risks the repetition
+          // loop on quiet audio), so dictation uses the same anti-hallucination greedy decode as meetings.
+          const fields =
+            `--${b}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${lang}\r\n` +
+            `--${b}\r\nContent-Disposition: form-data; name="translate"\r\n\r\nfalse\r\n` +
+            (vocabPrompt ? `--${b}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nVocabulary: ${vocabPrompt}\r\n` : "") +
+            `--${b}--\r\n`;
+          const cut = buf.lastIndexOf(Buffer.from(`--${b}--`));
+          reqBody = Buffer.concat([cut >= 0 ? buf.subarray(0, cut) : buf, Buffer.from(fields)]);
+        }
+        const r = await fetch(`http://127.0.0.1:${WHISPER_PORT}/inference`, { method: "POST", headers: { "Content-Type": ct }, body: reqBody });
         const body = await r.text();
         if (!r.ok) throw new Error(`${r.status} ${body.slice(0, 160)}`);
         let text = ""; try { text = String(JSON.parse(body).text || "").trim(); } catch {}

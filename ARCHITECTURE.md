@@ -85,6 +85,11 @@ These were expensive to learn. Do not re-litigate them.
    utterances give context; temperature-0 handles what's left. Verified on a silence/noise/transient/speech
    matrix. (A per-token confidence gate is **not possible** with this whisper GGUF — it exposes zero
    tokens; don't retry that approach.)
+   **Dictation is the exception — and not a contradiction.** This rule governs the *meeting* path: whole,
+   already-energy-gated utterances, where a VAD prefilter only clipped clean speech. **Dictation feeds
+   *short push-to-talk clips*** with silence a user leaves around a phrase, so it *does* run **Silero VAD**
+   (in the app, on the `cpal` buffer) to strip that silence — otherwise Whisper loops on a long/idle
+   recording. Two different inputs, two different answers; don't collapse them back into one rule.
 
 ## macOS permissions & code-signing — the biggest trap
 
@@ -106,6 +111,15 @@ Get these wrong and the double-click app silently fails or nags on every launch.
 - **Ad-hoc means grants survive relaunches but not rebuilds.** Any rebuild changes the cdhash → one
   re-grant. The permanent fix (grants survive rebuilds, runs on any Mac) is **Developer-ID signing +
   notarization** — the portable-installer milestone.
+- **A stable self-signed identity is the cheap intermediate — grants survive *rebuilds* on this machine.**
+  Sign the `.app` with a locally-created certificate (`codesign --sign "My Assistant Dev" …`) instead of
+  ad-hoc, and TCC keys the grant to that stable identity, so a rebuild no longer re-prompts (verified across
+  rebuilds — the Accessibility/Mic grants held). Caveats: it's untrusted by Gatekeeper (so **not**
+  distributable — Developer-ID is still the answer for *other* Macs); switching an *already-granted* app
+  from ad-hoc to the cert **invalidates the existing grant** (stale `csreq`) — `tccutil reset` the service
+  once, re-grant, then it sticks; and `security find-identity -v` *hides* the cert as
+  `CSSMERR_TP_NOT_TRUSTED`, but it still signs fine. Create it once via Keychain Access → *Create a
+  Certificate* (Code Signing, self-signed).
 - **Accessibility is cached at launch** — after granting it, restart the process to pick it up.
 - Editing the Swift/JS helpers does **not** churn the app's grant; only rebuilding the Tauri `.app` does.
   Batch anything needing `tauri build` into one rebuild + one re-grant.
@@ -177,39 +191,74 @@ it. Solid 1-on-1; best-effort in large gallery calls.
 
 ## Dictation
 
-Handy-style push-to-talk, built **inside `meeting-tap`** rather than a new binary: that process is a direct
-child of the app, so it already holds the **Accessibility** grant needed to synthesize the paste keystroke
-(a grandchild spawned through Node would not). The loop:
+Push-to-talk (or tap-to-toggle) transcription into any focused text field, running **entirely in the Tauri
+app process** — a deliberate reversal of an earlier design that lived in `meeting-tap`. Running in-process
+is what lets the app's *own* Accessibility grant authorize the paste, and it removes a ~300 ms
+per-keypress helper spawn. The loop:
 
-1. A **CGEvent tap** (`.defaultTap`, Accessibility-backed) watches for the trigger — **Fn** by default
-   (`.maskSecondaryFn` on `flagsChanged`) or a configurable key chord; **Esc** cancels.
-2. Hold (push-to-talk) or tap (toggle) records the mic to one buffer via its own `AVAudioEngine`, gated to
-   run **only when no meeting is capturing**, so the two never fight for the mic.
-3. On stop it POSTs the WAV to **`POST /api/transcribe`** (Node runs `ensureWhisper()`, then forwards to
-   `transcribe-server` — the seam a future cloud provider slots into), and
-4. **pastes** the result into the focused app: set `NSPasteboard`, synthesize **⌘V**, restore the clipboard.
+1. **Hotkey** — a global shortcut (default **⌃⇧D**) via `tauri-plugin-global-shortcut`, backed by Carbon's
+   `RegisterEventHotKey`. It needs **no macOS permission at all** — not Accessibility, not Input Monitoring
+   — and, unlike a raw CGEvent tap, it reports key **release** as well as press, so hold-to-talk works
+   without an event tap. One shortcut drives both modes (tap-to-toggle / hold-to-talk), chosen in Settings.
+2. **Record** — the mic is captured **in-process with `cpal`** on a dedicated thread (a cpal `Stream` is
+   `!Send`: its owning thread builds it, parks on an atomic stop flag, and drops it on that same thread).
+   The app itself prompts for **Microphone** on first use (`NSMicrophoneUsageDescription` in Info.plist).
+3. **Strip silence (Silero VAD)** — the buffer is resampled to 16 kHz (box-average low-pass, not plain
+   decimation, which aliases) and run through **Silero VAD** — the `voice_activity_detector` crate over a
+   **statically-linked ONNX Runtime** (`ort`), the same model family Handy bundles as `silero_vad_v4.onnx`.
+   Only speech regions reach Whisper; a clip with no speech produces nothing. This is what stops Whisper
+   from hallucinating a fluent loop on a long or accidental recording. (Why this is *not* a contradiction
+   of the "no VAD prefilter" rule: see Transcription rule 3 — dictation feeds short clips, the meeting path
+   feeds gated whole utterances.)
+4. **Transcribe** — the speech-only WAV POSTs to **`POST /api/transcribe`** (Node runs `ensureWhisper()`,
+   then forwards to `transcribe-server` — the seam a future cloud provider slots into). Dictation pins
+   **`language=en` + the transcribe task** (`translate=false`), matching Handy's *runtime* (its debug log
+   shows `task=Transcribe, language=en` even though its settings say `translate_to_english` — the translate
+   task only engages for a non-English source). This gives clean English on short mixed Hindi-English clips.
+5. **Paste** — synthesize **⌘V** as a `CGEvent` with an explicit Command flag (core-graphics), authorized
+   by the **app's own Accessibility grant**. Use the raw keycode 9 (`kVK_ANSI_V`), never a character —
+   character→keycode goes through HIToolbox, whose layout query is main-thread-only and aborts the app when
+   called from the transcription thread.
 
-Config rides the existing `/api/state` poll (`dictation: {…}` from **Settings → Dictation**); results return
-via `POST /ingest {type:'dictation'}` to populate the Dictation view. **Setup:** the macOS **🌐/Fn** key must
-be set to "Do Nothing" (System Settings → Keyboard) or the OS intercepts Fn.
+Progress and results ride the existing SSE channel: `emit_dstate()` POSTs `dictation-state` to `/ingest`
+(drives the pill), and the final text POSTs `{type:'dictation'}` (drives the Dictation view). Config
+(mode, language, vocabulary) rides the `/api/state` poll from **Settings → Dictation**.
+
+**The pill overlay** — a borderless, click-through window (`app/overlay.html`) that Rust alone shows/hides.
+To float over **every** app, including another app's **full-screen** space, it is converted at show-time
+into a **non-activating `NSPanel`** via objc2: `object_setClass` NSWindow→NSPanel + the nonactivating style
+bit + `NSScreenSaverWindowLevel` + `canJoinAllSpaces | fullScreenAuxiliary` + `orderFrontRegardless`. A
+plain NSWindow cannot render in another app's full-screen space at *any* level — this is exactly the trick
+`tauri-nspanel` (which Handy uses) performs; doing it inline avoids the dependency. Being non-activating, it
+never pulls focus off the field you're dictating into.
+
+**Setup:** none of the old friction — no Input Monitoring grant, no 🌐/Fn-key remap. Microphone
+auto-prompts on first use; Accessibility is the single shared grant (with Meetings) for the paste.
 
 ## Traps checklist (the landmines)
 
 - Don't reintroduce fixed-length transcription chunking — transcribe whole utterances.
-- Don't add a Silero/VAD prefilter to fix hallucinations — it degrades clean speech; use temperature-0.
+- Don't add a VAD prefilter to the **meeting** path (whole utterances) — it clips clean speech; use
+  temperature-0. **Dictation is the exception:** its short push-to-talk clips *do* use Silero VAD in-app to
+  strip surrounding silence (see Dictation). Different input, different rule.
 - Don't leave any helper `linker-signed` — re-sign with `codesign --force --sign -` after every build.
 - Don't spawn permission-needing helpers through node — spawn them directly from Rust.
 - Don't match off-screen meeting windows in detection — gate secondary windows on `isOnScreen`.
 - Don't set `excludesCurrentProcessAudio = true` — it wedges SCK into silent capture.
 - Don't run the on-device LLM as a raw GGUF — use LiteRT-LM, or it hangs an 8 GB Mac.
-- Don't build dictation as its own binary — the paste keystroke needs Accessibility, which only a direct child of the app inherits; keep it in `meeting-tap`.
+- Don't move dictation back into a helper binary or spawn one per keypress — it runs **in the app process**
+  (cpal mic + Carbon global shortcut + CGEvent paste), so the app's *own* Accessibility grant covers the
+  paste and there's no spawn lag. The Carbon global shortcut needs **no** permission (not Input Monitoring).
+- Don't paste with `enigo`/character keys off the main thread, and don't give the pill a plain NSWindow —
+  use raw keycode 9 for ⌘V (no HIToolbox layout lookup → no SIGTRAP), and a non-activating `NSPanel` for
+  the pill (a plain NSWindow won't float over another app's full-screen space at any level).
 
 ## Repo layout
 
 | Path | Role |
 |---|---|
-| `desktop/` | Tauri app — self-starts the stack; tray, screen-share stealth, close-to-tray |
-| `stt/meeting-tap.swift` | SCK capture (audio + video) + call self-detection + utterance segmentation + **dictation** (hotkey → mic → paste) |
+| `desktop/` | Tauri app — self-starts the stack; tray, screen-share stealth, close-to-tray; **in-process dictation** (global hotkey · cpal mic · Silero VAD · CGEvent paste · NSPanel pill) |
+| `stt/meeting-tap.swift` | SCK capture (audio + video) + call self-detection + utterance segmentation (dictation moved into `desktop/`) |
 | `stt/transcribe-server/` | our transcribe.cpp HTTP wrapper (source + pinned-commit `build.sh`) |
 | `stt/whisper/` | GGUF model (git-ignored; fetched by `setup.sh`) |
 | `meeting-state/meeting-state.swift` | Accessibility layer: speaker names, mute/share |
