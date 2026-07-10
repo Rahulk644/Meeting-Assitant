@@ -38,6 +38,7 @@ let recentDictations = []; // last N dictation results — in-memory, session-li
 // Feature modules — everything is OFF until the user opts in (onboarding), so NO macOS permission is
 // requested until a module is enabled. meeting-tap/meeting-state gate their capability use on these.
 let modules = { dictation: false, meetings: false, writing: false };
+let dictStopSeq = 0; // bumped by POST /api/dictation/stop (pill/tray Stop) → meeting-tap finishes the current dictation
 function effectiveRecording() { return manual === "on" ? true : (manual === "paused" || manual === "off") ? false : (autoDetect && detected); }
 function broadcastCall() { // push the composed call state to the UI (and lastState, for reconnects)
   const rec = effectiveRecording();
@@ -299,6 +300,10 @@ http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
     return res.end(fs.readFileSync(path.join(__dirname, "index.html")));
   }
+  if (req.url.split("?")[0] === "/overlay.html") { // the floating Dictation Pill + Menu Bar Tray windows
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    return res.end(fs.readFileSync(path.join(__dirname, "overlay.html")));
+  }
   if (req.url === "/logo.png") { // brand mark (sidebar, Pro card, recording chip)
     res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "max-age=86400" });
     return res.end(fs.readFileSync(path.join(__dirname, "logo.png")));
@@ -332,7 +337,7 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/state" && req.method === "GET") { // meeting-tap polls this to gate capture + video mode + manual override
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ ...lastState, manual: manual || "auto", dictation: dictationCfg, modules }));
+    return res.end(JSON.stringify({ ...lastState, manual: manual || "auto", dictation: dictationCfg, modules, dictStop: dictStopSeq }));
   }
   if (req.url === "/api/meeting/control" && req.method === "POST") { // UI start/pause/resume/stop (composes with auto-detect)
     readBody(req).then(b => {
@@ -391,6 +396,9 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/dictations" && req.method === "GET") { // recent dictation results for the Dictation view
     res.writeHead(200, { "Content-Type": "application/json" }); return res.end(JSON.stringify(recentDictations));
+  }
+  if (req.url === "/api/dictation/stop" && req.method === "POST") { // pill/tray Stop → meeting-tap finishes (transcribes) the current dictation
+    dictStopSeq++; res.writeHead(204); return res.end();
   }
   if (req.url === "/api/open-settings" && req.method === "POST") { // deep-link a macOS Privacy pane (permission checklist)
     readBody(req).then(b => {

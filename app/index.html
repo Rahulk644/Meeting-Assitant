@@ -857,7 +857,7 @@ function renderDictations(){
   }
 }
 function onDictation(m){ if(!m||!m.text) return; dictItems.unshift({text:m.text,ts:m.ts||Date.now(),ms:m.ms||0}); dictItems=dictItems.slice(0,50); renderDictations(); }
-function onDictListening(on){ const p=$('#dictListening'); if(p) p.hidden=!on; }
+function onDictListening(m){ const on = m && m.phase ? (m.phase==='listening'||m.phase==='transcribing') : !!(m&&m.listening); const p=$('#dictListening'); if(p) p.hidden=!on; }
 async function initDictation(){
   const vb=$('#dictVocabBtn'); if(vb) vb.onclick=()=>openVocab();
   const ub=$('#dictUploadBtn'); if(ub) ub.onclick=()=>toast('Uploading a voice note is coming soon.');
@@ -1612,7 +1612,7 @@ es.onopen=()=>{connEl.textContent='● connected';connEl.className='ok'};
 es.onerror=()=>{connEl.textContent='reconnecting…';connEl.className=''};
 es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
   if(m.type==='state'&&m.state)onState(m.state);else if(m.type==='caption')addCaption(m);
-  else if(m.type==='dictation')onDictation(m);else if(m.type==='dictation-state')onDictListening(m.listening)};
+  else if(m.type==='dictation')onDictation(m);else if(m.type==='dictation-state')onDictListening(m)};
 
 /* ================= IN-CALL OVERLAY (Call Panel) =================
    Floats over every view while a real call is being recorded (gated on the live_indicator

@@ -563,22 +563,23 @@ final class Dictation {
         eng.prepare()
         do { try eng.start() } catch { err("dictation: engine.start failed: \(error)"); return }
         engine = eng; recording = true; startTs = Date().timeIntervalSince1970
-        sound("Tink"); report(["type": "dictation-state", "listening": true], "/tmp/mt_dstate.json")
+        sound("Tink"); reportPhase("listening")
         err("dictation: listening…")
     }
     func stopEngine() {
         engine?.inputNode.removeTap(onBus: 0); engine?.stop(); engine = nil; recording = false
-        report(["type": "dictation-state", "listening": false], "/tmp/mt_dstate.json")
     }
-    func cancel() { guard recording else { return }; stopEngine(); samples.removeAll(); sound("Pop"); err("dictation: cancelled") }
+    func cancel() { guard recording else { return }; stopEngine(); samples.removeAll(); sound("Pop"); reportPhase("idle"); err("dictation: cancelled") }
     func finish() {
         guard recording else { return }
         let ms = Int((Date().timeIntervalSince1970 - startTs) * 1000)
         let s = samples; stopEngine(); sound("Pop")
-        guard Double(s.count) / SR >= 0.3 else { err("dictation: too short"); return }   // ignore an accidental tap
+        guard Double(s.count) / SR >= 0.3 else { reportPhase("idle"); err("dictation: too short"); return }   // ignore an accidental tap
+        reportPhase("transcribing")
         q.async { self.transcribeAndInject(s, ms) }
     }
     func transcribeAndInject(_ s: [Float], _ ms: Int) {
+        defer { reportPhase("idle") }   // pill hides once transcription is done (success or not)
         let wav = URL(fileURLWithPath: "/tmp/dictation.wav")
         writeWav16(s, to: wav)
         // Route through the server (not straight to :8091) so node ensures the engine is up and, later, can pick
@@ -616,6 +617,7 @@ final class Dictation {
         try? data.write(to: URL(fileURLWithPath: file))
         _ = curl(["-s", "-X", "POST", "http://127.0.0.1:\(guiPort)/ingest", "-H", "Content-Type: application/json", "--data-binary", "@\(file)"])
     }
+    func reportPhase(_ p: String) { report(["type": "dictation-state", "phase": p], "/tmp/mt_dstate.json") } // listening | transcribing | idle → pill + view
 }
 
 // Pull the dictation config out of /api/state into the curDict* globals + (re)arm the key tap.
@@ -638,6 +640,7 @@ func applyDictationConfig(_ dc: [String: Any]) {
 let cap = Capture()
 let dictation = Dictation()
 var curModuleMeetings = false   // Meetings opt-in — gates Screen-Recording detection + capture (no opt-in ⇒ no prompt)
+var lastDictStop = 0            // last dictStop seq acted on (pill/tray Stop → finish the current dictation)
 var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curVocab = ""
 // Poll the server for UI-set config (video mode + share state) AND the manual override (start/pause/stop).
 // inMeeting is SELF-DETECTED below; `manual` lets the UI force capture on/off on top of that — e.g. manually
@@ -650,6 +653,7 @@ func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, langua
     }
     if let dc = o["dictation"] as? [String: Any] { applyDictationConfig(dc) }   // Handy-style dictation config (side-effect globals + tap)
     if let m = o["modules"] as? [String: Any] { curModuleMeetings = (m["meetings"] as? Bool) ?? false }   // Meetings opt-in gate
+    if let ds = o["dictStop"] as? Int, ds > lastDictStop { lastDictStop = ds; dictation.finish() }   // pill/tray Stop → finish now
     return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto", (o["autoDetect"] as? Bool) ?? true, (o["vocab"] as? String) ?? "")
 }
 // Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
