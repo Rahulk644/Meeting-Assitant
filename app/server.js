@@ -283,6 +283,10 @@ http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
     return res.end(fs.readFileSync(path.join(__dirname, "index.html")));
   }
+  if (req.url === "/logo.png") { // brand mark (sidebar, Pro card, recording chip)
+    res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "max-age=86400" });
+    return res.end(fs.readFileSync(path.join(__dirname, "logo.png")));
+  }
   if (req.url === "/ingest" && req.method === "POST") {
     let body = "";
     req.on("data", (c) => (body += c));

@@ -52,8 +52,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .side{width:240px;flex:0 0 240px;background:var(--sidebar);border-right:1px solid var(--line);
         display:flex;flex-direction:column;padding:14px 12px}
   .brand{display:flex;align-items:center;gap:9px;padding:4px 6px 15px}
-  .brand .mark{width:26px;height:26px;border-radius:7px;background:var(--accent);display:grid;place-items:center;
-        box-shadow:0 1px 3px var(--shadow)}
+  .brand .mark{width:26px;height:26px;border-radius:50%;display:block;box-shadow:0 1px 3px var(--shadow)}
   .brand .nm{font-size:14px;font-weight:680;color:var(--ink);letter-spacing:-0.01em}
   nav{display:flex;flex-direction:column}
   .nav{display:flex;align-items:center;gap:11px;padding:8px 10px;margin:1.5px 0;border-radius:var(--r-md);
@@ -67,13 +66,18 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .side .foot{font-size:13px}.side .foot .nav{padding:7px 10px;margin:1px 0;font-size:13px}
   .side .spacer{flex:1}
   .side hr{border:none;border-top:1px solid var(--line);margin:9px 6px}
-  .pro{margin-top:9px;padding:12px;border-radius:11px;background:var(--surface);border:1px solid var(--line);cursor:pointer}
+  .pro{margin-top:9px;padding:13px;border-radius:11px;border:1px solid var(--line);cursor:pointer;
+        background:linear-gradient(160deg, var(--accent-soft) 0%, var(--surface) 55%);box-shadow:0 1px 4px var(--shadow)}
   .pro .ph{display:flex;align-items:center;gap:8px}
-  .pro .pi{width:22px;height:22px;border-radius:6px;background:var(--accent-soft);display:grid;place-items:center}
-  .pro .pt{font-size:12.5px;font-weight:650;color:var(--ink)}
-  .pro .pd{font-size:11.5px;color:var(--ink-2);margin-top:6px;line-height:1.45}
-  .pro .pb{margin-top:10px;padding:7px;border-radius:var(--r-md);background:var(--accent);color:var(--accent-ink);
+  .pro .pi{width:22px;height:22px;border-radius:50%;display:block;flex:0 0 auto}
+  .pro .pt{font-size:12.5px;font-weight:680;color:var(--ink);letter-spacing:-0.01em}
+  .pro .pt b{color:var(--accent);font-weight:680}
+  .pro .pl{display:flex;flex-direction:column;gap:5px;margin-top:9px}
+  .pro .pc{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2)}
+  .pro .pc svg{width:11px;height:11px;flex:0 0 auto}
+  .pro .pb{margin-top:11px;padding:7px;border-radius:var(--r-md);background:var(--accent);color:var(--accent-ink);
         text-align:center;font-size:12px;font-weight:600}
+  .pro .pn{font-size:10.5px;color:var(--ink-3);text-align:center;margin-top:6px}
 
   /* ===== main ===== */
   .main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--win);overflow:hidden}
@@ -241,15 +245,17 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .mcard{display:flex;gap:14px;align-items:center;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-lg);
         margin-bottom:8px;cursor:pointer;transition:.12s;background:var(--surface)}
   .mcard:hover{border-color:var(--line-2)}
-  .mcard .mi{width:44px;height:44px;border-radius:10px;background:var(--accent);display:grid;place-items:center;color:#fff;font-weight:700;font-size:16px;flex:0 0 auto;position:relative;overflow:hidden}
+  .mcard .mi{width:44px;height:44px;border-radius:10px;background:var(--surface-2);display:grid;place-items:center;flex:0 0 auto;position:relative;overflow:hidden}
+  .mcard .mi>svg{width:22px;height:22px}
   .mcard .mthumb{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .mcard .miplay{position:absolute;inset:0;display:grid;place-items:center;color:#fff;background:linear-gradient(180deg,rgba(0,0,0,.05),rgba(0,0,0,.38))}
+  .mcard .miplay svg{width:16px;height:16px}
   .mcard .mb{flex:1;min-width:0}
-  .mcard .ct{font-weight:600;font-size:14.5px;letter-spacing:-0.01em;display:flex;align-items:center;gap:8px;min-width:0;color:var(--ink)}
-  .mcard .ct .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .mcard .cs{color:var(--ink-2);font-size:13px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .mcard .cm{color:var(--ink-3);font-size:12px;margin-top:8px;display:flex;gap:10px;align-items:center}
-  .mcard .cr{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:12px;color:var(--ink-3);padding-left:6px}
-  .mcard .cr .crt{color:var(--ink-2);font-weight:500}
+  .mcard .ct{font-weight:600;font-size:14.5px;letter-spacing:-0.01em;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mcard .cm{color:var(--ink-3);font-size:12.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mcard .cr{flex:0 0 auto;display:flex;align-items:center;gap:11px;font-size:12.5px;color:var(--ink-3);padding-left:8px}
+  .mcard .cr .crt{color:var(--ink-2);font-weight:500;font-variant-numeric:tabular-nums}
+  .mcard .chev{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto}
   .mstack{display:inline-flex}
   .mav{width:20px;height:20px;border-radius:50%;background:var(--surface-2);color:var(--ink-2);display:grid;place-items:center;
         font-size:9px;font-weight:600;border:1.5px solid var(--surface);margin-left:-6px}
@@ -307,8 +313,8 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .cchip{position:fixed;z-index:70;align-items:center;gap:8px;padding:6px 12px 6px 7px;border-radius:999px;
     background:var(--surface);border:1px solid var(--line);box-shadow:0 8px 26px var(--shadow);cursor:pointer;animation:maRise .22s ease}
   .cchip:not([hidden]){display:flex} .cchip:hover{border-color:var(--accent)}
-  .cchip .mk{position:relative;flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:var(--accent);display:grid;place-items:center}
-  .cchip .mk svg{width:11px;height:11px}
+  .cchip .mk{position:relative;flex:0 0 auto;width:20px;height:20px}
+  .cchip .mk img{width:20px;height:20px;border-radius:50%;display:block}
   .cchip .mk .bdg{position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--live);
     border:1.5px solid var(--surface);animation:maPulse 1.6s ease-in-out infinite}
   .cchip .ct{font-size:12px;font-weight:650;color:var(--ink);font-variant-numeric:tabular-nums}
@@ -386,7 +392,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   <!-- ===== SIDEBAR ===== -->
   <aside class="side">
     <div class="brand">
-      <span class="mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.6l1.75 5.5 5.5 1.75-5.5 1.75L12 17.1l-1.75-5.5L4.75 9.85l5.5-1.75L12 2.6Z"/></svg></span>
+      <img class="mark" src="/logo.png" alt="My Assistant"/>
       <span class="nm">My Assistant</span>
     </div>
     <nav id="nav-main">
@@ -405,11 +411,16 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
     </nav>
     <div class="pro" id="proCard">
       <div class="ph">
-        <span class="pi"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 11l6-6 6 6"/></svg></span>
-        <span class="pt">My Assistant Pro</span>
+        <img class="pi" src="/logo.png" alt=""/>
+        <span class="pt">My Assistant <b>Pro</b></span>
       </div>
-      <div class="pd">Cloud models, unlimited storage, and team sharing.</div>
-      <div class="pb">Upgrade</div>
+      <div class="pl">
+        <div class="pc"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>Smarter cloud models</div>
+        <div class="pc"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>Every meeting, kept forever</div>
+        <div class="pc"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>Share notes with your team</div>
+      </div>
+      <div class="pb">Try Pro free for 14 days</div>
+      <div class="pn">No card needed · cancel anytime</div>
     </div>
   </aside>
 
@@ -443,7 +454,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
     </div>
   </div>
   <div class="cchip" id="callChip" hidden title="Expand recording panel">
-    <span class="mk"><svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.6l1.75 5.5 5.5 1.75-5.5 1.75L12 17.1l-1.75-5.5L4.75 9.85l5.5-1.75L12 2.6Z"/></svg><span class="bdg"></span></span>
+    <span class="mk"><img src="/logo.png" alt=""/><span class="bdg"></span></span>
     <span class="ct" id="ccTime">0:00</span>
     <span class="pt" id="ccPaused" hidden>Paused</span>
   </div>
@@ -466,7 +477,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
       <div class="mt-pane on" id="mt-library">
         <div class="scroll"><div class="hero wide">
           <div class="h1">Meetings.</div>
-          <div class="lead" style="max-width:540px">On-device transcription with live speaker names. No bot joins your call, no audio leaves your Mac.</div>
+          <div class="lead" style="max-width:540px">Transcribed on your Mac, with speaker names. No bots, nothing uploaded.</div>
           <div class="rowbtns">
             <div class="obtn solid" id="goLiveBtn"><span class="rdot"></span>Record</div>
             <div class="obtn" id="uploadAudio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>Upload audio</div>
@@ -1168,6 +1179,7 @@ async function loadLibrary(){
 const IC_VID='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>';
 const IC_SPARK='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 5L19 8.5l-5 1.6L12 15l-1.6-4.9L5 8.5l5.4-1.5z"/></svg>';
 const IC_CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6L9 17l-5-5"/></svg>';
+function prettyApp(a){ if(!a)return''; const m={zoom:'Zoom',teams:'Microsoft Teams',meet:'Google Meet',webex:'Webex',slack:'Slack',call:''}; const k=String(a).toLowerCase(); return k in m ? m[k] : a; }
 function avatarStack(ppl,max=4){
   if(!ppl||!ppl.length) return '';
   const shown=ppl.slice(0,max).map(p=>`<span class="mav" title="${esc(p)}">${esc(initials(p))}</span>`).join('');
@@ -1177,17 +1189,21 @@ function avatarStack(ppl,max=4){
 function meetingCard(m){
   const card=document.createElement('div'); card.className='mcard';
   const t=new Date(m.startedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-  const ppl=m.participants||[];
-  const live=m.live?'<span class="livepill"><span class="ld"></span>LIVE</span>':'';
-  const notes=m.summarized?`<span class="sumtag">${IC_SPARK}Notes</span>`:'';
+  const n=(m.participants||[]).length;
+  const meta=[fmtDay(m.startedAt), t, prettyApp(m.app), n?`${n} participant${n===1?'':'s'}`:''].filter(Boolean).join(' · ');
+  const tile=m.hasVideo
+    ? `<div class="mi"><img class="mthumb" src="/api/meetings/${m.id}/thumb" alt="" onerror="this.parentNode.classList.add('noimg')"><span class="miplay">${IC_VID}</span></div>`
+    : `<div class="mi">${callPlatformIcon(m.app)}</div>`;
+  const badge=m.live
+    ? '<span class="livepill"><span class="ld"></span>LIVE</span>'
+    : (m.summarized ? `<span class="sumtag">${IC_SPARK}Notes</span>` : '');
   card.innerHTML=
-    `<div class="mi">A${m.hasVideo?`<img class="mthumb" src="/api/meetings/${m.id}/thumb" alt="" onerror="this.remove()">`:''}</div>
+    `${tile}
      <div class="mb">
-       <div class="ct"><span class="nm">${esc(m.title)}</span>${live}${notes}</div>
-       <div class="cs">${esc(m.snippet||'No transcript captured')}</div>
-       <div class="cm">${avatarStack(ppl)}<span>${m.lineCount} line${m.lineCount===1?'':'s'}</span>${m.hasVideo?`<span class="vtag" title="Screen recording">${IC_VID}</span>`:''}</div>
+       <div class="ct">${esc(m.title)}</div>
+       <div class="cm">${esc(meta)||'No transcript captured'}</div>
      </div>
-     <div class="cr"><span class="crt">${t}</span><span>${fmtDur(m)}</span></div>`;
+     <div class="cr">${badge}<span class="crt">${fmtDur(m)}</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>`;
   card.onclick=()=> m.live? mtShow('live') : openMeeting(m.id);
   return card;
 }
