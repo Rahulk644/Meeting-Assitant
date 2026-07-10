@@ -302,6 +302,7 @@ func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
     // is accurate (A/B-verified against Handy's own WAVs). Both overridable in Settings → Meetings.
     var args = ["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json", "-F", "language=\(curLanguage)"]
     if curTranslate { args += ["-F", "translate=true"] }
+    if !curVocab.isEmpty { args += ["-F", "prompt=\(curVocab)"] } // custom vocabulary → bias Whisper toward these names/terms
     let out = curl(args)
     guard let data = out.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
@@ -468,17 +469,17 @@ func postRecording(_ file: String, _ startedAt: Int) {
 }
 
 let cap = Capture()
-var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto", curAutoDetect = true
+var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curVocab = ""
 // Poll the server for UI-set config (video mode + share state) AND the manual override (start/pause/stop).
 // inMeeting is SELF-DETECTED below; `manual` lets the UI force capture on/off on top of that — e.g. manually
 // record a Google Meet call (no native window to auto-detect), or pause/stop while still in a call.
-func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, language: String, manual: String, autoDetect: Bool) {
+func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, language: String, manual: String, autoDetect: Bool, vocab: String) {
     let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
     guard let d = out.data(using: .utf8),
           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
-        return (curSharing, curVideoMode, curTranslate, curLanguage, curManual, curAutoDetect)
+        return (curSharing, curVideoMode, curTranslate, curLanguage, curManual, curAutoDetect, curVocab)
     }
-    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto", (o["autoDetect"] as? Bool) ?? true)
+    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto", (o["autoDetect"] as? Bool) ?? true, (o["vocab"] as? String) ?? "")
 }
 // Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
 // capture needs anyway), NOT Accessibility. A native meeting app showing its in-call window = we're in a
@@ -535,7 +536,7 @@ func gate(_ app: String?) {
 }
 func tick() {
     let cfg = fetchConfig()
-    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language; curManual = cfg.manual; curAutoDetect = cfg.autoDetect
+    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language; curManual = cfg.manual; curAutoDetect = cfg.autoDetect; curVocab = cfg.vocab
     cap.updateShare()
     if !GATE { gate("call"); return }                        // --gate off: always capture (still honors manual)
     detectMeetingApp { app in DispatchQueue.main.async { gate(app) } }

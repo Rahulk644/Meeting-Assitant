@@ -343,6 +343,41 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .qa .q{font-weight:600;font-size:13.5px;color:var(--ink)}
   .qa .a{white-space:pre-wrap;color:var(--ink-2);font-size:14px;line-height:1.6;margin-top:4px}
   .qa .a.spin{color:var(--ink-3)}
+  /* ===== settings modals (vocab / templates / modes / snippets / permissions) ===== */
+  .mscrim{position:fixed;inset:0;z-index:120;background:rgba(15,14,12,.34);display:flex;align-items:center;justify-content:center;padding:24px}
+  .mscrim[hidden]{display:none!important}
+  .mcardm{width:440px;max-width:100%;max-height:calc(100vh - 80px);display:flex;flex-direction:column;background:var(--surface);
+    border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.35);padding:19px 20px 20px;animation:maRise .18s ease}
+  .mhead{display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+  .mtitle{font-size:15.5px;font-weight:680;color:var(--ink)}
+  .mx{width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--ink-3);border:none;background:none}
+  .mx:hover{background:var(--surface-2);color:var(--ink)}
+  .msub{font-size:12.5px;color:var(--ink-2);margin-top:6px}
+  .mbody{overflow:auto;margin-top:14px;display:flex;flex-direction:column;gap:7px}
+  .mitem{display:flex;align-items:center;gap:12px;padding:10px 13px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
+  .mitem .nm{font-size:13px;font-weight:620;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mitem .ds{font-size:11.5px;color:var(--ink-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mitem.pick{cursor:pointer;background:transparent;border-color:transparent} .mitem.pick:hover{background:var(--surface-2)}
+  .mitem.pick.on{background:var(--accent-soft);border-color:transparent}
+  .mradio{width:16px;height:16px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--line-2)}
+  .mitem.on .mradio{border-color:var(--accent);background:var(--accent)}
+  .mradio i{width:6px;height:6px;border-radius:50%;background:var(--accent-ink)}
+  .mrmv{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--ink-3);flex-shrink:0;border:none;background:none}
+  .mrmv:hover{background:var(--line);color:var(--ink)}
+  .minput{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--field);font:inherit;font-size:13px;color:var(--ink);outline:none}
+  .minput:focus{border-color:var(--accent)}
+  .maddrow{display:flex;flex-direction:column;gap:8px;margin-top:14px;border-top:1px solid var(--line);padding-top:14px;flex-shrink:0}
+  .maddbtn{padding:9px 15px;border-radius:9px;background:var(--accent);color:var(--accent-ink);font-size:12.5px;font-weight:600;cursor:pointer;border:none;flex-shrink:0}
+  .mdash{margin-top:10px;padding:10px;border-radius:10px;border:1.5px dashed var(--line-2);text-align:center;font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;flex-shrink:0}
+  .mdash:hover{border-color:var(--accent);color:var(--accent)}
+  .mtile{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--accent-soft);color:var(--accent)}
+  .mgrant{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650;border-radius:999px;padding:4px 10px;flex-shrink:0}
+  .mgrant.ok{color:#12805c;background:color-mix(in srgb,#12805c 12%,transparent)}
+  .mgrant.no{color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line)}
+  .mnote{font-size:11.5px;color:var(--ink-3);margin-top:8px;text-align:center;flex-shrink:0}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:140;background:var(--ink);color:var(--win);
+    font-size:12.5px;font-weight:560;padding:9px 15px;border-radius:9px;box-shadow:0 8px 26px var(--shadow);animation:maRise .18s ease}
+  .toast[hidden]{display:none!important}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
 </head>
@@ -553,6 +588,17 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   </div>
 </div>
 
+<!-- ===== reusable settings modal + toast ===== -->
+<div class="mscrim" id="mScrim" hidden>
+  <div class="mcardm" id="mCard">
+    <div class="mhead"><div class="mtitle" id="mTitle"></div>
+      <button class="mx" id="mClose" aria-label="Close"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
+    </div>
+    <div id="mContent"></div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
@@ -637,6 +683,19 @@ function resolveLLM(){
   const c=aiCfg(),p=AI_PROVIDERS[c.provider]||AI_PROVIDERS.local;
   return {base:(c.provider==='custom'?c.base:p.base)||p.base, key:p.needsKey?(c.key||''):'', model:c.model||p.model};
 }
+
+/* ---------- meeting-note templates (shape the post-call summary prompt) ---------- */
+const DEFAULT_TEMPLATES=[
+  {id:'standard',name:'Standard',sections:'Summary · Action items',prompt:''}, // '' → the server's default instruction
+  {id:'detailed',name:'Detailed',sections:'Overview · Decisions · Actions · Risks',prompt:'Write meeting notes with these markdown sections: "Overview" (2–3 sentences), "Decisions" (bullets), "Action items" (each "- <owner>: <task>", or "None"), "Risks / open questions" (bullets, or "None").'},
+  {id:'standup',name:'Standup',sections:'Done · Doing · Blockers',prompt:'Summarise as three short bullet sections — "Done", "Doing", "Blockers" — then "Action items:" with each as "- <owner>: <task>" (or "None").'},
+];
+function templates(){ const t=store.get('templates',null); return (Array.isArray(t)&&t.length)?t:DEFAULT_TEMPLATES; }
+function selectedTemplatePrompt(){ const t=templates().find(x=>x.id===store.get('template_sel','standard')); return t?(t.prompt||''):''; }
+
+/* ---------- custom vocabulary (fed to the transcriber as an initial prompt) ---------- */
+function vocabList(){ const v=store.get('vocab',[]); return Array.isArray(v)?v:[]; } // [{word, alts}]
+function vocabPrompt(){ const w=vocabList().map(v=>v.word).filter(Boolean); return w.length?('Vocabulary: '+w.join(', ')+'.'):''; }
 
 /* ---------- writing-assistant hero toggle ---------- */
 function paintWa(){ $('#waToggle').classList.toggle('on', store.get('wa_enabled',true)); }
@@ -816,6 +875,7 @@ function settingRow(row){
     let getV,setV,gate=false;
     if(id==='translate_en'){ getV=()=>store.get('translate',true); setV=v=>{store.set('translate',v);setTranslate(v)}; }
     else if(id==='auto_detect'){ getV=()=>store.get('auto_detect',true); setV=v=>{store.set('auto_detect',v); cfg({autoDetect:v})}; }  // off → only manual start records
+    else if(id==='unload_model'){ getV=()=>store.get('unload_model',true); setV=v=>{store.set('unload_model',v); cfg({unloadIdle:v})}; }  // off → keep the model hot
     else if(id==='stealth'){ gate=!isTauri(); getV=()=>isTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
       if(gate) l.querySelector('.st').insertAdjacentHTML('beforeend','<span class="badge">DESKTOP</span>'); }
     else { getV=()=>store.get(id,DEFAULTS[id]||false); setV=v=>store.set(id,v); }
@@ -862,7 +922,8 @@ function settingRow(row){
   }
 
   if(row.type==='button'){
-    const b=document.createElement('div'); b.className='abtn'; b.textContent=row.btn||'Configure'; c.append(b); return r;
+    const b=document.createElement('div'); b.className='abtn'; b.textContent=row.btn||'Configure';
+    b.onclick=()=>settingAction(id); c.append(b); return r;
   }
 
   if(row.type==='shortcut'){
@@ -871,7 +932,8 @@ function settingRow(row){
     if(unset) w.innerHTML='<span class="notset">Not set</span>';
     else { const keys=document.createElement('div'); keys.className='keys';
       raw.split('+').map(k=>k.trim()).filter(Boolean).forEach(k=>{ const s=document.createElement('span'); s.className='keycap'; s.textContent=k; keys.append(s); }); w.append(keys); }
-    const chg=document.createElement('div'); chg.className='abtn'; chg.textContent=unset?'Set shortcut':'Change'; w.append(chg);
+    const chg=document.createElement('div'); chg.className='abtn'; chg.textContent=unset?'Set shortcut':'Change';
+    chg.onclick=()=>recordShortcut(id,row.title); w.append(chg);
     c.append(w); return r;
   }
 
@@ -879,7 +941,7 @@ function settingRow(row){
     const w=document.createElement('div'); w.className='sc-row';
     const p=document.createElement('span'); p.className='pathtext'; p.textContent=store.get(id,DEFAULTS[id]||''); p.title=p.textContent;
     const chg=document.createElement('div'); chg.className='abtn'; chg.textContent='Change';
-    w.append(p,chg); c.append(w); return r;
+    chg.onclick=()=>toast('A folder picker arrives with the desktop app.'); w.append(p,chg); c.append(w); return r;
   }
   return r;
 }
@@ -898,6 +960,125 @@ function renderAIModel(body,row){
   body.append(subRow('Model name',(p.model?`Default: ${p.model}`:''),aiInput('text',c0.model,p.model||'model',v=>setAiCfg({model:v}))));
 }
 function subRow(title,desc,ctl){ const {r,c}=srowShell({title,desc}); c.append(ctl); return r; }
+
+/* ================= SETTINGS MODALS ================= */
+function el(tag,cls,text){ const e=document.createElement(tag); if(cls)e.className=cls; if(text!=null)e.textContent=text; return e; }
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>{t.hidden=true},2400); }
+function closeModal(){ $('#mScrim').hidden=true; $('#mContent').innerHTML=''; }
+function openModal(title,build){ $('#mTitle').textContent=title; const box=$('#mContent'); box.innerHTML=''; build(box); $('#mScrim').hidden=false; }
+$('#mClose').onclick=closeModal;
+$('#mScrim').onclick=(e)=>{ if(e.target===$('#mScrim')) closeModal(); };
+document.addEventListener('keydown',e=>{ if(e.key==='Escape' && !$('#mScrim').hidden && !$('#mScrim').dataset.recording) closeModal(); });
+const IC_X_SM='<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+const IC_MIC='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/></svg>';
+const IC_SCREEN='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="13" rx="2"/><line x1="9" y1="20.5" x2="15" y2="20.5"/></svg>';
+const IC_AXS='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="1.6" fill="currentColor" stroke="none"/><path d="M7.5 10.5l3 1v3l-1.5 4M16.5 10.5l-3 1v3l1.5 4M10.5 12.5h3"/><circle cx="12" cy="12" r="9.5"/></svg>';
+
+function settingAction(id){
+  if(id==='custom_vocab') return openVocab();
+  if(id==='templates') return openTemplates();
+  if(id==='wa_modes') return openModes();
+  if(id==='snippets') return openSnippets();
+  if(id==='permissions') return openPermissions();
+  if(id==='version') return toast("You’re on the latest version — 0.1.0");
+  if(id==='support_creator') return toast('Thank you for the support! 💛');
+}
+function grow(){ const d=el('div'); d.style.flex='1'; d.style.minWidth='0'; return d; }
+
+/* Custom vocabulary — real: fed to Whisper as an initial prompt via meeting-tap */
+function saveVocab(list){ store.set('vocab',list); cfg({vocab:vocabPrompt()}); }
+function openVocab(){ openModal('Custom vocabulary', box=>{
+  box.append(el('div','msub','Words it should always get right — names, acronyms, product terms.'));
+  const list=el('div','mbody');
+  const render=()=>{ list.innerHTML=''; const items=vocabList();
+    if(!items.length) list.append(el('div','mnote','No terms yet.'));
+    items.forEach((t,i)=>{ const row=el('div','mitem'), c=grow();
+      c.innerHTML=`<div class="nm">${esc(t.word)}</div>`+(t.alts?`<div class="ds">Heard as ${esc(t.alts)}</div>`:'');
+      const x=el('button','mrmv'); x.innerHTML=IC_X_SM; x.onclick=()=>{ const l=vocabList(); l.splice(i,1); saveVocab(l); render(); };
+      row.append(c,x); list.append(row); }); };
+  render(); box.append(list);
+  const add=el('div','maddrow'), w=el('input','minput'), altRow=el('div'), a=el('input','minput'), btn=el('div','maddbtn','Add');
+  w.placeholder='Word or phrase'; a.placeholder='Misspellings, comma separated (optional)'; a.style.flex='1';
+  altRow.style.display='flex'; altRow.style.gap='8px';
+  const go=()=>{ const word=w.value.trim(); if(!word)return; const l=vocabList(); l.push({word,alts:a.value.trim()}); saveVocab(l); w.value='';a.value=''; render(); w.focus(); };
+  btn.onclick=go; w.onkeydown=a.onkeydown=e=>{ if(e.key==='Enter')go(); };
+  altRow.append(a,btn); add.append(w,altRow); box.append(add);
+}); }
+
+/* Note templates — real: the selected template shapes the summary prompt */
+function openTemplates(){ openModal('Meeting note templates', box=>{
+  box.append(el('div','msub','Notes are generated with the selected template.'));
+  const list=el('div','mbody');
+  const render=()=>{ list.innerHTML=''; const sel=store.get('template_sel','standard');
+    templates().forEach(tp=>{ const row=el('div','mitem pick'+(tp.id===sel?' on':'')), radio=el('div','mradio'), c=grow();
+      if(tp.id===sel) radio.innerHTML='<i></i>';
+      c.innerHTML=`<div class="nm">${esc(tp.name)}</div><div class="ds">${esc(tp.sections||'')}</div>`;
+      row.append(radio,c); row.onclick=()=>{ store.set('template_sel',tp.id); render(); }; list.append(row); }); };
+  render(); box.append(list);
+  const add=el('div','maddrow'), nm=el('input','minput'), pr=el('textarea','minput'), btn=el('div','maddbtn','Add template');
+  nm.placeholder='Template name'; pr.placeholder='Instruction — e.g. “Summarise as decisions, then action items.”'; pr.rows=2; pr.style.resize='vertical';
+  btn.onclick=()=>{ const name=nm.value.trim(), prompt=pr.value.trim(); if(!name||!prompt)return;
+    const l=templates().slice(), id='t'+Date.now(); l.push({id,name,sections:'Custom',prompt}); store.set('templates',l); store.set('template_sel',id); nm.value='';pr.value=''; render(); };
+  add.append(nm,pr,btn); box.append(add);
+}); }
+
+/* Assistant modes — persists; the writing assistant reads these when it ships */
+const DEFAULT_MODES=[{id:'grammar',name:'Fix grammar',desc:'Correct spelling and grammar.',on:true},{id:'polish',name:'Improve writing',desc:'Clearer, more concise phrasing.',on:true},{id:'translate',name:'Translate',desc:'Translate to your default language.',on:true},{id:'shorter',name:'Make shorter',desc:'Tighten to the essentials.',on:false}];
+function waModes(){ const m=store.get('wa_modes_list',null); return Array.isArray(m)&&m.length?m:DEFAULT_MODES; }
+function openModes(){ openModal('Assistant modes', box=>{
+  box.append(el('div','msub','Actions shown when the writing assistant opens.'));
+  const list=el('div','mbody');
+  const render=()=>{ list.innerHTML=''; waModes().forEach((md,i)=>{ const row=el('div','mitem'), c=grow();
+    c.innerHTML=`<div class="nm">${esc(md.name)}</div><div class="ds">${esc(md.desc||'')}</div>`;
+    const tg=el('button','tgl'+(md.on?' on':'')); tg.onclick=()=>{ const l=waModes().slice(); l[i]={...l[i],on:!l[i].on}; store.set('wa_modes_list',l); render(); };
+    row.append(c,tg); list.append(row); }); };
+  render(); box.append(list);
+  const dash=el('div','mdash','+ New mode'); dash.onclick=()=>toast('Custom modes are coming soon.'); box.append(dash);
+}); }
+
+/* Snippets — persists; dictation expands these when it ships */
+function snippets(){ const s=store.get('snippets_list',[]); return Array.isArray(s)?s:[]; }
+function openSnippets(){ openModal('Snippets', box=>{
+  box.append(el('div','msub','Spoken shortcuts that expand into saved text.'));
+  const list=el('div','mbody');
+  const render=()=>{ list.innerHTML=''; const items=snippets();
+    if(!items.length) list.append(el('div','mnote','No snippets yet.'));
+    items.forEach((s,i)=>{ const row=el('div','mitem'), c=grow();
+      c.innerHTML=`<div class="nm">${esc(s.trigger)}</div><div class="ds">${esc(s.text)}</div>`;
+      const x=el('button','mrmv'); x.innerHTML=IC_X_SM; x.onclick=()=>{ const l=snippets(); l.splice(i,1); store.set('snippets_list',l); render(); };
+      row.append(c,x); list.append(row); }); };
+  render(); box.append(list);
+  const add=el('div','maddrow'), t=el('input','minput'), x=el('input','minput'), btn=el('div','maddbtn','Add');
+  t.placeholder='Trigger — e.g. “my email”'; x.placeholder='Expands to…';
+  btn.onclick=()=>{ const trigger=t.value.trim(), text=x.value.trim(); if(!trigger||!text)return; const l=snippets(); l.push({trigger,text}); store.set('snippets_list',l); t.value='';x.value=''; render(); };
+  add.append(t,x,btn); box.append(add);
+}); }
+
+/* Permissions — informational status (real OS grants happen in System Settings) */
+const PERMS=[{icon:IC_MIC,name:'Microphone',desc:'Transcribe your voice and the call audio.'},{icon:IC_SCREEN,name:'Screen Recording',desc:'Detect calls and capture shared screens.'},{icon:IC_AXS,name:'Accessibility',desc:'Read participant names from the meeting window.'}];
+function openPermissions(){ openModal('Permissions', box=>{
+  box.append(el('div','msub','My Assistant needs these macOS permissions — grant each once in System Settings › Privacy & Security.'));
+  const list=el('div','mbody');
+  PERMS.forEach(p=>{ const row=el('div','mitem'), tile=el('div','mtile'), c=grow(); tile.innerHTML=p.icon;
+    c.innerHTML=`<div class="nm">${p.name}</div><div class="ds">${p.desc}</div>`;
+    row.append(tile,c,el('span','mgrant no',isTauri()?'System Settings':'Desktop only')); list.append(row); });
+  box.append(list); box.append(el('div','mnote','macOS confirms each permission when the app first needs it.'));
+}); }
+
+/* Shortcut recorder — captures + persists a combo (global registration lands with the desktop app) */
+function recordShortcut(id,title){ openModal(title||'Shortcut', box=>{
+  $('#mScrim').dataset.recording='1';
+  box.append(el('div','msub','Press the key combination you want to use.'));
+  const cap=el('div','mnote','Listening…  (Esc to cancel)'); cap.style.fontSize='13.5px'; cap.style.padding='20px'; box.append(cap);
+  const done=()=>{ delete $('#mScrim').dataset.recording; document.removeEventListener('keydown',handler,true); };
+  const handler=(e)=>{ e.preventDefault(); e.stopPropagation();
+    if(e.key==='Escape'){ done(); closeModal(); return; }
+    if(['Meta','Control','Alt','Shift'].includes(e.key)){ const parts=[]; if(e.metaKey)parts.push('⌘'); if(e.ctrlKey)parts.push('⌃'); if(e.altKey)parts.push('⌥'); if(e.shiftKey)parts.push('⇧'); cap.textContent=parts.join(' ')+' …'; return; }
+    const parts=[]; if(e.metaKey)parts.push('⌘'); if(e.ctrlKey)parts.push('⌃'); if(e.altKey)parts.push('⌥'); if(e.shiftKey)parts.push('⇧');
+    parts.push(e.key.length===1?e.key.toUpperCase():e.key);
+    store.set(id,parts.join('+')); done(); closeModal(); renderSettings(); toast('Shortcut saved — global keys activate with the desktop app.'); };
+  document.addEventListener('keydown',handler,true);
+}); }
 function aiInput(type,val,ph,onset){ const i=document.createElement('input'); i.type=type; i.className='inp'; i.style.minWidth='260px';
   i.placeholder=ph; i.value=val||''; i.onchange=()=>onset(i.value.trim()); return i; }
 
@@ -1077,7 +1258,7 @@ function fillSummary(top, id, summary){
 async function genSummary(top,id){
   const b=top.querySelector('.linkbtn'); if(b){ b.disabled=true; b.textContent='Generating…'; }
   try{
-    const r=await fetch('/api/meetings/'+id+'/summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm:resolveLLM()})});
+    const r=await fetch('/api/meetings/'+id+'/summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm:resolveLLM(),deeper:store.get('deeper',false),template:selectedTemplatePrompt()})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
     fillSummary(top,id,j.summary);
   }catch(e){
@@ -1244,7 +1425,7 @@ if(isTauri() && store.get('stealth',false)) setStealth(true);
 setVideoMode(store.get('videoMode','off'));
 setLanguage(store.get('language','auto'));
 setTranslate(store.get('translate',true));
-cfg({autoDetect:store.get('auto_detect',true)});
+cfg({autoDetect:store.get('auto_detect',true), unloadIdle:store.get('unload_model',true), vocab:vocabPrompt()});
 </script>
 </body>
 </html>

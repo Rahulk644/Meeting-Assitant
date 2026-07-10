@@ -29,6 +29,8 @@ let cur = null; // the in-progress meeting being recorded to disk
 //              still records itself.
 let detected = false, manual = null, manualDetected = false; // manualDetected = the call state when `manual` was set
 let autoDetect = true; // the "Detect meetings automatically" setting — off = only manual start records
+let unloadIdle = true; // "Unload model when idle" setting — off = keep whisper hot between calls
+let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
 function effectiveRecording() { return manual === "on" ? true : (manual === "paused" || manual === "off") ? false : (autoDetect && detected); }
 function broadcastCall() { // push the composed call state to the UI (and lastState, for reconnects)
   const rec = effectiveRecording();
@@ -237,7 +239,7 @@ async function ensureWhisper() {
   console.error(`STT: starting ${path.basename(bin)} (call detected)…`);
 }
 function unloadWhisperSoon() { // only unloads the one WE started
-  if (!whisperProc || whisperIdle) return;
+  if (!whisperProc || whisperIdle || !unloadIdle) return; // setting off → keep the model hot between calls
   whisperIdle = setTimeout(() => { if (whisperProc) { whisperProc.kill(); whisperProc = null; console.error("whisper-server: unloaded (idle)"); } }, WHISPER_IDLE_MS);
 }
 const killKids = () => { msShutdown = true; if (llmProc) llmProc.kill(); if (msProc) msProc.kill(); if (whisperProc) whisperProc.kill(); };
@@ -325,6 +327,8 @@ http.createServer((req, res) => {
         if (typeof j.translate === "boolean") broadcast({ type: "state", state: { translate: j.translate } });
         if (typeof j.language === "string") broadcast({ type: "state", state: { language: j.language } });
         if (typeof j.autoDetect === "boolean") { autoDetect = j.autoDetect; broadcast({ type: "state", state: { autoDetect } }); recomputeLifecycle(); broadcastCall(); } // off → ignore self-detection (manual only)
+        if (typeof j.unloadIdle === "boolean") unloadIdle = j.unloadIdle; // off → keep whisper hot
+        if (typeof j.vocab === "string") { vocabPrompt = j.vocab.slice(0, 800); broadcast({ type: "state", state: { vocab: vocabPrompt } }); } // custom vocabulary → meeting-tap
       } catch {}
       res.writeHead(204); res.end();
     });
@@ -388,11 +392,14 @@ http.createServer((req, res) => {
     const one = readMeeting(msum[1]);
     if (!one) { res.writeHead(404); return res.end(); }
     readBody(req).then(b => {
-      let llm; try { llm = JSON.parse(b).llm; } catch {}
+      let llm, deeper = false, template = ""; try { const j = JSON.parse(b); llm = j.llm; deeper = !!j.deeper; template = String(j.template || ""); } catch {}
+      const instruction = template.trim() || `Summarise this meeting as 3–5 short bullet points, then a line "Action items:" with each as "- <owner>: <task>" (or "None").`;
+      const sys = "You summarise meeting transcripts for a busy professional. Be concise, specific, neutral — no preamble."
+        + (deeper ? " Reason carefully through the discussion — capture decisions, owners, and nuance you might otherwise miss." : "");
       return chat([
-        { role: "system", content: "You summarise meeting transcripts for a busy professional. Be concise, specific, neutral — no preamble." },
-        { role: "user", content: `Summarise this meeting as 3–5 short bullet points, then a line "Action items:" with each as "- <owner>: <task>" (or "None"). Transcript:\n\n${transcriptText(one)}` },
-      ], { maxTokens: 650, llm });
+        { role: "system", content: sys },
+        { role: "user", content: `${instruction}\n\nTranscript:\n\n${transcriptText(one)}` },
+      ], { maxTokens: deeper ? 1100 : 650, temperature: deeper ? 0.2 : 0.3, llm });
     }).then(text => {
       one.summary = text; saveMeeting(one);
       res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ summary: text }));
