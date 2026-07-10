@@ -767,7 +767,8 @@ const OVERLAY_POS={'Bottom center':'bottom-center','Bottom right':'bottom-right'
 // "⌃⇧D" or "⌃+⇧+D" → {mods:['ctrl','shift'], key:'D'} for the app's global-shortcut registrar (Fn is dropped — it can't be a global shortcut).
 function dictHotkey(str){
   const raw=String(str||'').split('+').map(s=>s.trim()).filter(Boolean);
-  const runes=[]; for(const p of raw){ if(p.length>1 && /[⌘⌃⌥⇧]/.test(p)){ for(const ch of p) runes.push(ch); } else runes.push(p); }
+  // peel any leading modifier glyphs (handles "⌃⇧D"); the remainder is the key (so "⌥Space" → ⌥ + "Space", not S·p·a·c·e)
+  const runes=[]; for(const p of raw){ let s=p; while(s.length && /[⌘⌃⌥⇧]/.test(s[0])){ runes.push(s[0]); s=s.slice(1); } if(s) runes.push(s); }
   const mods=[]; let key='';
   for(const r of runes){
     if(r==='⌘'||/^(cmd|command|meta)$/i.test(r)) mods.push('cmd');
@@ -779,7 +780,10 @@ function dictHotkey(str){
   }
   return {mods, key};
 }
-function syncDictation(ask){ if(!isTauri()) return; try{ window.__TAURI__.core.invoke('set_dictation',{cfg:{
+function syncDictation(ask){ if(!isTauri()) return;
+  let scStart=store.get('sc_start',DEFAULTS.sc_start);
+  { const h=dictHotkey(scStart); if(!(h.mods.length>0 && scMappable(h.key))){ scStart=DEFAULTS.sc_start; store.set('sc_start',scStart); } } // self-heal an invalid stored start shortcut so the UI + Rust agree
+  try{ window.__TAURI__.core.invoke('set_dictation',{cfg:{
   enabled: moduleOn('dictation'),
   ptt: !!store.get('push_to_talk',DEFAULTS.push_to_talk),
   sound: !!store.get('dict_sound',true),
@@ -787,7 +791,7 @@ function syncDictation(ask){ if(!isTauri()) return; try{ window.__TAURI__.core.i
   clipboard: dictClipMode(),
   overlay: !!store.get('overlay_enabled',true),
   overlay_pos: OVERLAY_POS[store.get('overlay_pos',DEFAULTS.overlay_pos)]||'bottom-center',
-  hotkey: dictHotkey(store.get('sc_start',DEFAULTS.sc_start)),
+  hotkey: dictHotkey(scStart),
   cancel: dictHotkey(store.get('sc_cancel',DEFAULTS.sc_cancel)),
   prompt: !!ask,
 }}); }catch(e){} }
@@ -1372,21 +1376,61 @@ function openPermissions(){ openModal('Permissions', box=>{
 }); }
 
 /* Shortcut recorder — captures + persists a combo (global registration lands with the desktop app) */
-function recordShortcut(id,title){ openModal(title||'Shortcut', box=>{
-  $('#mScrim').dataset.recording='1';
-  box.append(el('div','msub','Press the key combination you want to use.'));
-  const cap=el('div','mnote','Listening…  (Esc to cancel)'); cap.style.fontSize='13.5px'; cap.style.padding='20px'; box.append(cap);
-  const mods=(e)=>{ const p=[]; if(e.metaKey)p.push('⌘'); if(e.ctrlKey)p.push('⌃'); if(e.altKey)p.push('⌥'); if(e.shiftKey)p.push('⇧'); return p; };
-  const handler=(e)=>{ e.preventDefault(); e.stopPropagation();
-    if(e.key==='Escape'){ closeModal(); return; }
-    if(['Meta','Control','Alt','Shift'].includes(e.key)){ cap.textContent=mods(e).join(' ')+' …'; return; }  // show mods as they're held
-    const p=mods(e); p.push(e.key.length===1?e.key.toUpperCase():e.key);
-    store.set(id,p.join('+')); closeModal(); renderSettings();
-    if(id==='sc_start'||id==='sc_cancel'){ syncDictation(false); paintDictHints(); toast('Dictation shortcut updated.'); }
-    else toast('Shortcut saved — global keys activate with the desktop app.'); };
-  _modalCleanup=()=>{ delete $('#mScrim').dataset.recording; document.removeEventListener('keydown',handler,true); }; // runs however the modal closes
-  document.addEventListener('keydown',handler,true);
-}); }
+// Keys we can turn into a global shortcut — mirrors the Rust key_to_code() mapping.
+function scKeyName(e){
+  if(e.code==='Space'||e.key===' ') return 'Space';
+  const k=e.key;
+  if(k==='Enter') return 'Enter';
+  if(k==='Tab') return 'Tab';
+  if(k==='Escape') return 'Esc';
+  if(k.length===1 && /[a-z0-9]/i.test(k)) return k.toUpperCase();
+  return null;   // arrows, F-keys, etc. — not registrable here
+}
+function scMappable(k){ k=String(k||''); return /^[A-Za-z0-9]$/.test(k)||/^(space|spacebar|enter|return|tab|esc|escape|period|comma|\.|,)$/i.test(k); }
+// Record a shortcut with an explicit Save button + validation (no more auto-saving the first key you press).
+// The start hotkey MUST include a modifier (a bare key would be swallowed system-wide — the same rule Rust
+// enforces); cancel/other rows may be a single key. Escape is captured as a key here (click Cancel to close).
+function recordShortcut(id,title){
+  const needsMod=(id==='sc_start');
+  let mods=[], key='';
+  openModal(title||'Shortcut', box=>{
+    $('#mScrim').dataset.recording='1';
+    box.innerHTML=`
+      <div class="msub" style="padding:2px 20px 10px">${needsMod
+        ? 'Hold one or more modifiers (⌘ ⌃ ⌥ ⇧) and press a key — for example ⌘⇧D — then click Save.'
+        : 'Press the key or combination you want (a single key like Esc is fine), then click Save.'}</div>
+      <div id="scCap" style="font-size:16px;padding:14px 20px;min-height:30px;display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap"></div>
+      <div id="scErr" style="color:#e5484d;padding:0 20px;font-size:12.5px;min-height:16px;text-align:center"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px 20px 4px">
+        <button class="obtn" id="scClear">Clear</button>
+        <button class="obtn" id="scCancel">Cancel</button>
+        <button class="obtn solid" id="scSave">Save</button>
+      </div>`;
+    const cap=box.querySelector('#scCap'), errEl=box.querySelector('#scErr'), saveB=box.querySelector('#scSave');
+    const combo=()=>[...mods, ...(key?[key]:[])];
+    const valid=()=> !!key && (!needsMod || mods.length>0);
+    const paint=()=>{
+      const c=combo();
+      cap.innerHTML = c.length ? c.map(k=>`<span class="keycap">${k}</span>`).join('') : '<span style="opacity:.45">Listening…</span>';
+      saveB.disabled=!valid(); saveB.style.opacity=valid()?'1':'.5'; saveB.style.pointerEvents=valid()?'':'none';
+      errEl.textContent = (key && needsMod && !mods.length) ? 'A single key can’t be a global shortcut — add a modifier (⌘ ⌃ ⌥ ⇧).' : '';
+    };
+    const handler=(e)=>{ e.preventDefault(); e.stopPropagation();
+      mods=[]; if(e.metaKey)mods.push('⌘'); if(e.ctrlKey)mods.push('⌃'); if(e.altKey)mods.push('⌥'); if(e.shiftKey)mods.push('⇧');
+      if(!['Meta','Control','Alt','Shift'].includes(e.key)){ const n=scKeyName(e); if(n){ key=n; errEl.textContent=''; } else errEl.textContent='That key can’t be used — try a letter, number, Space, or Esc.'; }
+      paint();
+    };
+    const done=()=>document.removeEventListener('keydown',handler,true);
+    box.querySelector('#scClear').onclick=()=>{ mods=[]; key=''; errEl.textContent=''; paint(); };
+    box.querySelector('#scCancel').onclick=()=>closeModal();
+    saveB.onclick=()=>{ if(!valid()) return; done(); store.set(id, combo().join('+')); closeModal(); renderSettings();
+      if(id==='sc_start'||id==='sc_cancel'){ syncDictation(false); paintDictHints(); toast('Dictation shortcut updated.'); }
+      else toast('Shortcut saved.'); };
+    _modalCleanup=()=>{ delete $('#mScrim').dataset.recording; done(); };
+    document.addEventListener('keydown',handler,true);
+    paint();
+  });
+}
 function aiInput(type,val,ph,onset){ const i=document.createElement('input'); i.type=type; i.className='inp'; i.style.minWidth='260px';
   i.placeholder=ph; i.value=val||''; i.onchange=()=>onset(i.value.trim()); return i; }
 

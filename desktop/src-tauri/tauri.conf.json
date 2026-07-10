@@ -29,7 +29,6 @@
   },
   "bundle": {
     "active": true,
-    "comment": "targets=app only — the .dmg is built by desktop/make-dmg.sh (tauri's DMG step runs a Finder AppleScript that fails non-interactively).",
     "targets": ["app"],
     "icon": [
       "icons/32x32.png",
