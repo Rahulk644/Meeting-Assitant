@@ -9,14 +9,15 @@ the call, no audio leaves your machine, no meeting-app captions toggle.**
 ([Tauri](https://tauri.app), `desktop/`) — no terminal, no dev commands. It:
 
 - **detects the call itself** and transcribes *you and the other participants*, with **live speaker
-  names**, capturing **only while you're in a call**;
+  names**, capturing **only while you're in a call** — or **start / pause / stop by hand**;
 - **auto-detects the spoken language and outputs English** (Whisper translate; detection + translate
   both toggleable in Settings);
 - **saves every call on-device** into a browsable history with **post-call summaries, action items, and
   "ask this meeting"**;
 - can **screen-record** the call (whole call, or only while a screen is shared) and shows it in the
   meeting, with a frame as the card thumbnail;
-- shows a **menu-bar recording indicator** and can make its window **invisible to screen sharing**.
+- shows a **floating in-call panel** (live transcript + a per-call scratchpad, drag or minimize it) and a
+  **menu-bar recording indicator**, and can make its window **invisible to screen sharing**.
 
 The same UI also runs in a plain browser for development. Real-time in-call **coaching** — the Copilot —
 is the next milestone; see the [roadmap](#roadmap).
@@ -172,8 +173,9 @@ For the full design rationale, the transcription/permissions deep-dives, and the
 
 - **Speaker names** read Zoom's active-speaker from the Accessibility tree. Solid in 1-on-1; best-effort
   in large gallery calls. Your own lines are labeled `You`.
-- **Native meeting apps only** — self-detection recognizes Zoom/Teams/Webex/FaceTime windows. **Browser
-  calls** (Google Meet, Zoom web, Slack huddles) aren't detected yet.
+- **Native meeting apps only** for *auto*-detection — it recognizes Zoom/Teams/Webex/FaceTime windows.
+  **Browser calls** (Google Meet, Zoom web, Slack huddles) aren't auto-detected yet — start them by hand
+  with **Record**.
 - **Ad-hoc signing** — every rebuild changes the app's fingerprint, so you re-grant the three permissions
   once per build. Developer-ID + notarization (roadmap) fixes this permanently.
 - Screen recordings are **silent** (audio mux is a follow-up); **Only-when-shared** currently keys off
@@ -187,7 +189,8 @@ For the full design rationale, the transcription/permissions deep-dives, and the
 
 - [x] **Self-detecting capture** — finds the call from the window list (Screen Recording only), transcribes you + the others, only while in a call
 - [x] **Speaker names** from Zoom's AX tree (detector spawned as a direct child so its grant works)
-- [x] **transcribe.cpp engine** (≈2× faster, ≈half the RAM of whisper.cpp) — **whole-utterance**, **auto-detect → English**; language + translate toggles
+- [x] **transcribe.cpp engine** (≈2× faster, ≈half the RAM of whisper.cpp) — **whole-utterance**, **auto-detect → English**; language + translate toggles; **custom vocabulary** biases recognition of names/jargon
+- [x] **Manual + auto recording** — **start / pause / stop by hand** (composed with auto-detect, so pause/stop really releases the mic), plus a **floating in-call panel** (live transcript + scratchpad)
 - [x] **On-demand Whisper** (unloaded when idle) + on-demand LLM — light on an 8 GB Mac
 - [x] **Meeting history** + **post-call AI** (summary, action items, "ask"), **rename**, recording **thumbnails**
 - [x] **Desktop app (Tauri)** — double-click, self-starts the stack, **menu-bar recording indicator**, ask-once permissions
@@ -198,7 +201,7 @@ For the full design rationale, the transcription/permissions deep-dives, and the
 - [ ] **Real-time Copilot** — in-call coaching in an always-on **stealth** overlay (the keystone)
 - [ ] **Portable installer** — Developer-ID sign + notarize + bundle the models, so any Mac runs it (no `setup.sh`, no re-grant)
 - [ ] **Browser + Slack** meetings — detect Google Meet / Zoom web / Slack huddles
-- [ ] **Custom vocabulary** (names/jargon via Whisper `initial_prompt`); **audio in recordings**; global shortcut + launch-at-login
+- [ ] **audio in screen recordings**; **global shortcut** + **launch-at-login** (need Tauri plugins)
 - [ ] The other modules — **Dictation, Writing Assistant, Agents**
 
 ## License

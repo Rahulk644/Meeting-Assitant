@@ -50,9 +50,10 @@ server relays captions over SSE; the same UI runs in a browser (dev) or the Taur
 
 A ~130-line HTTP wrapper (`stt/transcribe-server/transcribe-server.cpp`, using single-header cpp-httplib)
 around transcribe.cpp's C API. It loads a GGUF once, holds it hot, and serves `POST /inference`
-**byte-compatible with whisper.cpp's `whisper-server`** — multipart `file` + `language` + `translate`,
-returns `{"text": …}`. Because the interface matches, the capturer and Node server are engine-agnostic;
-swapping engines is a spawn-path change, not a client change.
+**byte-compatible with whisper.cpp's `whisper-server`** — multipart `file` + `language` + `translate` +
+`prompt` (custom-vocabulary bias → the whisper run-ext's `initial_prompt`), returns `{"text": …}`. Because
+the interface matches, the capturer and Node server are engine-agnostic; swapping engines is a spawn-path
+change, not a client change.
 
 - **Build:** `stt/transcribe-server/build.sh` fetches transcribe.cpp at a **pinned commit**
   (`PINNED_COMMIT`), drops our `.cpp` + `httplib.h` in as a CMake example target, builds with Metal, and
@@ -117,6 +118,37 @@ windows alive off-screen (e.g. Zoom retains a `zoom floating video window` when 
 the main `Zoom Meeting` window unconditionally (it exists only during a real call), but count the
 floating-video / share-statusbar windows **only when `isOnScreen`** — otherwise the app false-detects a
 call whenever the meeting app is merely open.
+
+## Recording control: auto-detect composed with manual
+
+Recording is driven by an **effective state** the server computes from two inputs, not by detection alone:
+
+- **`detected`** — the raw "in a call" the capturers self-report (`meeting-tap` from the window list,
+  `meeting-state` from Accessibility).
+- **`manual`** — an optional UI override (`on` / `paused` / `off`), set via `POST /api/meeting/control`.
+
+```
+effectiveRecording = manual==='on'            ? true
+                   : manual∈{paused,off}       ? false
+                   : autoDetect && detected           // 'auto' — the Detect-automatically setting
+```
+
+That one value drives the meeting lifecycle (start / finalize), the elapsed timer, and the tray + overlay.
+
+- **Start** records even with no detected call — an in-person meeting, or a browser call self-detection
+  misses. **Pause** releases the mic and drops captions but keeps the meeting open. **Stop** finalizes now.
+- A manual pause/stop is **scoped to the call state it was made in** (`manualDetected`): the moment
+  `detected` changes — the real call starts or ends — the override clears and auto-detection takes over
+  again, so the next call still records itself. **Trap:** don't clear the override on the finalize path;
+  clear it on the `detected` edge, or a screen-share blip mid-call would re-arm early.
+- `meeting-tap` reads `manual` + `autoDetect` from `/api/state` and gates *capture* (the mic) on them —
+  so a pause/stop genuinely releases the mic, not just the UI — while still reporting raw `detected` so the
+  server can re-arm. Captions that slip through before it polls are dropped server-side when
+  `!effectiveRecording()`.
+
+The **live overlay** (`app/index.html`) mirrors this state: a floating, draggable in-call panel — recording
+status, timer, a tail of the live transcript, a per-call scratchpad, and a minimize-to-chip — gated on the
+*Display live recording indicator* setting. Its Pause/Stop call the same control endpoint.
 
 ## Capture & recording
 
