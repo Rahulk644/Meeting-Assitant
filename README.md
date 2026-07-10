@@ -1,4 +1,4 @@
-# Assistant
+# My Assistant
 
 A private, **on-device** super-app for calls and text — **Dictation, Writing Assistant, Meetings, and
 Agents** in one minimal shell. **Meetings ships first:** real-time transcription of *you and the other
@@ -83,10 +83,10 @@ so nothing leaves your machine.
 - **Rebindable** to any shortcut; **Custom Vocabulary** and language are shared with Meetings.
 - Capture → transcription → paste live in `meeting-tap` (a direct child of the app, so the **paste** reuses
   Meetings' **Accessibility** grant). The **global hotkey** additionally needs **Input Monitoring** — a
-  one-time grant to Assistant (macOS prompts on first use).
+  one-time grant to My Assistant (macOS prompts on first use).
 
 > **One-time setup:**
-> 1. **System Settings → Privacy & Security → Input Monitoring** → enable **Assistant** (for the hotkey);
+> 1. **System Settings → Privacy & Security → Input Monitoring** → enable **My Assistant** (for the hotkey);
 >    **Accessibility** should already be on from Meetings (for the paste).
 > 2. macOS lets the **🌐/Fn** key open Emoji or Dictation — set **System Settings → Keyboard → “Press 🌐 to”
 >    → Do Nothing** (or rebind dictation to a key chord) so Fn is free.
@@ -127,13 +127,13 @@ heavy sits resident between or during calls beyond what's actively transcribing.
 ```bash
 ./setup.sh                                          # one-time: build transcribe.cpp + LiteRT-LM + models
 cd desktop && npm install                           # one-time: the Tauri CLI
-npx tauri build --bundles app                       # build Assistant.app
+npx tauri build --bundles app                       # build "My Assistant.app"
 codesign --force --deep --sign - \
-  src-tauri/target/release/bundle/macos/Assistant.app   # ← re-sign valid, or macOS re-prompts every launch
-cp -R src-tauri/target/release/bundle/macos/Assistant.app /Applications/
+  "src-tauri/target/release/bundle/macos/My Assistant.app"   # ← re-sign valid, or macOS re-prompts every launch
+cp -R "src-tauri/target/release/bundle/macos/My Assistant.app" /Applications/
 ```
 
-Then **double-click Assistant.app**. On the first call macOS prompts for **Microphone**, **Screen
+Then **double-click "My Assistant.app"**. On the first call macOS prompts for **Microphone**, **Screen
 Recording**, and **Accessibility** (three separate toggles) — grant each once. The app starts everything
 itself (no terminal); get on a call and it transcribes.
 

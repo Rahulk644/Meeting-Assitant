@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Assistant",
+  "productName": "My Assistant",
   "version": "0.1.0",
-  "identifier": "com.assistant.app",
+  "identifier": "com.myassistant.desktop",
   "build": {
     "frontendDist": "http://localhost:8790/",
     "devUrl": "http://localhost:8790"
@@ -12,7 +12,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Assistant",
+        "title": "My Assistant",
         "center": true,
         "width": 1120,
         "height": 720,

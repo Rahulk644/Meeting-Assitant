@@ -2,7 +2,7 @@
   "name": "assistant-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Tauri desktop shell for Assistant — hosts the meetings UI, adds native tray + a screen-share-invisible overlay.",
+  "description": "Tauri desktop shell for My Assistant — hosts the meetings UI, adds native tray + a screen-share-invisible overlay.",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",

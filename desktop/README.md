@@ -1,4 +1,4 @@
-# Assistant — desktop app (Tauri)
+# My Assistant — desktop app (Tauri)
 
 A native, cross-platform window (Rust + the OS WebView) around the Meetings UI. A **release build is
 self-contained**: it starts the stack itself — the Node relay, the gated capturer, and `meeting-state` —

@@ -509,7 +509,7 @@ final class Dictation {
         guard let t = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                 eventsOfInterest: CGEventMask(mask), callback: dictTapCallback,
                 userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-            err("dictation: couldn't create the key tap — grant Assistant Accessibility (and Input Monitoring if macOS prompts); dictation stays off until then")
+            err("dictation: couldn't create the key tap — grant My Assistant Accessibility (and Input Monitoring if macOS prompts); dictation stays off until then")
             return
         }
         tap = t
@@ -661,7 +661,7 @@ func detectMeetingApp(_ done: @escaping (String?) -> Void) {
         if let error = error {   // almost always: Screen Recording not granted to this app
             let ns = error as NSError   // SCStreamError.userDeclined = -3801 → stop polling so we don't storm the prompt
             if ns.code == -3801 || ns.localizedDescription.lowercased().contains("declined") { screenDenied = true }
-            if !detectErrLogged { err(">> can't read the window list — grant Screen Recording to Assistant in System Settings, then relaunch. (\(error.localizedDescription))"); detectErrLogged = true }
+            if !detectErrLogged { err(">> can't read the window list — grant Screen Recording to My Assistant in System Settings, then relaunch. (\(error.localizedDescription))"); detectErrLogged = true }
             done(nil); return
         }
         var hit: String? = nil

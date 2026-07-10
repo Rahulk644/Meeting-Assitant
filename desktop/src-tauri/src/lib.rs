@@ -137,15 +137,15 @@ pub fn run() {
                 if let Some(w) = app.get_webview_window("main") { let _ = w.set_content_protected(true); }
             }
 
-            let show = MenuItem::with_id(app, "show", "Show Assistant", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Show My Assistant", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Assistant", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit My Assistant", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &hide, &sep, &quit])?;
             TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
-                .tooltip("Assistant")
+                .tooltip("My Assistant")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => { if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); } }
                     "hide" => { if let Some(w) = app.get_webview_window("main") { let _ = w.hide(); } }
