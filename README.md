@@ -16,8 +16,9 @@ the call, no audio leaves your machine, no meeting-app captions toggle.**
   "ask this meeting"**;
 - can **screen-record** the call (whole call, or only while a screen is shared) and shows it in the
   meeting, with a frame as the card thumbnail;
-- shows a **floating in-call panel** (live transcript + a per-call scratchpad, drag or minimize it) and a
-  **menu-bar recording indicator**, and can make its window **invisible to screen sharing**.
+- shows a **floating in-call panel** (live transcript + a scratchpad that saves to the meeting and feeds
+  the summary, drag or minimize it) and a **menu-bar recording indicator**, and can make its window
+  **invisible to screen sharing**.
 
 The same UI also runs in a plain browser for development. Real-time in-call **coaching** — the Copilot —
 is the next milestone; see the [roadmap](#roadmap).

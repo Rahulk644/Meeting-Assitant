@@ -137,18 +137,23 @@ That one value drives the meeting lifecycle (start / finalize), the elapsed time
 
 - **Start** records even with no detected call — an in-person meeting, or a browser call self-detection
   misses. **Pause** releases the mic and drops captions but keeps the meeting open. **Stop** finalizes now.
-- A manual pause/stop is **scoped to the call state it was made in** (`manualDetected`): the moment
-  `detected` changes — the real call starts or ends — the override clears and auto-detection takes over
-  again, so the next call still records itself. **Trap:** don't clear the override on the finalize path;
-  clear it on the `detected` edge, or a screen-share blip mid-call would re-arm early.
+- A **call-relative** override (pause / **resume** / stop) is scoped to the call it was made in
+  (`manualDetected`): the moment `detected` changes — the call starts or ends — it clears and auto takes
+  over, so the next call still records itself. **This must include `resume`** (which also sets
+  `manual='on'`) — otherwise a resumed auto-detected call *never finalizes* when it ends (stuck "LIVE",
+  the mic and Whisper never release). A **genuine manual recording** (`manualHard` — a Start with no call
+  under it) is exempt and persists until you Stop, so a stray detection can't hijack it. **Trap:** clear on
+  the `detected` edge, not the finalize path (a screen-share blip would re-arm early otherwise).
 - `meeting-tap` reads `manual` + `autoDetect` from `/api/state` and gates *capture* (the mic) on them —
   so a pause/stop genuinely releases the mic, not just the UI — while still reporting raw `detected` so the
   server can re-arm. Captions that slip through before it polls are dropped server-side when
   `!effectiveRecording()`.
 
 The **live overlay** (`app/index.html`) mirrors this state: a floating, draggable in-call panel — recording
-status, timer, a tail of the live transcript, a per-call scratchpad, and a minimize-to-chip — gated on the
-*Display live recording indicator* setting. Its Pause/Stop call the same control endpoint.
+status, timer, a tail of the live transcript, a scratchpad, and a minimize-to-chip — gated on the *Display
+live recording indicator* setting. Its Pause/Stop call the same control endpoint; scratchpad notes POST to
+`/api/meeting/notes` (debounced, flushed before Stop) → saved on the meeting JSON, shown in the detail, and
+fed into the summary prompt.
 
 ## Capture & recording
 
