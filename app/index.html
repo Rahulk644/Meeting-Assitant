@@ -266,10 +266,6 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .mcard .cr{flex:0 0 auto;display:flex;align-items:center;gap:11px;font-size:12.5px;color:var(--ink-3);padding-left:8px}
   .mcard .cr .crt{color:var(--ink-2);font-weight:500;font-variant-numeric:tabular-nums}
   .mcard .chev{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto}
-  .mstack{display:inline-flex}
-  .mav{width:20px;height:20px;border-radius:50%;background:var(--surface-2);color:var(--ink-2);display:grid;place-items:center;
-        font-size:9px;font-weight:600;border:1.5px solid var(--surface);margin-left:-6px}
-  .mav:first-child{margin-left:0}.mav.more{background:var(--surface-2);color:var(--ink-3)}
   .sumtag{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;color:var(--accent);
         background:var(--accent-soft);border-radius:5px;padding:2px 6px 2px 5px;flex:0 0 auto}
   .sumtag svg{width:11px;height:11px}
@@ -355,12 +351,9 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .det-note{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 16px;margin-bottom:20px;white-space:pre-wrap;color:var(--ink-2);font-size:14px;line-height:1.6}
   .titleedit{font-size:29px;font-weight:680;letter-spacing:-0.02em;border:1px solid var(--accent);border-radius:8px;padding:1px 9px;background:var(--field);color:var(--ink);max-width:100%}
   .recvid{width:100%;border-radius:var(--r-lg);background:#000;margin-bottom:18px;display:block;max-height:58vh;border:1px solid var(--line)}
-  .vtag{display:inline-flex;align-items:center;color:var(--ink-3)}.vtag svg{width:13px;height:13px}
-  .sumcard{border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 18px;margin-bottom:20px;background:var(--surface)}
   .sum-h{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);margin-bottom:11px;display:flex;align-items:center;gap:6px}
   .sum-h svg{width:13px;height:13px;color:var(--accent)}
   .sum-b{white-space:pre-wrap;color:var(--ink-2);font-size:14px;line-height:1.62}
-  .sum-h2{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);margin:17px 0 10px}
   .acts{display:flex;flex-direction:column;gap:9px}
   .act{display:flex;gap:9px;align-items:flex-start;color:var(--ink-2);font-size:13.5px;line-height:1.5}
   .act svg{width:15px;height:15px;color:var(--accent);flex:0 0 auto;margin-top:2px}
@@ -1269,19 +1262,13 @@ const IC_VID='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 const IC_SPARK='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 5L19 8.5l-5 1.6L12 15l-1.6-4.9L5 8.5l5.4-1.5z"/></svg>';
 const IC_CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6L9 17l-5-5"/></svg>';
 function prettyApp(a){ if(!a)return''; const m={zoom:'Zoom',teams:'Microsoft Teams',meet:'Google Meet',webex:'Webex',slack:'Slack',call:''}; const k=String(a).toLowerCase(); return k in m ? m[k] : a; }
-function avatarStack(ppl,max=4){
-  if(!ppl||!ppl.length) return '';
-  const shown=ppl.slice(0,max).map(p=>`<span class="mav" title="${esc(p)}">${esc(initials(p))}</span>`).join('');
-  const more=ppl.length>max?`<span class="mav more">+${ppl.length-max}</span>`:'';
-  return `<span class="mstack">${shown}${more}</span>`;
-}
 function meetingCard(m){
   const card=document.createElement('div'); card.className='mcard';
   const t=new Date(m.startedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   const n=(m.participants||[]).length;
   const meta=[fmtDay(m.startedAt), t, prettyApp(m.app), n?`${n} participant${n===1?'':'s'}`:''].filter(Boolean).join(' · ');
   const tile=m.hasVideo
-    ? `<div class="mi"><img class="mthumb" src="/api/meetings/${m.id}/thumb" alt="" onerror="this.parentNode.classList.add('noimg')"><span class="miplay">${IC_VID}</span></div>`
+    ? `<div class="mi"><img class="mthumb" src="/api/meetings/${m.id}/thumb" alt="" onerror="this.remove()"><span class="miplay">${IC_VID}</span></div>`
     : `<div class="mi">${callPlatformIcon(m.app)}</div>`;
   const badge=m.live
     ? '<span class="livepill"><span class="ld"></span>LIVE</span>'
@@ -1305,7 +1292,8 @@ $('#det-rename').onclick=()=>{
   const finish=(save)=>{ if(done)return; done=true;
     const t=inp.value.trim(), nh=document.createElement('h1'); nh.id='det-title';
     nh.textContent=(save&&t)?t:old; inp.replaceWith(nh);
-    if(save&&t&&t!==old&&curMeetingId) fetch('/api/meetings/'+curMeetingId+'/title',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t})}).catch(()=>{});
+    if(save&&t&&t!==old&&curMeetingId){ if(curMeeting) curMeeting.title=t; // keep in sync so Export uses the new title
+      fetch('/api/meetings/'+curMeetingId+'/title',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t})}).catch(()=>{}); }
   };
   inp.onblur=()=>finish(true); inp.onkeydown=e=>{ if(e.key==='Enter'){e.preventDefault();inp.blur();} else if(e.key==='Escape'){inp.value=old;inp.blur();} };
 };
