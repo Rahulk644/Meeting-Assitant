@@ -27,7 +27,7 @@ let cur = null; // the in-progress meeting being recorded to disk
 //              recording state, which drives the meeting lifecycle AND what the UI/tray show. A manual
 //              stop/pause auto-clears back to auto once the real call actually ends, so the NEXT call
 //              still records itself.
-let detected = false, manual = null, manualDetected = false; // manualDetected = the call state when `manual` was set
+let detected = false, manual = null, manualDetected = false, manualHard = false; // manualDetected = the call state when `manual` was set; manualHard = a genuine manual recording with no call to fall back to
 let autoDetect = true; // the "Detect meetings automatically" setting — off = only manual start records
 let unloadIdle = true; // "Unload model when idle" setting — off = keep whisper hot between calls
 let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
@@ -48,16 +48,20 @@ function recomputeLifecycle(action) {
 function setDetected(d) {
   if (d === detected) return;
   detected = d;
-  // A manual pause/stop is scoped to the call state it was made in; once that changes — the call ends,
-  // or a new one is detected — hand control back to auto-detection so the next call records itself.
-  if ((manual === "off" || manual === "paused") && detected !== manualDetected) manual = null;
+  // A call-relative override (pause/resume/stop) is scoped to the call state it was made in; once that
+  // changes — the call ends, or a new one is detected — hand control back to auto so the next call records
+  // itself. This MUST cover resume (manual==='on') too, or a resumed auto call never finalizes when it ends.
+  // A genuine manual recording (manualHard: started with no call to fall back to) is exempt — it persists
+  // until the user stops it, so a stray detection doesn't hijack it.
+  if (manual !== null && !manualHard && detected !== manualDetected) manual = null;
   recomputeLifecycle(); broadcastCall();
 }
 function setManual(action) {
-  if (action === "start" || action === "resume") manual = "on";
-  else if (action === "pause") manual = "paused";
-  else if (action === "stop") manual = "off";
-  else if (action === "auto") manual = null;
+  if (action === "start")       { manual = "on";     manualHard = !(autoDetect && detected); } // hard only when there's no auto call under it
+  else if (action === "resume") { manual = "on";     manualHard = false; }                     // resume is always call-relative
+  else if (action === "pause")  { manual = "paused"; manualHard = false; }
+  else if (action === "stop")   { manual = "off";    manualHard = false; }
+  else if (action === "auto")   { manual = null;     manualHard = false; }
   else return false;
   manualDetected = detected; // remember the call state at the moment of the override
   recomputeLifecycle(action); broadcastCall();
@@ -319,6 +323,14 @@ http.createServer((req, res) => {
     });
     return;
   }
+  if (req.url === "/api/meeting/notes" && req.method === "POST") { // the in-call scratchpad → saved on the current meeting
+    readBody(req).then(b => {
+      let notes = ""; try { notes = String(JSON.parse(b).notes || ""); } catch {}
+      if (cur) { cur.notes = notes.slice(0, 8000); saveMeeting(cur); }
+      res.writeHead(cur ? 204 : 409); res.end(); // 409 = no live meeting to attach to
+    });
+    return;
+  }
   if (req.url === "/api/config" && req.method === "POST") { // UI sets the screen-recording mode (off/always/share)
     readBody(req).then(b => {
       try {
@@ -398,7 +410,7 @@ http.createServer((req, res) => {
         + (deeper ? " Reason carefully through the discussion — capture decisions, owners, and nuance you might otherwise miss." : "");
       return chat([
         { role: "system", content: sys },
-        { role: "user", content: `${instruction}\n\nTranscript:\n\n${transcriptText(one)}` },
+        { role: "user", content: `${instruction}\n\n${one.notes ? `The note-taker's own scratchpad from the call (weight these points):\n${one.notes}\n\n` : ""}Transcript:\n\n${transcriptText(one)}` },
       ], { maxTokens: deeper ? 1100 : 650, temperature: deeper ? 0.2 : 0.3, llm });
     }).then(text => {
       one.summary = text; saveMeeting(one);

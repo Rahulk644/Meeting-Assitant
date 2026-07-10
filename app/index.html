@@ -1217,6 +1217,8 @@ async function openMeeting(id){
     w.append(v);
   }
   w.append(aiPanel(m));
+  if(m.notes){ const nh=document.createElement('div'); nh.className='sum-h'; nh.style.margin='2px 0 8px'; nh.textContent='Your notes';
+    const nb=document.createElement('div'); nb.className='sum-b'; nb.style.margin='0 0 20px'; nb.textContent=m.notes; w.append(nh,nb); }
   const tl=document.createElement('div'); tl.className='sum-h'; tl.style.margin='2px 0 10px'; tl.textContent='Transcript'; w.append(tl);
   for(const l of m.lines) w.append(lineRow(l));
   mtShow('detail');
@@ -1365,12 +1367,15 @@ function callOnState(s){
   if(callRec) callRender();
 }
 function callControl(action){ fetch('/api/meeting/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})}).catch(()=>{}); }
+let _notesT=null;
+function callPostNotes(){ return fetch('/api/meeting/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:callNotesVal})}).catch(()=>{}); } // attach the scratchpad to the live meeting
+function callNotesChanged(){ clearTimeout(_notesT); _notesT=setTimeout(callPostNotes,600); }
 function callPushLine(c){ callLines.push(c); if(callLines.length>CALL_MAX) callLines.shift();
   if(!$('#callPanel').hidden && callTab==='transcript') callPaintLines(); }
 
 function callSetRecording(on){
   if(on && !callRec){                       // recording started (auto-detected or manual)
-    callMin=false; callPaused=false; callLines=[]; callTab='transcript';
+    callMin=false; callLines=[]; callTab='transcript';    // callPaused is owned by callOnState (server's paused flag) — don't clobber a reload-mid-pause
     if(!callStart) callStart=Date.now();     // server usually supplies startedAt via callOnState
     callSec=Math.floor((Date.now()-callStart)/1000);
     try{ callNotesVal=localStorage.getItem('call.notes.'+callStart)||''; }catch{ callNotesVal=''; }
@@ -1409,8 +1414,9 @@ function initCall(){
   $('#cpTabT').onclick=()=>{ callTab='transcript'; callRender(); };
   $('#cpTabN').onclick=()=>{ callTab='notes'; callRender(); };
   $('#cpPause').onclick=()=>{ callControl(callPaused?'resume':'pause'); };  // real pause/resume — releases/re-engages the mic
-  $('#cpStop').onclick=()=>{ callControl('stop'); };                        // real stop — finalizes the meeting now
+  $('#cpStop').onclick=async()=>{ clearTimeout(_notesT); await callPostNotes(); callControl('stop'); };  // flush notes before the meeting finalizes
   $('#cpNotesArea').oninput=(e)=>{ callNotesVal=e.target.value; try{ if(callStart) localStorage.setItem('call.notes.'+callStart,callNotesVal); }catch{}
+    callNotesChanged();  // debounced-persist onto the live meeting so it survives the call
     const words=callNotesVal.trim()?callNotesVal.trim().split(/\s+/).length:0;
     $('#cpNoteDot').hidden=words===0;
     $('#cpNoteHint').textContent = words>0 ? (words+(words===1?' word':' words')+' · saved with this meeting') : 'Notes attach to the summary'; };
