@@ -815,6 +815,7 @@ function settingRow(row){
   if(row.type==='toggle'){
     let getV,setV,gate=false;
     if(id==='translate_en'){ getV=()=>store.get('translate',true); setV=v=>{store.set('translate',v);setTranslate(v)}; }
+    else if(id==='auto_detect'){ getV=()=>store.get('auto_detect',true); setV=v=>{store.set('auto_detect',v); cfg({autoDetect:v})}; }  // off → only manual start records
     else if(id==='stealth'){ gate=!isTauri(); getV=()=>isTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
       if(gate) l.querySelector('.st').insertAdjacentHTML('beforeend','<span class="badge">DESKTOP</span>'); }
     else { getV=()=>store.get(id,DEFAULTS[id]||false); setV=v=>store.set(id,v); }
@@ -1243,6 +1244,7 @@ if(isTauri() && store.get('stealth',false)) setStealth(true);
 setVideoMode(store.get('videoMode','off'));
 setLanguage(store.get('language','auto'));
 setTranslate(store.get('translate',true));
+cfg({autoDetect:store.get('auto_detect',true)});
 </script>
 </body>
 </html>

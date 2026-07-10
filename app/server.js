@@ -28,7 +28,8 @@ let cur = null; // the in-progress meeting being recorded to disk
 //              stop/pause auto-clears back to auto once the real call actually ends, so the NEXT call
 //              still records itself.
 let detected = false, manual = null, manualDetected = false; // manualDetected = the call state when `manual` was set
-function effectiveRecording() { return manual === "on" ? true : (manual === "paused" || manual === "off") ? false : detected; }
+let autoDetect = true; // the "Detect meetings automatically" setting — off = only manual start records
+function effectiveRecording() { return manual === "on" ? true : (manual === "paused" || manual === "off") ? false : (autoDetect && detected); }
 function broadcastCall() { // push the composed call state to the UI (and lastState, for reconnects)
   const rec = effectiveRecording();
   broadcast({ type: "state", state: { inMeeting: rec || manual === "paused", paused: manual === "paused", startedAt: cur ? cur.startedAt : null } });
@@ -323,6 +324,7 @@ http.createServer((req, res) => {
         if (typeof j.videoMode === "string") broadcast({ type: "state", state: { videoMode: j.videoMode } });
         if (typeof j.translate === "boolean") broadcast({ type: "state", state: { translate: j.translate } });
         if (typeof j.language === "string") broadcast({ type: "state", state: { language: j.language } });
+        if (typeof j.autoDetect === "boolean") { autoDetect = j.autoDetect; broadcast({ type: "state", state: { autoDetect } }); recomputeLifecycle(); broadcastCall(); } // off → ignore self-detection (manual only)
       } catch {}
       res.writeHead(204); res.end();
     });

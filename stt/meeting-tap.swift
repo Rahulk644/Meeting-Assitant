@@ -468,17 +468,17 @@ func postRecording(_ file: String, _ startedAt: Int) {
 }
 
 let cap = Capture()
-var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto"
+var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto", curAutoDetect = true
 // Poll the server for UI-set config (video mode + share state) AND the manual override (start/pause/stop).
 // inMeeting is SELF-DETECTED below; `manual` lets the UI force capture on/off on top of that — e.g. manually
 // record a Google Meet call (no native window to auto-detect), or pause/stop while still in a call.
-func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, language: String, manual: String) {
+func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, language: String, manual: String, autoDetect: Bool) {
     let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
     guard let d = out.data(using: .utf8),
           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
-        return (curSharing, curVideoMode, curTranslate, curLanguage, curManual)
+        return (curSharing, curVideoMode, curTranslate, curLanguage, curManual, curAutoDetect)
     }
-    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto")
+    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto", (o["autoDetect"] as? Bool) ?? true)
 }
 // Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
 // capture needs anyway), NOT Accessibility. A native meeting app showing its in-call window = we're in a
@@ -530,12 +530,12 @@ func reportDetected(_ inCall: Bool, _ app: String) {
 func gate(_ app: String?) {
     let detected = app != nil
     reportDetected(detected, app ?? "")
-    let capture = (curManual == "on") || (curManual == "auto" && detected)
+    let capture = (curManual == "on") || (curManual == "auto" && curAutoDetect && detected)
     capture ? cap.start(mode: curVideoMode) : cap.stop()
 }
 func tick() {
     let cfg = fetchConfig()
-    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language; curManual = cfg.manual
+    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language; curManual = cfg.manual; curAutoDetect = cfg.autoDetect
     cap.updateShare()
     if !GATE { gate("call"); return }                        // --gate off: always capture (still honors manual)
     detectMeetingApp { app in DispatchQueue.main.async { gate(app) } }
