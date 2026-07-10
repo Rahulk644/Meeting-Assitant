@@ -595,7 +595,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
     <section id="v-dictation" class="view">
       <div class="scroll"><div class="hero">
         <div class="h1">Dictate anywhere.</div>
-        <div class="lead">Press <span class="kbd" id="dictHintLead">Fn</span> to dictate into any text field — clean punctuation, real context, and nothing leaves your Mac.</div>
+        <div class="lead">Press <span class="kbd" id="dictHintLead">⌃⇧D</span> to dictate into any text field — clean punctuation, real context, and nothing leaves your Mac.</div>
         <div class="rowbtns">
           <div class="obtn" id="dictVocabBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Custom vocabulary</div>
           <div class="obtn" id="dictUploadBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>Upload voice note</div>
@@ -604,7 +604,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
         <div id="dictListening" class="dict-live" hidden><span class="pulse"></span>Listening…&nbsp; <span class="kbd">Esc</span>&nbsp;to cancel</div>
         <div class="sect">Recent</div>
         <div id="dictList"></div>
-        <div id="dictEmpty" class="emptybox">No dictations yet.<br/>Press <span class="kbd" id="dictHint">Fn</span> anywhere to start your first one.</div>
+        <div id="dictEmpty" class="emptybox">No dictations yet.<br/>Press <span class="kbd" id="dictHint">⌃⇧D</span> anywhere to start your first one.</div>
       </div></div>
     </section>
 
@@ -1378,13 +1378,13 @@ function openPermissions(){ openModal('Permissions', box=>{
 /* Shortcut recorder — captures + persists a combo (global registration lands with the desktop app) */
 // Keys we can turn into a global shortcut — mirrors the Rust key_to_code() mapping.
 function scKeyName(e){
+  if(/^Key[A-Z]$/.test(e.code)) return e.code.slice(3);     // KeyD → D (layout- and shift-independent)
+  if(/^Digit[0-9]$/.test(e.code)) return e.code.slice(5);   // Digit1 → 1
   if(e.code==='Space'||e.key===' ') return 'Space';
-  const k=e.key;
-  if(k==='Enter') return 'Enter';
-  if(k==='Tab') return 'Tab';
-  if(k==='Escape') return 'Esc';
-  if(k.length===1 && /[a-z0-9]/i.test(k)) return k.toUpperCase();
-  return null;   // arrows, F-keys, etc. — not registrable here
+  if(e.key==='Enter') return 'Enter';
+  if(e.key==='Tab') return 'Tab';
+  if(e.key==='Escape') return 'Esc';
+  return null;   // arrows, F-keys, punctuation — not registrable here
 }
 function scMappable(k){ k=String(k||''); return /^[A-Za-z0-9]$/.test(k)||/^(space|spacebar|enter|return|tab|esc|escape|period|comma|\.|,)$/i.test(k); }
 // Record a shortcut with an explicit Save button + validation (no more auto-saving the first key you press).
@@ -1425,6 +1425,8 @@ function recordShortcut(id,title){
     box.querySelector('#scCancel').onclick=()=>closeModal();
     saveB.onclick=()=>{ if(!valid()) return; done(); store.set(id, combo().join('+')); closeModal(); renderSettings();
       if(id==='sc_start'||id==='sc_cancel'){ syncDictation(false); paintDictHints(); toast('Dictation shortcut updated.'); }
+      else if(id==='wa_open'||id==='wa_close') toast('Saved. Writing Assistant shortcuts activate when that module ships.');
+      else if(id==='mtg_shortcut') toast('Saved. A global meeting shortcut is coming soon.');
       else toast('Shortcut saved.'); };
     _modalCleanup=()=>{ delete $('#mScrim').dataset.recording; done(); };
     document.addEventListener('keydown',handler,true);

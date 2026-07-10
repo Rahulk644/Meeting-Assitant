@@ -521,26 +521,27 @@ fn dictation_finish(mut rec: Recorder, ms: u64) {
     dict_feedback(false);
 }
 
-// Esc while recording → throw the clip away: stop capture, no resample / VAD / transcribe / paste.
+// Esc while recording → throw the clip away: stop capture, no resample / VAD / transcribe / paste. The
+// stop+join runs off-thread because this is invoked from the Esc hotkey handler (the main thread).
 fn dictation_cancel() {
     let rec = { let mut g = DICT.lock().unwrap(); g.started = None; g.rec.take() };
     let Some(mut rec) = rec else { return; };
     esc_arm(false);
-    rec.stop.store(true, Ordering::Relaxed);
-    if let Some(h) = rec.handle.take() { let _ = h.join(); }
     emit_dstate("idle");
     dict_feedback(false);
+    std::thread::spawn(move || { rec.stop.store(true, Ordering::Relaxed); if let Some(h) = rec.handle.take() { let _ = h.join(); } });
 }
 
 // Esc-to-cancel is a modifier-less global grab, so we arm it ONLY while recording and disarm the instant
-// recording ends. Done off the caller's thread: the arm request can arrive from inside the hotkey handler,
-// and a re-entrant register on that thread can wedge the shortcut plugin.
+// recording ends. Marshalled to the MAIN thread (run_on_main_thread): that's where the hotkey manager lives,
+// the calls stay ORDERED (a fast push-to-talk tap can't reorder arm/disarm and leave Esc grabbed forever),
+// and it's deferred past the current hotkey-handler invocation (no re-entrant register that could wedge the plugin).
 static DICT_ESC: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
 static DICT_CANCEL: Mutex<Option<tauri_plugin_global_shortcut::Code>> = Mutex::new(None); // the rebindable cancel key (None → Esc)
 fn esc_arm(arm: bool) {
     let Some(app) = APP.get() else { return; };
     let app = app.clone();
-    std::thread::spawn(move || {
+    let _ = app.clone().run_on_main_thread(move || {
         use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, Code, ShortcutState};
         let gs = app.global_shortcut();
         let mut g = DICT_ESC.lock().unwrap_or_else(|e| e.into_inner());
@@ -597,8 +598,10 @@ fn on_dict_hotkey(state: tauri_plugin_global_shortcut::ShortcutState) {
     }
 }
 
-// Swap the registered dictation shortcut. Validates BEFORE unregistering the old one, so an unmappable
-// combo leaves the working shortcut intact. Returns false if the spec can't be registered.
+// Swap the registered dictation shortcut. IDEMPOTENT: re-requesting the SAME shortcut (which the UI does on
+// every settings-sync + on boot) is a no-op, so we never briefly unregister the working hotkey. A genuine
+// change registers the NEW shortcut first and only then drops the OLD, so a failed registration can never
+// leave the app with no hotkey at all. Returns false if the spec can't be registered.
 fn register_dict_hotkey(app: &AppHandle, spec: &HotkeySpec) -> bool {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, Modifiers};
     let Some(code) = key_to_code(&spec.key) else { return false; };
@@ -613,12 +616,18 @@ fn register_dict_hotkey(app: &AppHandle, spec: &HotkeySpec) -> bool {
         }
     }
     if mods.is_empty() { return false; } // refuse a modifier-less global hotkey — it'd swallow that key everywhere
-    let gs = app.global_shortcut();
-    if let Some(prev) = DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner()).take() { let _ = gs.unregister(prev); }
     let sc = Shortcut::new(Some(mods), code);
+    if DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner()).as_ref() == Some(&sc) { return true; } // unchanged → already live
+    let gs = app.global_shortcut();
     match gs.on_shortcut(sc.clone(), |_app, _scut, event| on_dict_hotkey(event.state())) {
-        Ok(_)  => { *DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner()) = Some(sc); true }
-        Err(_) => false,
+        Ok(_) => {
+            let mut cur = DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(prev) = cur.take() { if prev != sc { let _ = gs.unregister(prev); } }
+            *cur = Some(sc);
+            eprintln!("dictation: hotkey registered ({:?} + {:?})", mods, code);
+            true
+        }
+        Err(e) => { eprintln!("dictation: hotkey registration FAILED ({:?} + {:?}): {e}", mods, code); false }
     }
 }
 
