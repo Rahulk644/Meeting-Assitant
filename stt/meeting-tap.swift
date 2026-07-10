@@ -468,15 +468,17 @@ func postRecording(_ file: String, _ startedAt: Int) {
 }
 
 let cap = Capture()
-var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto"
-// Poll the server ONLY for UI-set config (video mode + share state). inMeeting is SELF-DETECTED below.
-func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, language: String) {
+var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto"
+// Poll the server for UI-set config (video mode + share state) AND the manual override (start/pause/stop).
+// inMeeting is SELF-DETECTED below; `manual` lets the UI force capture on/off on top of that — e.g. manually
+// record a Google Meet call (no native window to auto-detect), or pause/stop while still in a call.
+func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, language: String, manual: String) {
     let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
     guard let d = out.data(using: .utf8),
           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
-        return (curSharing, curVideoMode, curTranslate, curLanguage)
+        return (curSharing, curVideoMode, curTranslate, curLanguage, curManual)
     }
-    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto")
+    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto")
 }
 // Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
 // capture needs anyway), NOT Accessibility. A native meeting app showing its in-call window = we're in a
@@ -515,19 +517,28 @@ func postInMeeting(_ on: Bool, _ app: String) {
     let f = "/tmp/mt_state.json"; try? data.write(to: URL(fileURLWithPath: f))
     _ = curl(["-s", "-X", "POST", "http://127.0.0.1:\(guiPort)/ingest", "-H", "Content-Type: application/json", "--data-binary", "@\(f)"])
 }
-func setInCall(_ app: String?) {
-    let inCall = app != nil
+// Report raw call detection to the server on change. The server composes this with the manual override
+// to drive the UI, the meeting lifecycle, and re-arming auto-detection after a manual pause/stop.
+func reportDetected(_ inCall: Bool, _ app: String) {
     guard inCall != wasInCall else { return }
     wasInCall = inCall
-    postInMeeting(inCall, app ?? "")
-    inCall ? cap.start(mode: curVideoMode) : cap.stop()
+    postInMeeting(inCall, app)
+}
+// Decide capture: the manual override wins over auto-detection. start()/stop() are idempotent, so this
+// runs every tick and only acts on a change — 'paused'/'off' release the mic even mid-call; 'on' forces
+// capture even with no detected call (manual record).
+func gate(_ app: String?) {
+    let detected = app != nil
+    reportDetected(detected, app ?? "")
+    let capture = (curManual == "on") || (curManual == "auto" && detected)
+    capture ? cap.start(mode: curVideoMode) : cap.stop()
 }
 func tick() {
     let cfg = fetchConfig()
-    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language
+    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language; curManual = cfg.manual
     cap.updateShare()
-    if !GATE { setInCall("call"); return }                   // --gate off: always capture
-    detectMeetingApp { app in DispatchQueue.main.async { setInCall(app) } }
+    if !GATE { gate("call"); return }                        // --gate off: always capture (still honors manual)
+    detectMeetingApp { app in DispatchQueue.main.async { gate(app) } }
 }
 
 err(">> meeting-tap ready — gate:\(GATE ? "on (captures only during a call)" : "off (always captures)") gui:\(guiPort) whisper:\(whisperURL) app:\(APP_SEL) mic:\(MIC_ON) me:\(ME)")

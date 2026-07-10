@@ -20,6 +20,55 @@ const FFMPEG = findBin("ffmpeg"); // for meeting thumbnails from the screen reco
 fs.mkdirSync(REC_DIR, { recursive: true });
 let cur = null; // the in-progress meeting being recorded to disk
 
+// ---- recording gate: auto-detection composed with a manual override ----------------------------
+// `detected` = the raw "in a call" that the capturers (meeting-tap / meeting-state) self-report.
+// `manual`   = the UI's override: null = follow auto-detection, 'on' = force record, 'paused' = hold
+//              (mic released, meeting kept open), 'off' = stopped. The two compose into the effective
+//              recording state, which drives the meeting lifecycle AND what the UI/tray show. A manual
+//              stop/pause auto-clears back to auto once the real call actually ends, so the NEXT call
+//              still records itself.
+let detected = false, manual = null, manualDetected = false; // manualDetected = the call state when `manual` was set
+function effectiveRecording() { return manual === "on" ? true : (manual === "paused" || manual === "off") ? false : detected; }
+function broadcastCall() { // push the composed call state to the UI (and lastState, for reconnects)
+  const rec = effectiveRecording();
+  broadcast({ type: "state", state: { inMeeting: rec || manual === "paused", paused: manual === "paused", startedAt: cur ? cur.startedAt : null } });
+}
+function recomputeLifecycle(action) {
+  const rec = effectiveRecording();
+  if (rec) { cancelFinalize(); ensureWhisper(); if (!cur) startMeeting(lastState); }
+  else if (cur) {
+    if (manual === "paused") cancelFinalize();     // paused — keep the meeting open, just stop capturing
+    else if (action === "stop") finalizeMeeting();  // manual stop — end it now
+    else scheduleFinalize();                        // auto call-end — debounced (a brief drop won't split it)
+  }
+}
+function setDetected(d) {
+  if (d === detected) return;
+  detected = d;
+  // A manual pause/stop is scoped to the call state it was made in; once that changes — the call ends,
+  // or a new one is detected — hand control back to auto-detection so the next call records itself.
+  if ((manual === "off" || manual === "paused") && detected !== manualDetected) manual = null;
+  recomputeLifecycle(); broadcastCall();
+}
+function setManual(action) {
+  if (action === "start" || action === "resume") manual = "on";
+  else if (action === "pause") manual = "paused";
+  else if (action === "stop") manual = "off";
+  else if (action === "auto") manual = null;
+  else return false;
+  manualDetected = detected; // remember the call state at the moment of the override
+  recomputeLifecycle(action); broadcastCall();
+  return true;
+}
+// Raw state from a capturer: peel off inMeeting (→ detection), pass the rest (title/app/participants) through.
+function ingest(obj) {
+  if (obj && obj.type === "state" && obj.state && "inMeeting" in obj.state) {
+    const { inMeeting, ...rest } = obj.state;
+    if (Object.keys(rest).length) broadcast({ type: "state", state: rest });
+    setDetected(inMeeting === true);
+  } else broadcast(obj);
+}
+
 function broadcast(obj) {
   if (obj.type === "state" && obj.state) lastState = { ...lastState, ...obj.state };
   record(obj);
@@ -50,6 +99,7 @@ function finalizeMeeting() {
   cur.endedAt = Date.now();
   if (cur.lines.length) saveMeeting(cur); // skip empty meetings
   cur = null;
+  delete lastState.startedAt; // meeting over — drop the echoed start time
   unloadWhisperSoon(); // free ~1.5 GB after the call
 }
 // Debounce finalize: brief inMeeting=false blips (a screen-share toggle, a view switch, one missed
@@ -61,15 +111,14 @@ function scheduleFinalize() { if (!finalizeTimer && cur) finalizeTimer = setTime
 function cancelFinalize() { if (finalizeTimer) { clearTimeout(finalizeTimer); finalizeTimer = null; } }
 function record(obj) {
   if (obj.type === "caption") {
+    if (!effectiveRecording()) return;                             // dropped while paused / stopped / not in a call
     if (!cur) startMeeting(lastState);
     cur.lines.push({ speaker: obj.speaker, text: obj.text, ts: obj.ts || Date.now(), self: !!obj.self });
   } else if (obj.type === "recording") {
     if (!cur) startMeeting(lastState);
     cur.video = obj.file; saveMeeting(cur); // meeting-tap tells us the call's screen-recording file
   } else if (obj.type === "state" && obj.state) {
-    if (obj.state.inMeeting === false) scheduleFinalize();          // debounced — a brief drop won't split the call
-    else if (obj.state.inMeeting === true) { cancelFinalize(); ensureWhisper(); if (!cur) startMeeting(obj.state); else updateMeta(obj.state); }
-    else updateMeta(obj.state);
+    updateMeta(obj.state);                                         // names/app only — inMeeting is handled by setDetected()
   }
 }
 setInterval(() => { if (cur && cur.lines.length) saveMeeting(cur); }, 10000); // flush so a kill mid-call doesn't lose it
@@ -222,7 +271,9 @@ function readBody(req) {
 
 http.createServer((req, res) => {
   if (req.url === "/" || req.url === "/index.html") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    // no-store: the WebView (WKWebView) otherwise heuristically caches the UI and serves a stale copy after
+    // an edit — so "the code is updated but the app behaves like the old version". Always fetch fresh.
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
     return res.end(fs.readFileSync(path.join(__dirname, "index.html")));
   }
   if (req.url === "/ingest" && req.method === "POST") {
@@ -234,7 +285,7 @@ http.createServer((req, res) => {
         // Tag a remote line with whoever meeting-state says is speaking now. "You"/self lines untouched.
         if (obj.type === "caption" && !obj.self && (!obj.speaker || obj.speaker === "Speaker") && lastState.activeSpeaker)
           obj.speaker = lastState.activeSpeaker;
-        broadcast(obj);
+        ingest(obj);
       } catch {}
       res.writeHead(204); res.end();
     });
@@ -252,9 +303,18 @@ http.createServer((req, res) => {
     req.on("close", () => clients.delete(res));
     return;
   }
-  if (req.url === "/api/state" && req.method === "GET") { // meeting-tap polls this to gate capture + video mode
+  if (req.url === "/api/state" && req.method === "GET") { // meeting-tap polls this to gate capture + video mode + manual override
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify(lastState || {}));
+    return res.end(JSON.stringify({ ...lastState, manual: manual || "auto" }));
+  }
+  if (req.url === "/api/meeting/control" && req.method === "POST") { // UI start/pause/resume/stop (composes with auto-detect)
+    readBody(req).then(b => {
+      let action = ""; try { action = String(JSON.parse(b).action || "").toLowerCase(); } catch {}
+      const ok = setManual(action);
+      res.writeHead(ok ? 200 : 400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ manual: manual || "auto", inMeeting: effectiveRecording() || manual === "paused", paused: manual === "paused" }));
+    });
+    return;
   }
   if (req.url === "/api/config" && req.method === "POST") { // UI sets the screen-recording mode (off/always/share)
     readBody(req).then(b => {
@@ -378,7 +438,7 @@ function startMeetingState() {
       const line = buf.slice(0, nl).trim();
       buf = buf.slice(nl + 1);
       if (!line) continue;
-      try { broadcast(JSON.parse(line)); } catch {}
+      try { ingest(JSON.parse(line)); } catch {}
     }
   });
   p.on("exit", (c) => {

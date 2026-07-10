@@ -57,6 +57,6 @@ across rebuilds) and lets the Node server own `meeting-state`; a release build h
 ## Status
 
 - [x] Self-contained release build — self-starts the stack; double-click, no dev commands
-- [x] Menu-bar tray + audio-wave recording indicator · no-scroll **Settings** modal · **screen-share stealth** (verified)
+- [x] Menu-bar tray + audio-wave recording indicator · full-page **Settings** module · **screen-share stealth** (verified)
 - [ ] Portable installer — bundle models, Developer-ID sign + notarize (today: reuses this machine's `setup.sh` install)
 - [ ] Global shortcut · launch-at-login · the invisible Copilot overlay
