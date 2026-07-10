@@ -31,6 +31,10 @@ let detected = false, manual = null, manualDetected = false, manualHard = false;
 let autoDetect = true; // the "Detect meetings automatically" setting — off = only manual start records
 let unloadIdle = true; // "Unload model when idle" setting — off = keep whisper hot between calls
 let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
+// Dictation (Handy-style push-to-talk): the config is broadcast into /api/state so meeting-tap reads it
+// the same way it reads video/translate/vocab; results come back via POST /ingest {type:'dictation'}.
+let dictationCfg = { enabled: true, trigger: { fn: true }, mode: "ptt", language: "auto", translate: false, sound: true, punctuation: "auto", clipboard: "restore", cancel: 53 };
+let recentDictations = []; // last N dictation results — in-memory, session-lived (dictated text stays off disk)
 function effectiveRecording() { return manual === "on" ? true : (manual === "paused" || manual === "off") ? false : (autoDetect && detected); }
 function broadcastCall() { // push the composed call state to the UI (and lastState, for reconnects)
   const rec = effectiveRecording();
@@ -69,6 +73,11 @@ function setManual(action) {
 }
 // Raw state from a capturer: peel off inMeeting (→ detection), pass the rest (title/app/participants) through.
 function ingest(obj) {
+  if (obj && obj.type === "dictation") { // a finished dictation from meeting-tap → keep recent + push to the view
+    if (obj.text) { recentDictations.unshift({ text: String(obj.text).slice(0, 4000), ts: obj.ts || Date.now(), ms: obj.ms || 0 }); recentDictations = recentDictations.slice(0, 50); }
+    broadcast(obj); return;
+  }
+  if (obj && obj.type === "dictation-state") { broadcast(obj); return; } // listening on/off → drives the UI indicator
   if (obj && obj.type === "state" && obj.state && "inMeeting" in obj.state) {
     const { inMeeting, ...rest } = obj.state;
     if (Object.keys(rest).length) broadcast({ type: "state", state: rest });
@@ -275,6 +284,10 @@ function transcriptText(m, cap = 16000) {
 function readBody(req) {
   return new Promise(resolve => { let b = ""; req.on("data", c => (b += c)); req.on("end", () => resolve(b)); });
 }
+function readBodyBuffer(req) { // binary-safe (multipart WAV must not be stringified)
+  return new Promise(resolve => { const cs = []; req.on("data", c => cs.push(c)); req.on("end", () => resolve(Buffer.concat(cs))); });
+}
+async function waitPort(host, port, ms) { const t = Date.now() + ms; while (Date.now() < t) { if (await portOpen(host, port)) return true; await new Promise(r => setTimeout(r, 300)); } return false; }
 
 http.createServer((req, res) => {
   if (req.url === "/" || req.url === "/index.html") {
@@ -316,7 +329,7 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/state" && req.method === "GET") { // meeting-tap polls this to gate capture + video mode + manual override
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ ...lastState, manual: manual || "auto" }));
+    return res.end(JSON.stringify({ ...lastState, manual: manual || "auto", dictation: dictationCfg }));
   }
   if (req.url === "/api/meeting/control" && req.method === "POST") { // UI start/pause/resume/stop (composes with auto-detect)
     readBody(req).then(b => {
@@ -345,10 +358,31 @@ http.createServer((req, res) => {
         if (typeof j.autoDetect === "boolean") { autoDetect = j.autoDetect; broadcast({ type: "state", state: { autoDetect } }); recomputeLifecycle(); broadcastCall(); } // off → ignore self-detection (manual only)
         if (typeof j.unloadIdle === "boolean") unloadIdle = j.unloadIdle; // off → keep whisper hot
         if (typeof j.vocab === "string") { vocabPrompt = j.vocab.slice(0, 800); broadcast({ type: "state", state: { vocab: vocabPrompt } }); } // custom vocabulary → meeting-tap
+        if (j.dictation && typeof j.dictation === "object") { dictationCfg = { ...dictationCfg, ...j.dictation }; broadcast({ type: "state", state: { dictation: dictationCfg } }); } // Handy-style dictation config → meeting-tap
       } catch {}
       res.writeHead(204); res.end();
     });
     return;
+  }
+  if (req.url === "/api/transcribe" && req.method === "POST") { // dictation: WAV → local STT, ensuring the engine is up first
+    const ct = req.headers["content-type"] || "application/octet-stream";
+    readBodyBuffer(req).then(async (buf) => {
+      try {
+        await ensureWhisper();
+        if (!await waitPort("127.0.0.1", WHISPER_PORT, 15000)) throw new Error("transcription engine did not start");
+        const r = await fetch(`http://127.0.0.1:${WHISPER_PORT}/inference`, { method: "POST", headers: { "Content-Type": ct }, body: buf });
+        const body = await r.text();
+        if (!r.ok) throw new Error(`${r.status} ${body.slice(0, 160)}`);
+        let text = ""; try { text = String(JSON.parse(body).text || "").trim(); } catch {}
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ text }));
+      } catch (e) {
+        res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(e.message || e) }));
+      } finally { if (!cur) unloadWhisperSoon(); } // free the model after dictation, unless a meeting is live
+    });
+    return;
+  }
+  if (req.url === "/api/dictations" && req.method === "GET") { // recent dictation results for the Dictation view
+    res.writeHead(200, { "Content-Type": "application/json" }); return res.end(JSON.stringify(recentDictations));
   }
   const rec = req.url.match(/^\/api\/rec\/([\w.\-]+)$/); // serve a saved screen recording (with range for seeking)
   if (rec && req.method === "GET") {

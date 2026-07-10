@@ -114,6 +114,16 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .emptybox{margin-top:12px;border:1px dashed var(--line-2);border-radius:var(--r-lg);padding:38px;text-align:center;
         color:var(--ink-3);font-size:13px;line-height:1.6}
   .emptybox svg{width:26px;height:26px;opacity:.7;margin-bottom:10px}
+  .dict-live{display:inline-flex;align-items:center;gap:9px;margin-top:18px;padding:9px 15px;border-radius:999px;background:var(--accent-soft);color:var(--ink);font-size:13.5px;font-weight:550}
+  .dict-live .pulse{width:9px;height:9px;border-radius:50%;background:var(--live);animation:dictpulse 1.1s ease-in-out infinite}
+  @keyframes dictpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.6)}}
+  .dcard{display:flex;gap:12px;align-items:flex-start;margin-top:10px;padding:14px 16px;border-radius:var(--r-lg);background:var(--surface);border:1px solid var(--line)}
+  .dcard .dc-body{flex:1;min-width:0}
+  .dcard .dc-text{font-size:14.5px;line-height:1.5;color:var(--ink);white-space:pre-wrap;word-break:break-word}
+  .dcard .dc-meta{font-size:12px;color:var(--ink-3);margin-top:6px}
+  .dcard .dc-copy{flex:none;cursor:pointer;color:var(--ink-3);padding:5px;border-radius:8px;transition:.12s}
+  .dcard .dc-copy:hover{background:var(--accent-soft);color:var(--accent)}
+  .dcard .dc-copy svg{width:16px;height:16px;display:block}
   .badge-line{display:inline-flex;align-items:center;gap:9px;margin-top:22px;padding:9px 13px;border-radius:9px;
         background:var(--surface);border:1px solid var(--line)}
   .badge-line .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
@@ -555,14 +565,16 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
     <section id="v-dictation" class="view">
       <div class="scroll"><div class="hero">
         <div class="h1">Dictate anywhere.</div>
-        <div class="lead">Press <span class="kbd">Fn</span> to dictate into any text field — clean punctuation, real context, and nothing leaves your Mac.</div>
+        <div class="lead">Press <span class="kbd" id="dictHintLead">Fn</span> to dictate into any text field — clean punctuation, real context, and nothing leaves your Mac.</div>
         <div class="rowbtns">
-          <div class="obtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Custom vocabulary</div>
-          <div class="obtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>Upload voice note</div>
+          <div class="obtn" id="dictVocabBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Custom vocabulary</div>
+          <div class="obtn" id="dictUploadBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>Upload voice note</div>
           <div class="tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg><span id="dictLangTag">English</span></div>
         </div>
+        <div id="dictListening" class="dict-live" hidden><span class="pulse"></span>Listening…&nbsp; <span class="kbd">Esc</span>&nbsp;to cancel</div>
         <div class="sect">Recent</div>
-        <div class="emptybox">No dictations yet.<br/>Press <span class="kbd">Fn</span> anywhere to start your first one.</div>
+        <div id="dictList"></div>
+        <div id="dictEmpty" class="emptybox">No dictations yet.<br/>Press <span class="kbd" id="dictHint">Fn</span> anywhere to start your first one.</div>
       </div></div>
     </section>
 
@@ -746,6 +758,77 @@ $('#waToggle').onclick=()=>{ const v=!store.get('wa_enabled',true); store.set('w
 $('#waModelChange').onclick=()=>{ setView('settings'); setPanel('writing'); };
 paintWa();
 
+/* ---------- dictation (Handy-style push-to-talk; native capture lives in meeting-tap) ---------- */
+// macOS virtual keycodes (US layout) — a recorded chord maps to what the CGEvent tap watches for.
+const KEYCODES={a:0,s:1,d:2,f:3,h:4,g:5,z:6,x:7,c:8,v:9,b:11,q:12,w:13,e:14,r:15,y:16,t:17,'1':18,'2':19,'3':20,'4':21,'6':22,'5':23,'=':24,'9':25,'7':26,'-':27,'8':28,'0':29,']':30,o:31,u:32,'[':33,i:34,p:35,l:37,j:38,k:40,n:45,m:46,space:49,spacebar:49,return:36,enter:36,tab:48,esc:53,escape:53};
+const keycodeOf=n=>KEYCODES[String(n||'').trim().toLowerCase()];
+// "Fn" → {fn:true};  "⌘+⇧+D" → {keycode, mods:[…]}.  Falls back to Fn if the key isn't mappable.
+function dictTrigger(str){
+  const parts=String(str||'').split('+').map(s=>s.trim()).filter(Boolean);
+  if(!parts.length||parts.some(p=>/^fn$/i.test(p))) return {fn:true};
+  const mods=[]; let key='';
+  for(const p of parts){
+    if(p==='⌘'||/^(cmd|command|meta)$/i.test(p)) mods.push('cmd');
+    else if(p==='⌃'||/^(ctrl|control)$/i.test(p)) mods.push('ctrl');
+    else if(p==='⌥'||/^(alt|opt|option)$/i.test(p)) mods.push('alt');
+    else if(p==='⇧'||/^shift$/i.test(p)) mods.push('shift');
+    else key=p;
+  }
+  const kc=keycodeOf(key);
+  return kc==null ? {fn:true} : {keycode:kc, mods};
+}
+const DICT_SELECTS=new Set(['dict_lang','punctuation','clipboard']);
+const DICT_LANG={'Auto-detect':'auto','English':'en','हिन्दी':'hi','Español':'es','Deutsch':'de','Français':'fr'};
+// Build the dictation config from settings and hand it to the server → meeting-tap reads it from /api/state.
+function pushDictation(){
+  const punc=store.get('punctuation',DEFAULTS.punctuation), clip=store.get('clipboard',DEFAULTS.clipboard);
+  cfg({dictation:{
+    enabled: store.get('dict_enabled',true),
+    trigger: dictTrigger(store.get('sc_start',DEFAULTS.sc_start)),
+    cancel: (keycodeOf(String(store.get('sc_cancel',DEFAULTS.sc_cancel)).split('+').pop()) ?? 53),
+    mode: store.get('push_to_talk',DEFAULTS.push_to_talk) ? 'ptt' : 'toggle',
+    language: DICT_LANG[store.get('dict_lang',DEFAULTS.dict_lang)]||'auto',
+    translate: false,
+    sound: store.get('dict_sound',true),
+    punctuation: /^auto/i.test(punc)?'auto':(punc==='Off'?'off':'spoken'),
+    clipboard: clip==='Replace clipboard'?'replace':(clip==='Save after dictation'?'save':'restore'),
+  }});
+  paintDictHints();
+}
+function paintDictHints(){
+  const t=$('#dictLangTag'); if(t) t.textContent=String(store.get('dict_lang',DEFAULTS.dict_lang)).replace('Auto-detect','Auto');
+  const trig=store.get('sc_start',DEFAULTS.sc_start);
+  document.querySelectorAll('#dictHint,#dictHintLead').forEach(k=>{ k.textContent=trig; });
+}
+let dictItems=[];
+function dictAgo(ts){ const s=Math.max(0,(Date.now()-ts)/1000);
+  if(s<60) return 'just now'; const m=s/60; if(m<60) return Math.floor(m)+'m ago'; const h=m/60; if(h<24) return Math.floor(h)+'h ago';
+  return new Date(ts).toLocaleDateString([],{month:'short',day:'numeric'}); }
+const IC_COPY='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>';
+function renderDictations(){
+  const list=$('#dictList'), empty=$('#dictEmpty'); if(!list) return;
+  list.innerHTML='';
+  if(!dictItems.length){ if(empty) empty.hidden=false; return; }
+  if(empty) empty.hidden=true;
+  for(const d of dictItems){
+    const card=el('div','dcard'), body=el('div','dc-body');
+    body.append(el('div','dc-text',d.text));
+    body.append(el('div','dc-meta',[dictAgo(d.ts), d.ms?(d.ms/1000).toFixed(1)+'s':''].filter(Boolean).join(' · ')));
+    const cp=el('div','dc-copy'); cp.innerHTML=IC_COPY; cp.title='Copy';
+    cp.onclick=()=>{ try{navigator.clipboard.writeText(d.text)}catch{} toast('Copied'); };
+    card.append(body,cp); list.append(card);
+  }
+}
+function onDictation(m){ if(!m||!m.text) return; dictItems.unshift({text:m.text,ts:m.ts||Date.now(),ms:m.ms||0}); dictItems=dictItems.slice(0,50); renderDictations(); }
+function onDictListening(on){ const p=$('#dictListening'); if(p) p.hidden=!on; }
+async function initDictation(){
+  const vb=$('#dictVocabBtn'); if(vb) vb.onclick=()=>openVocab();
+  const ub=$('#dictUploadBtn'); if(ub) ub.onclick=()=>toast('Uploading a voice note is coming soon.');
+  paintDictHints();
+  try{ dictItems=await (await fetch('/api/dictations')).json(); }catch{ dictItems=[]; }
+  renderDictations();
+}
+
 /* ================= SETTINGS ================= */
 const PANELS=[['profile','Profile'],['general','General'],['dictation','Dictation'],['writing','Writing Assistant'],['meetings','Meetings'],['advanced','Advanced'],['experimental','Experimental']];
 const PANEL_ICONS={
@@ -759,7 +842,7 @@ const PANEL_ICONS={
 };
 const DEFAULTS={
   mic:'Auto (Default)', app_lang:'English', app_updates:'Always', show_tray:true, overlay_type:'Pill', overlay_pos:'Bottom center', start_login:false, start_hidden:false, stealth:false,
-  dict_lang:'Auto-detect', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, auto_pause:true, mute_system:false, volume:70, push_to_talk:false, floating_widget:false, hide_dock:false, auto_delete:'Never', sc_start:'Fn', sc_cancel:'Esc',
+  dict_enabled:true, dict_lang:'Auto-detect', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, auto_pause:true, mute_system:false, volume:70, push_to_talk:true, floating_widget:false, hide_dock:false, auto_delete:'Never', sc_start:'Fn', sc_cancel:'Esc',
   wa_selection:true, wa_noneditable:true, wa_translate_lang:'English', wa_open:'⌃+Space', wa_close:'Esc',
   mtg_source:'Local', live_indicator:true, auto_detect:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, notes_path:'/Users/rahul/Documents/My Assistant/Meetings', mtg_shortcut:'Not set',
   unload_model:true, engine:'Whisper large-v3-turbo', log_dir:'~/Library/Logs/My Assistant', whats_new:true,
@@ -793,6 +876,7 @@ const SCHEMA={
   ],
   dictation:[
     {label:'CONFIGURATION', rows:[
+      {id:'dict_enabled',title:'Enable dictation',desc:'Global push-to-talk anywhere on your Mac — hold the shortcut, speak, release to insert.',type:'toggle'},
       {id:'dict_lang',title:'Language',desc:'Spoken language. Auto-detect handles mixed speech per utterance.',type:'select',options:['Auto-detect','English','हिन्दी','Español','Deutsch','Français']},
       {id:'custom_vocab',title:'Custom vocabulary',desc:'Teach names, acronyms, and domain terms it should recognise.',type:'button',btn:'Configure'},
       {id:'snippets',title:'Snippets',desc:'Spoken shortcuts that expand into saved phrases, links, or templates.',type:'button',btn:'Configure'},
@@ -970,6 +1054,9 @@ function settingRow(row){
     else if(id==='auto_detect'){ getV=()=>store.get('auto_detect',true); setV=v=>{store.set('auto_detect',v); cfg({autoDetect:v})}; }  // off → only manual start records
     else if(id==='unload_model'){ getV=()=>store.get('unload_model',true); setV=v=>{store.set('unload_model',v); cfg({unloadIdle:v})}; }  // off → keep the model hot
     else if(id==='live_indicator'){ getV=()=>store.get('live_indicator',true); setV=v=>{store.set('live_indicator',v); callRender()}; }  // reflect on the overlay immediately
+    else if(id==='dict_enabled'){ getV=()=>store.get('dict_enabled',true); setV=v=>{store.set('dict_enabled',v); pushDictation()}; }        // master on/off for dictation
+    else if(id==='push_to_talk'){ getV=()=>store.get('push_to_talk',DEFAULTS.push_to_talk); setV=v=>{store.set('push_to_talk',v); pushDictation()}; } // hold vs toggle
+    else if(id==='dict_sound'){ getV=()=>store.get('dict_sound',true); setV=v=>{store.set('dict_sound',v); pushDictation()}; }
     else if(id==='stealth'){ gate=!isTauri(); getV=()=>isTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
       if(gate) l.querySelector('.st').insertAdjacentHTML('beforeend','<span class="badge">DESKTOP</span>'); }
     else { getV=()=>store.get(id,DEFAULTS[id]||false); setV=v=>store.set(id,v); }
@@ -981,7 +1068,7 @@ function settingRow(row){
     const w=WIRED[id];
     const opts=row.options||[];
     const cur = w ? (w.from[store.get(w.key,w.def)]||opts[0]) : store.get(id, DEFAULTS[id]!=null?DEFAULTS[id]:opts[0]);
-    const pick=(label)=>{ if(w){ const code=w.to[label]; store.set(w.key,code); w.apply(code); } else store.set(id,label); };
+    const pick=(label)=>{ if(w){ const code=w.to[label]; store.set(w.key,code); w.apply(code); } else { store.set(id,label); if(DICT_SELECTS.has(id)) pushDictation(); } };
     if(row.type==='segmented'){
       const seg=document.createElement('div'); seg.className='segm';
       opts.forEach(o=>{ const b=document.createElement('button'); b.className=(o===cur?'on':''); b.textContent=o;
@@ -1170,7 +1257,9 @@ function recordShortcut(id,title){ openModal(title||'Shortcut', box=>{
     if(e.key==='Escape'){ closeModal(); return; }
     if(['Meta','Control','Alt','Shift'].includes(e.key)){ cap.textContent=mods(e).join(' ')+' …'; return; }  // show mods as they're held
     const p=mods(e); p.push(e.key.length===1?e.key.toUpperCase():e.key);
-    store.set(id,p.join('+')); closeModal(); renderSettings(); toast('Shortcut saved — global keys activate with the desktop app.'); };
+    store.set(id,p.join('+')); closeModal(); renderSettings();
+    if(id==='sc_start'||id==='sc_cancel'){ pushDictation(); toast('Dictation shortcut updated.'); }
+    else toast('Shortcut saved — global keys activate with the desktop app.'); };
   _modalCleanup=()=>{ delete $('#mScrim').dataset.recording; document.removeEventListener('keydown',handler,true); }; // runs however the modal closes
   document.addEventListener('keydown',handler,true);
 }); }
@@ -1412,7 +1501,8 @@ const es=new EventSource('/events');
 es.onopen=()=>{connEl.textContent='● connected';connEl.className='ok'};
 es.onerror=()=>{connEl.textContent='reconnecting…';connEl.className=''};
 es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
-  if(m.type==='state'&&m.state)onState(m.state);else if(m.type==='caption')addCaption(m)};
+  if(m.type==='state'&&m.state)onState(m.state);else if(m.type==='caption')addCaption(m);
+  else if(m.type==='dictation')onDictation(m);else if(m.type==='dictation-state')onDictListening(m.listening)};
 
 /* ================= IN-CALL OVERLAY (Call Panel) =================
    Floats over every view while a real call is being recorded (gated on the live_indicator
@@ -1554,6 +1644,7 @@ setVideoMode(store.get('videoMode','off'));
 setLanguage(store.get('language','auto'));
 setTranslate(store.get('translate',true));
 cfg({autoDetect:store.get('auto_detect',true), unloadIdle:store.get('unload_model',true), vocab:vocabPrompt()});
+pushDictation(); initDictation();
 </script>
 </body>
 </html>

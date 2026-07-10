@@ -30,8 +30,8 @@ server relays captions over SSE; the same UI runs in a browser (dev) or the Taur
   ("llama.cpp for speech-to-text") runs Whisper — and 15+ other ASR families — as GGUF on ggml/Metal. On
   the *same* model and audio it measured **~2× faster, ~half the RAM, and cleaner output** (punctuation,
   no dropped word-onsets) than whisper.cpp's `whisper-server`. It ships CLI-only, so we wrap it in
-  `transcribe-server` (below). whisper.cpp remains an automatic fallback. Choosing this engine also makes
-  a future model picker (Parakeet / Qwen3-ASR / Voxtral) essentially free for the Dictation module.
+  `transcribe-server` (below). whisper.cpp remains an automatic fallback. Choosing this engine also keeps
+  a future model picker (Parakeet / Qwen3-ASR / Voxtral) cheap — the wire format is already engine-neutral.
 - **Tauri, not Electron.** Rust shell + OS WebView rendering vanilla HTML/CSS/JS. Cross-platform, tiny
   footprint. The heavy compute (transcription) is native C++/Metal, so the UI language never bottlenecks.
   The packaged app and the browser build load the *same* UI from `localhost:8790` — one codebase.
@@ -175,6 +175,24 @@ AX-string shape as tiles, so `validName()` must reject UI/chrome words (whole-wo
 and `canonName()` strips trailing "(Me)"/"(Host, me)" so a person doesn't appear twice. `--selftest` covers
 it. Solid 1-on-1; best-effort in large gallery calls.
 
+## Dictation
+
+Handy-style push-to-talk, built **inside `meeting-tap`** rather than a new binary: that process is a direct
+child of the app, so it already holds the **Accessibility** grant needed to synthesize the paste keystroke
+(a grandchild spawned through Node would not). The loop:
+
+1. A **CGEvent tap** (`.defaultTap`, Accessibility-backed) watches for the trigger — **Fn** by default
+   (`.maskSecondaryFn` on `flagsChanged`) or a configurable key chord; **Esc** cancels.
+2. Hold (push-to-talk) or tap (toggle) records the mic to one buffer via its own `AVAudioEngine`, gated to
+   run **only when no meeting is capturing**, so the two never fight for the mic.
+3. On stop it POSTs the WAV to **`POST /api/transcribe`** (Node runs `ensureWhisper()`, then forwards to
+   `transcribe-server` — the seam a future cloud provider slots into), and
+4. **pastes** the result into the focused app: set `NSPasteboard`, synthesize **⌘V**, restore the clipboard.
+
+Config rides the existing `/api/state` poll (`dictation: {…}` from **Settings → Dictation**); results return
+via `POST /ingest {type:'dictation'}` to populate the Dictation view. **Setup:** the macOS **🌐/Fn** key must
+be set to "Do Nothing" (System Settings → Keyboard) or the OS intercepts Fn.
+
 ## Traps checklist (the landmines)
 
 - Don't reintroduce fixed-length transcription chunking — transcribe whole utterances.
@@ -184,13 +202,14 @@ it. Solid 1-on-1; best-effort in large gallery calls.
 - Don't match off-screen meeting windows in detection — gate secondary windows on `isOnScreen`.
 - Don't set `excludesCurrentProcessAudio = true` — it wedges SCK into silent capture.
 - Don't run the on-device LLM as a raw GGUF — use LiteRT-LM, or it hangs an 8 GB Mac.
+- Don't build dictation as its own binary — the paste keystroke needs Accessibility, which only a direct child of the app inherits; keep it in `meeting-tap`.
 
 ## Repo layout
 
 | Path | Role |
 |---|---|
 | `desktop/` | Tauri app — self-starts the stack; tray, screen-share stealth, close-to-tray |
-| `stt/meeting-tap.swift` | SCK capture (audio + video) + call self-detection + utterance segmentation |
+| `stt/meeting-tap.swift` | SCK capture (audio + video) + call self-detection + utterance segmentation + **dictation** (hotkey → mic → paste) |
 | `stt/transcribe-server/` | our transcribe.cpp HTTP wrapper (source + pinned-commit `build.sh`) |
 | `stt/whisper/` | GGUF model (git-ignored; fetched by `setup.sh`) |
 | `meeting-state/meeting-state.swift` | Accessibility layer: speaker names, mute/share |

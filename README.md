@@ -73,6 +73,20 @@ the model hot; the build is `stt/transcribe-server/build.sh` (pinned commit, Met
 as an automatic fallback if that isn't built. Capture (mic, system audio, video) runs **only while you're
 in a call**.
 
+## Dictation
+
+Press-and-hold **Fn** anywhere on your Mac, speak, and release — the words are transcribed on-device and
+pasted straight into whatever text field is focused. It reuses the same transcribe.cpp engine as Meetings,
+so nothing leaves your machine.
+
+- **Hold-to-talk** by default (or switch to tap-to-toggle in **Settings → Dictation**); **Esc** cancels.
+- **Rebindable** to any shortcut; **Custom Vocabulary** and language are shared with Meetings.
+- Capture → transcription → paste all live in `meeting-tap` — a direct child of the app, so it already
+  holds the Accessibility grant the paste needs. **No separate permission** beyond what Meetings uses.
+
+> **One-time setup:** macOS lets the **🌐/Fn** key open Emoji or Dictation. Set **System Settings →
+> Keyboard → “Press 🌐 to” → Do Nothing** (or rebind dictation to a key chord) so Fn is free.
+
 ## Post-call AI
 
 Every meeting is saved to `data/meetings/*.json` (on-device, git-ignored). Open one from the **Library**
@@ -196,14 +210,16 @@ For the full design rationale, the transcription/permissions deep-dives, and the
 - [x] **Meeting history** + **post-call AI** (summary, action items, "ask"), **rename**, recording **thumbnails**
 - [x] **Desktop app (Tauri)** — double-click, self-starts the stack, **menu-bar recording indicator**, ask-once permissions
 - [x] **Screen-share stealth** · **video screen recording** (whole call / only-when-shared)
+- [x] **Dictation** — hold **Fn** to speak into any app; on-device transcription pasted in place (push-to-talk or toggle, rebindable)
 
 **Next**
 
 - [ ] **Real-time Copilot** — in-call coaching in an always-on **stealth** overlay (the keystone)
 - [ ] **Portable installer** — Developer-ID sign + notarize + bundle the models, so any Mac runs it (no `setup.sh`, no re-grant)
 - [ ] **Browser + Slack** meetings — detect Google Meet / Zoom web / Slack huddles
-- [ ] **audio in screen recordings**; **global shortcut** + **launch-at-login** (need Tauri plugins)
-- [ ] The other modules — **Dictation, Writing Assistant, Agents**
+- [ ] **audio in screen recordings**; **launch-at-login** + folder pickers (need Tauri plugins)
+- [ ] **Curated model picker + provider API keys** — on-device Parakeet, and cloud STT/LLM (Groq / OpenAI / Deepgram / ElevenLabs / Anthropic / Gemini) with per-model capabilities
+- [ ] The other modules — **Writing Assistant, Agents**
 
 ## License
 
