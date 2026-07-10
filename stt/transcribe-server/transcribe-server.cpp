@@ -84,6 +84,7 @@ int main(int argc, char **argv) {
         }
         std::string lang = req.has_file("language") ? req.get_file_value("language").content : "auto";
         bool translate   = req.has_file("translate") && req.get_file_value("translate").content == "true";
+        std::string prompt = req.has_file("prompt") ? req.get_file_value("prompt").content : "";  // custom vocabulary / bias
 
         std::lock_guard<std::mutex> lk(g_mtx);
         struct transcribe_run_params rp; transcribe_run_params_init(&rp);
@@ -98,6 +99,7 @@ int main(int argc, char **argv) {
         wx.temperature = 0.0f;
         wx.temperature_inc = 0.0f;        // no fallback → no fluent hallucination on noise
         wx.no_speech_thold = 0.5f;        // (default 0.6) slightly stricter silence rejection
+        if (!prompt.empty()) wx.initial_prompt = prompt.c_str();  // bias decoding toward the user's vocabulary (lib copies the bytes)
         if (transcribe_model_accepts_ext_kind(g_model, TRANSCRIBE_EXT_SLOT_RUN, TRANSCRIBE_EXT_KIND_WHISPER_RUN))
             rp.family = &wx.ext;
 

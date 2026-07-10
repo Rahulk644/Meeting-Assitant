@@ -876,6 +876,7 @@ function settingRow(row){
     if(id==='translate_en'){ getV=()=>store.get('translate',true); setV=v=>{store.set('translate',v);setTranslate(v)}; }
     else if(id==='auto_detect'){ getV=()=>store.get('auto_detect',true); setV=v=>{store.set('auto_detect',v); cfg({autoDetect:v})}; }  // off → only manual start records
     else if(id==='unload_model'){ getV=()=>store.get('unload_model',true); setV=v=>{store.set('unload_model',v); cfg({unloadIdle:v})}; }  // off → keep the model hot
+    else if(id==='live_indicator'){ getV=()=>store.get('live_indicator',true); setV=v=>{store.set('live_indicator',v); callRender()}; }  // reflect on the overlay immediately
     else if(id==='stealth'){ gate=!isTauri(); getV=()=>isTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
       if(gate) l.querySelector('.st').insertAdjacentHTML('beforeend','<span class="badge">DESKTOP</span>'); }
     else { getV=()=>store.get(id,DEFAULTS[id]||false); setV=v=>store.set(id,v); }
@@ -964,7 +965,8 @@ function subRow(title,desc,ctl){ const {r,c}=srowShell({title,desc}); c.append(c
 /* ================= SETTINGS MODALS ================= */
 function el(tag,cls,text){ const e=document.createElement(tag); if(cls)e.className=cls; if(text!=null)e.textContent=text; return e; }
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>{t.hidden=true},2400); }
-function closeModal(){ $('#mScrim').hidden=true; $('#mContent').innerHTML=''; }
+let _modalCleanup=null; // a modal (e.g. the shortcut recorder) can register teardown that must run however it closes
+function closeModal(){ if(_modalCleanup){ _modalCleanup(); _modalCleanup=null; } $('#mScrim').hidden=true; $('#mContent').innerHTML=''; }
 function openModal(title,build){ $('#mTitle').textContent=title; const box=$('#mContent'); box.innerHTML=''; build(box); $('#mScrim').hidden=false; }
 $('#mClose').onclick=closeModal;
 $('#mScrim').onclick=(e)=>{ if(e.target===$('#mScrim')) closeModal(); };
@@ -1070,13 +1072,13 @@ function recordShortcut(id,title){ openModal(title||'Shortcut', box=>{
   $('#mScrim').dataset.recording='1';
   box.append(el('div','msub','Press the key combination you want to use.'));
   const cap=el('div','mnote','Listening…  (Esc to cancel)'); cap.style.fontSize='13.5px'; cap.style.padding='20px'; box.append(cap);
-  const done=()=>{ delete $('#mScrim').dataset.recording; document.removeEventListener('keydown',handler,true); };
+  const mods=(e)=>{ const p=[]; if(e.metaKey)p.push('⌘'); if(e.ctrlKey)p.push('⌃'); if(e.altKey)p.push('⌥'); if(e.shiftKey)p.push('⇧'); return p; };
   const handler=(e)=>{ e.preventDefault(); e.stopPropagation();
-    if(e.key==='Escape'){ done(); closeModal(); return; }
-    if(['Meta','Control','Alt','Shift'].includes(e.key)){ const parts=[]; if(e.metaKey)parts.push('⌘'); if(e.ctrlKey)parts.push('⌃'); if(e.altKey)parts.push('⌥'); if(e.shiftKey)parts.push('⇧'); cap.textContent=parts.join(' ')+' …'; return; }
-    const parts=[]; if(e.metaKey)parts.push('⌘'); if(e.ctrlKey)parts.push('⌃'); if(e.altKey)parts.push('⌥'); if(e.shiftKey)parts.push('⇧');
-    parts.push(e.key.length===1?e.key.toUpperCase():e.key);
-    store.set(id,parts.join('+')); done(); closeModal(); renderSettings(); toast('Shortcut saved — global keys activate with the desktop app.'); };
+    if(e.key==='Escape'){ closeModal(); return; }
+    if(['Meta','Control','Alt','Shift'].includes(e.key)){ cap.textContent=mods(e).join(' ')+' …'; return; }  // show mods as they're held
+    const p=mods(e); p.push(e.key.length===1?e.key.toUpperCase():e.key);
+    store.set(id,p.join('+')); closeModal(); renderSettings(); toast('Shortcut saved — global keys activate with the desktop app.'); };
+  _modalCleanup=()=>{ delete $('#mScrim').dataset.recording; document.removeEventListener('keydown',handler,true); }; // runs however the modal closes
   document.addEventListener('keydown',handler,true);
 }); }
 function aiInput(type,val,ph,onset){ const i=document.createElement('input'); i.type=type; i.className='inp'; i.style.minWidth='260px';
