@@ -320,13 +320,30 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .cchip .ct{font-size:12px;font-weight:650;color:var(--ink);font-variant-numeric:tabular-nums}
   .cchip .pt{font-size:10.5px;font-weight:650;color:var(--ink-3);background:var(--surface-2);border-radius:5px;padding:2px 6px}
   /* detail */
-  .det-head{padding:20px 28px 14px;border-bottom:1px solid var(--line)}
-  .det-head h1{margin:6px 0 0;font-size:22px;font-weight:650;letter-spacing:-0.02em;color:var(--ink)}
-  .det-head p{margin:8px 0 0;color:var(--ink-2);font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .det-rename{background:none;border:none;color:var(--ink-3);cursor:pointer;padding:3px;border-radius:6px;display:inline-flex;vertical-align:middle;margin-left:8px}
-  .det-rename svg{width:15px;height:15px}
+  .det-scroll{flex:1;overflow:auto;padding:22px clamp(18px,4vw,40px) 64px}
+  .det-inner{max-width:760px;margin:0 auto}
+  .det-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-top:14px}
+  .det-top h1{margin:0;font-size:29px;font-weight:680;letter-spacing:-0.02em;color:var(--ink);line-height:1.15}
+  .det-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;padding-top:3px}
+  .det-rename{background:none;border:none;color:var(--ink-3);cursor:pointer;padding:6px;border-radius:7px;display:inline-flex}
+  .det-rename svg{width:16px;height:16px}
   .det-rename:hover{color:var(--ink);background:var(--surface-2)}
-  .titleedit{font-size:22px;font-weight:650;border:1px solid var(--accent);border-radius:8px;padding:2px 9px;background:var(--field);color:var(--ink);max-width:72%}
+  .det-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--line);color:var(--ink);font:inherit;font-size:12.5px;font-weight:560;cursor:pointer}
+  .det-btn:hover{background:var(--surface-2)} .det-btn svg{width:14px;height:14px}
+  .det-meta2{display:flex;align-items:center;gap:7px;margin-top:9px;font-size:13px;color:var(--ink-2)}
+  .det-meta2 svg{flex:0 0 auto}
+  .det-people{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}
+  .det-people[hidden]{display:none}
+  .ppill{display:flex;align-items:center;gap:7px;padding:4px 12px 4px 4px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:12.5px;color:var(--ink)}
+  .ppill .av{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:650;color:#fff;flex:0 0 auto}
+  .det-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-top:22px}
+  .det-tab{padding:8px 12px 9px;font-size:13.5px;font-weight:600;color:var(--ink-3);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+  .det-tab.on{color:var(--ink);border-bottom-color:var(--accent)}
+  .det-tab:hover:not(.on){color:var(--ink-2)}
+  .det-body{padding-top:20px}
+  .det-empty{color:var(--ink-3);font-size:13.5px;padding:16px 0}
+  .det-note{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 16px;margin-bottom:20px;white-space:pre-wrap;color:var(--ink-2);font-size:14px;line-height:1.6}
+  .titleedit{font-size:29px;font-weight:680;letter-spacing:-0.02em;border:1px solid var(--accent);border-radius:8px;padding:1px 9px;background:var(--field);color:var(--ink);max-width:100%}
   .recvid{width:100%;border-radius:var(--r-lg);background:#000;margin-bottom:18px;display:block;max-height:58vh;border:1px solid var(--line)}
   .vtag{display:inline-flex;align-items:center;color:var(--ink-3)}.vtag svg{width:13px;height:13px}
   .sumcard{border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 18px;margin-bottom:20px;background:var(--surface)}
@@ -513,11 +530,21 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
       </div>
       <!-- DETAIL -->
       <div class="mt-pane" id="mt-detail">
-        <div class="det-head">
-          <button class="back" id="detBack">‹ Meetings</button>
-          <h1 id="det-title">Meeting</h1><button class="det-rename" id="det-rename" title="Rename meeting" aria-label="Rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button><p id="det-meta"></p>
-        </div>
-        <section class="feed"><div class="wrap" id="det-wrap"></div></section>
+        <div class="det-scroll"><div class="det-inner">
+          <button class="back" id="detBack">‹ All meetings</button>
+          <div class="det-top">
+            <h1 id="det-title">Meeting</h1>
+            <div class="det-actions">
+              <button class="det-rename" id="det-rename" title="Rename meeting" aria-label="Rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+              <button class="det-btn" id="det-export"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4M5 19h14"/></svg>Export</button>
+              <button class="det-btn" id="det-share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="2.4"/><circle cx="17" cy="6" r="2.4"/><circle cx="17" cy="18" r="2.4"/><line x1="8.1" y1="10.9" x2="14.9" y2="7.1"/><line x1="8.1" y1="13.1" x2="14.9" y2="16.9"/></svg>Share</button>
+            </div>
+          </div>
+          <div class="det-meta2" id="det-meta"></div>
+          <div class="det-people" id="det-people" hidden></div>
+          <div class="det-tabs" id="det-tabs"></div>
+          <div class="det-body" id="det-body"></div>
+        </div></div>
       </div>
     </section>
 
@@ -1220,37 +1247,57 @@ $('#det-rename').onclick=()=>{
   };
   inp.onblur=()=>finish(true); inp.onkeydown=e=>{ if(e.key==='Enter'){e.preventDefault();inp.blur();} else if(e.key==='Escape'){inp.value=old;inp.blur();} };
 };
+let curMeeting=null, detTab='summary';
+function nameColor(n){ let h=0; for(const c of String(n)) h=(h*31+c.charCodeAt(0))>>>0; return `hsl(${h%360} 52% 47%)`; }
 async function openMeeting(id){
-  curMeetingId=id;
+  curMeetingId=id; detTab='summary';
   let m; try{ m=await (await fetch('/api/meetings/'+id)).json() }catch{ return }
+  curMeeting=m;
   $('#det-title').textContent=m.title;
   const when=new Date(m.startedAt).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-  $('#det-meta').innerHTML=avatarStack(m.participants||[],5)+`<span>${esc(when)} · ${fmtDur(m)} · ${m.lines.length} line${m.lines.length===1?'':'s'}</span>`;
-  const w=$('#det-wrap'); w.innerHTML='';
-  if(m.video){
-    const v=document.createElement('video'); v.className='recvid'; v.controls=true; v.preload='metadata';
-    v.src='/api/rec/'+encodeURIComponent(m.video); v.onerror=()=>v.remove();
-    w.append(v);
-  }
-  w.append(aiPanel(m));
-  if(m.notes){ const nh=document.createElement('div'); nh.className='sum-h'; nh.style.margin='2px 0 8px'; nh.textContent='Your notes';
-    const nb=document.createElement('div'); nb.className='sum-b'; nb.style.margin='0 0 20px'; nb.textContent=m.notes; w.append(nh,nb); }
-  const tl=document.createElement('div'); tl.className='sum-h'; tl.style.margin='2px 0 10px'; tl.textContent='Transcript'; w.append(tl);
-  for(const l of m.lines) w.append(lineRow(l));
+  $('#det-meta').innerHTML=callPlatformIcon(m.app)+`<span>${esc([when, prettyApp(m.app), fmtDur(m)].filter(Boolean).join(' · '))}</span>`;
+  const pp=$('#det-people'); pp.innerHTML=''; const ppl=m.participants||[];
+  ppl.forEach(p=>{ const pill=document.createElement('div'); pill.className='ppill';
+    pill.innerHTML=`<span class="av" style="background:${nameColor(p)}">${esc(initials(p))}</span><span>${esc(p)}</span>`; pp.append(pill); });
+  pp.hidden=!ppl.length;
+  renderDetailTabs(); renderDetailBody();
   mtShow('detail');
 }
-function aiPanel(m){
-  const card=document.createElement('div'); card.className='sumcard';
-  const top=document.createElement('div'); card.append(top);
-  fillSummary(top, m.id, m.summary);
-  const ask=document.createElement('div'); ask.className='ask';
-  const inp=document.createElement('input'); inp.type='text'; inp.placeholder='Ask this meeting…';
-  const go=document.createElement('button'); go.className='abtn'; go.textContent='Ask';
-  const run=()=>{ const q=inp.value.trim(); if(q){ inp.value=''; askMeeting(card, m.id, q); } };
-  go.onclick=run; inp.addEventListener('keydown',e=>{ if(e.key==='Enter') run(); });
-  ask.append(inp,go); card.append(ask);
-  const qa=document.createElement('div'); qa.className='qa-list'; card.append(qa);
-  return card;
+function renderDetailTabs(){
+  const c=$('#det-tabs'); c.innerHTML='';
+  [['summary','Summary'],['actions','Action items'],['transcript','Transcript'],['ask','Ask']].forEach(([k,label])=>{
+    const b=document.createElement('div'); b.className='det-tab'+(k===detTab?' on':''); b.textContent=label;
+    b.onclick=()=>{ if(detTab!==k){ detTab=k; renderDetailTabs(); renderDetailBody(); } }; c.append(b); });
+}
+function renderDetailBody(){
+  const m=curMeeting, w=$('#det-body'); w.innerHTML='';
+  if(detTab==='summary'){
+    if(m.notes){ const nh=document.createElement('div'); nh.className='sum-h'; nh.textContent='Your notes';
+      const nb=document.createElement('div'); nb.className='det-note'; nb.textContent=m.notes; w.append(nh,nb); }
+    const h=document.createElement('div'); h.className='sum-h'; h.innerHTML=IC_SPARK+'AI Summary'; w.append(h);
+    if(!m.summary){ w.append(el('div','det-empty','No summary yet.')); genButton(w); return; }
+    w.append(el('div','sum-b',splitSummary(m.summary).sum));
+  } else if(detTab==='actions'){
+    if(!m.summary){ w.append(el('div','det-empty','Generate the summary to pull out action items.')); genButton(w); return; }
+    const {actions}=splitSummary(m.summary);
+    if(!actions.length){ w.append(el('div','det-empty','No action items found.')); return; }
+    const list=document.createElement('div'); list.className='acts';
+    actions.forEach(a=>{ const it=document.createElement('div'); it.className='act'; it.innerHTML=IC_CHECK+`<span>${esc(a)}</span>`; list.append(it); });
+    w.append(list);
+  } else if(detTab==='transcript'){
+    if(m.video){ const v=document.createElement('video'); v.className='recvid'; v.controls=true; v.preload='metadata';
+      v.src='/api/rec/'+encodeURIComponent(m.video); v.onerror=()=>v.remove(); w.append(v); }
+    if(!m.lines.length){ w.append(el('div','det-empty','No transcript captured.')); return; }
+    for(const l of m.lines) w.append(lineRow(l));
+  } else if(detTab==='ask'){
+    const ask=document.createElement('div'); ask.className='ask'; ask.style.margin='0'; ask.style.padding='0'; ask.style.border='none';
+    const inp=document.createElement('input'); inp.type='text'; inp.placeholder='Ask this meeting…';
+    const go=document.createElement('button'); go.className='abtn'; go.textContent='Ask';
+    const qa=document.createElement('div'); qa.className='qa-list';
+    const run=()=>{ const q=inp.value.trim(); if(q){ inp.value=''; askMeeting(qa, m.id, q); } };
+    go.onclick=run; inp.addEventListener('keydown',e=>{ if(e.key==='Enter') run(); });
+    ask.append(inp,go); w.append(ask,qa);
+  }
 }
 function splitSummary(text){
   const m=text.match(/(?:^|\n)\s*\**\s*action items\s*:?\s*\**\s*/i);
@@ -1260,38 +1307,22 @@ function splitSummary(text){
     .map(l=>l.replace(/^\s*[-*•\d.)]+\s*/,'').trim()).filter(l=>l && !/^none\.?$/i.test(l));
   return {sum, actions};
 }
-function fillSummary(top, id, summary){
-  top.innerHTML='';
-  const h=document.createElement('div'); h.className='sum-h'; h.innerHTML=IC_SPARK+'AI Summary'; top.append(h);
-  if(!summary){
-    const b=document.createElement('button'); b.className='linkbtn'; b.textContent='Generate summary'; b.onclick=()=>genSummary(top,id); top.append(b); return;
-  }
-  const {sum,actions}=splitSummary(summary);
-  const b=document.createElement('div'); b.className='sum-b'; b.textContent=sum; top.append(b);
-  if(actions.length){
-    const ah=document.createElement('div'); ah.className='sum-h2'; ah.textContent='Action items'; top.append(ah);
-    const list=document.createElement('div'); list.className='acts';
-    for(const a of actions){ const it=document.createElement('div'); it.className='act'; it.innerHTML=IC_CHECK+`<span>${esc(a)}</span>`; list.append(it); }
-    top.append(list);
-  }
-}
-async function genSummary(top,id){
-  const b=top.querySelector('.linkbtn'); if(b){ b.disabled=true; b.textContent='Generating…'; }
+function genButton(w){ const b=document.createElement('button'); b.className='linkbtn'; b.textContent='Generate summary'; b.onclick=()=>genSummary(b); w.append(b); }
+async function genSummary(btn){
+  const id=curMeetingId; if(btn){ btn.disabled=true; btn.textContent='Generating…'; }
   try{
     const r=await fetch('/api/meetings/'+id+'/summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm:resolveLLM(),deeper:store.get('deeper',false),template:selectedTemplatePrompt()})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
-    fillSummary(top,id,j.summary);
+    if(curMeeting) curMeeting.summary=j.summary;
+    renderDetailBody();
   }catch(e){
-    top.innerHTML='';
-    const h=document.createElement('div'); h.className='sum-h'; h.innerHTML=IC_SPARK+'AI Summary'; top.append(h);
-    const err=document.createElement('div'); err.className='sum-err';
+    if(btn){ btn.disabled=false; btn.textContent='Try again'; }
+    const err=document.createElement('div'); err.className='sum-err'; err.style.marginTop='10px';
     err.innerHTML='<b>No model connected.</b> Choose one in Settings → Meetings → AI Model, or run <code>./setup.sh</code> for the on-device model.';
-    top.append(err);
-    const rb=document.createElement('button'); rb.className='linkbtn'; rb.textContent='Try again'; rb.onclick=()=>genSummary(top,id); top.append(rb);
+    $('#det-body').append(err);
   }
 }
-async function askMeeting(card,id,q){
-  const qa=card.querySelector('.qa-list');
+async function askMeeting(qa,id,q){
   const item=document.createElement('div'); item.className='qa';
   const qd=document.createElement('div'); qd.className='q'; qd.textContent=q;
   const ad=document.createElement('div'); ad.className='a spin'; ad.textContent='Thinking…';
@@ -1302,6 +1333,15 @@ async function askMeeting(card,id,q){
     ad.className='a'; ad.textContent=j.answer;
   }catch(e){ ad.className='a sum-err'; ad.textContent="Couldn't answer — set up a model in Settings → Meetings → AI Model."; }
 }
+$('#det-export').onclick=()=>{ const m=curMeeting; if(!m)return;
+  let md=`# ${m.title}\n\n${[new Date(m.startedAt).toLocaleString(), prettyApp(m.app), fmtDur(m)].filter(Boolean).join(' · ')}\n\n`;
+  if(m.summary) md+=`## Summary\n\n${m.summary}\n\n`;
+  if(m.notes) md+=`## Notes\n\n${m.notes}\n\n`;
+  md+=`## Transcript\n\n${(m.lines||[]).map(l=>`**${l.speaker}:** ${l.text}`).join('\n\n')}\n`;
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([md],{type:'text/markdown'}));
+  a.download=((m.title||'meeting').replace(/[^\w -]+/g,'').trim()||'meeting')+'.md'; a.click(); URL.revokeObjectURL(a.href);
+  toast('Exported '+a.download); };
+$('#det-share').onclick=()=>toast('Sharing is coming soon.');
 
 /* ---------- live event stream ---------- */
 const es=new EventSource('/events');
