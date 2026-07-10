@@ -8,6 +8,7 @@
     "devUrl": "http://localhost:8790"
   },
   "app": {
+    "macOSPrivateApi": true,
     "withGlobalTauri": true,
     "windows": [
       {
