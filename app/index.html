@@ -133,15 +133,22 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
         border:1px solid var(--line);cursor:pointer;transition:.12s} .fcard:hover{border-color:var(--line-2)}
   .fcard .fi{width:38px;height:38px;flex:0 0 auto;border-radius:10px;background:var(--surface-2);display:grid;place-items:center;color:var(--ink-2)}
   .fcard .fi svg{width:19px;height:19px}
+  .fcard .fi.heart{color:var(--live)}
   .fcard .ft{font-size:13.5px;font-weight:620;color:var(--ink)} .fcard .fd{font-size:12px;color:var(--ink-2);margin-top:2px}
+  .fcard.wide{grid-column:1 / -1} .fcard.wide .ftx{flex:1;min-width:0}
 
   /* ===== settings (full-page module) ===== */
   .set-wrap{display:flex;width:100%;min-height:0}
   .set-rail{width:198px;flex:0 0 198px;border-right:1px solid var(--line);overflow:auto;padding:16px 12px}
-  .set-rail .r{display:flex;align-items:center;padding:7px 11px;margin:1.5px 0;border-radius:7px;cursor:pointer;
+  .set-rail .r{display:flex;align-items:center;gap:9px;padding:7px 11px;margin:1.5px 0;border-radius:7px;cursor:pointer;
         font-size:13px;color:var(--ink-2);font-weight:500;transition:.12s}
+  .set-rail .r svg{width:15px;height:15px;flex:0 0 auto}
   .set-rail .r:hover{color:var(--ink)}
   .set-rail .r.on{background:var(--accent-soft);color:var(--ink);font-weight:600}
+  .prof-card{display:flex;align-items:center;gap:14px;padding:18px;border-radius:var(--r-lg);background:var(--surface);border:1px solid var(--line);margin-top:14px}
+  .prof-av{width:46px;height:46px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-size:18px;font-weight:700;flex:0 0 auto}
+  .prof-id{flex:1;min-width:0} .prof-name{font-size:15px;font-weight:680;color:var(--ink)} .prof-sub{font-size:12.5px;color:var(--ink-2);margin-top:2px}
+  .prof-plan{font-size:11px;font-weight:650;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:4px 11px;flex:0 0 auto}
   .set-body{flex:1;min-width:0;overflow:auto;padding:14px 32px 72px}
   .sec-l{font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--ink-3);text-transform:uppercase;margin:22px 2px 3px}
   .sec-n{font-size:12px;color:var(--ink-2);margin:0 2px 6px;line-height:1.5}
@@ -601,6 +608,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
           <div class="fcard"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 20a5 5 0 0 0-10 0"/><circle cx="12" cy="9" r="3.5"/></svg></div><div><div class="ft">Community</div><div class="fd">Report bugs and request features.</div></div></div>
           <div class="fcard"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5.5H4a1 1 0 0 0-1 1V16a1 1 0 0 0 1 1h4l4 3.5V17h8a1 1 0 0 0 1-1V6.5a1 1 0 0 0-1-1Z"/></svg></div><div><div class="ft">Send feedback</div><div class="fd">Tell us what to improve next.</div></div></div>
           <div class="fcard"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5l8.5 6 8.5-6"/></svg></div><div><div class="ft">Email support</div><div class="fd">Reach the team directly.</div></div></div>
+          <div class="fcard wide"><div class="fi heart"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 20.3l-1.3-1.2C5.9 14.8 3 12.1 3 8.7 3 6.1 5 4.1 7.6 4.1c1.5 0 2.9.7 3.8 1.8l.6.8.6-.8c.9-1.1 2.3-1.8 3.8-1.8 2.6 0 4.6 2 4.6 4.6 0 3.4-2.9 6.1-7.7 10.4L12 20.3z"/></svg></div><div class="ftx"><div class="ft">Support the creator</div><div class="fd">My Assistant is independent and runs entirely on-device.</div></div><div class="abtn" id="fcSupport">Open</div></div>
         </div>
       </div></div>
     </section>
@@ -700,6 +708,7 @@ document.querySelectorAll('.nav[data-view]').forEach(n=>{
 });
 $('#proCard').onclick=()=>setView('settings');
 $('#docLink').onclick=()=>setView('feedback');
+$('#fcSupport').onclick=(e)=>{ e.stopPropagation(); toast('Thank you for the support! 💛'); };
 
 /* ---------- native (Tauri) bridge + server config ---------- */
 function isTauri(){ return !!(window.__TAURI__ && window.__TAURI__.core); }
@@ -742,7 +751,16 @@ $('#waModelChange').onclick=()=>{ setView('settings'); setPanel('writing'); };
 paintWa();
 
 /* ================= SETTINGS ================= */
-const PANELS=[['general','General'],['dictation','Dictation'],['writing','Writing Assistant'],['meetings','Meetings'],['advanced','Advanced'],['experimental','Experimental']];
+const PANELS=[['profile','Profile'],['general','General'],['dictation','Dictation'],['writing','Writing Assistant'],['meetings','Meetings'],['advanced','Advanced'],['experimental','Experimental']];
+const PANEL_ICONS={
+  profile:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>',
+  general:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="8" r="2.4" fill="var(--sidebar)"/><circle cx="9" cy="16" r="2.4" fill="var(--sidebar)"/></svg>',
+  dictation:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/></svg>',
+  writing:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5V14a1.5 1.5 0 0 1-1.5 1.5H9l-4 3.4V5.5Z"/><path d="M8.5 9.2h7M8.5 12h4.5"/></svg>',
+  meetings:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16.5" rx="2.4"/><line x1="3" y1="9.2" x2="21" y2="9.2"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>',
+  advanced:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.2"/><path d="M7 9.5l3 2.5-3 2.5"/><line x1="12.5" y1="14.5" x2="17" y2="14.5"/></svg>',
+  experimental:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3h5M10.5 3v5.2L5 16.6A2 2 0 0 0 6.8 20h10.4a2 2 0 0 0 1.8-3.4L13.5 8.2V3"/><line x1="8" y1="15" x2="16" y2="15"/></svg>',
+};
 const DEFAULTS={
   mic:'Auto (Default)', app_lang:'English', app_updates:'Always', show_tray:true, overlay_type:'Pill', overlay_pos:'Bottom center', start_login:false, start_hidden:false, stealth:false,
   dict_lang:'Auto-detect', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, auto_pause:true, mute_system:false, volume:70, push_to_talk:false, floating_widget:false, hide_dock:false, auto_delete:'Never', sc_start:'Fn', sc_cancel:'Esc',
@@ -866,8 +884,9 @@ function setPanel(p){ curPanel=p; if($('#v-settings').classList.contains('on')) 
 function renderSettings(){
   const rail=$('#setRail'); rail.innerHTML='';
   PANELS.forEach(([id,label])=>{ const b=document.createElement('div'); b.className='r'+(id===curPanel?' on':'');
-    b.textContent=label; b.onclick=()=>setPanel(id); rail.append(b); });
+    b.innerHTML=(PANEL_ICONS[id]||'')+`<span>${label}</span>`; b.onclick=()=>setPanel(id); rail.append(b); });
   const body=$('#setBody'); body.innerHTML='';
+  if(curPanel==='profile'){ renderProfile(body); return; }
   for(const sec of (SCHEMA[curPanel]||[])){
     const l=document.createElement('div'); l.className='sec-l'; l.textContent=sec.label; body.append(l);
     if(sec.note){ const n=document.createElement('div'); n.className='sec-n'; n.textContent=sec.note; body.append(n); }
@@ -876,6 +895,46 @@ function renderSettings(){
       else body.append(settingRow(row));
     }
   }
+}
+/* Settings → Profile — matches the design; wired to real/honest actions (this build is on-device, no account). */
+function renderProfile(body){
+  const name=store.get('profileName','You')||'You', email=store.get('profileEmail','');
+  const card=document.createElement('div'); card.className='prof-card';
+  card.innerHTML=`<div class="prof-av">${esc(initials(name)||'Y')}</div>
+    <div class="prof-id"><div class="prof-name">${esc(name)}</div><div class="prof-sub">${esc(email||'On-device · no account')}</div></div>
+    <span class="prof-plan">Free plan</span>`;
+  body.append(card);
+  const sec=(l)=>{ const d=document.createElement('div'); d.className='sec-l'; d.textContent=l; return d; };
+  const row=(title,desc,btn,fn)=>{ const {r,c}=srowShell({title,desc}); const b=document.createElement('div'); b.className='abtn'; b.textContent=btn; b.onclick=fn; c.append(b); return r; };
+  body.append(sec('ACCOUNT'));
+  body.append(row('Name', name, 'Edit', ()=>editProfile('profileName','Name','You')));
+  body.append(row('Email', email||'Not set', 'Change', ()=>editProfile('profileEmail','Email','')));
+  body.append(sec('PLAN'));
+  body.append(row('Plan', 'Free. Pro adds cloud models and team sharing.', 'Upgrade', ()=>toast('Pro is coming soon.')));
+  body.append(sec('DATA'));
+  body.append(row('Export my data', 'Notes, transcripts and settings — as Markdown.', 'Export', exportAll));
+  body.append(row('Sign out', 'This build runs fully on-device — there’s no account.', 'Sign out', ()=>toast('Nothing to sign out of — everything stays on your Mac.')));
+}
+function editProfile(key,label,def){ openModal('Edit '+label, box=>{
+  box.append(el('div','msub','Stored locally on this device.'));
+  const add=el('div','maddrow'), inp=el('input','minput'), btn=el('div','maddbtn','Save');
+  inp.value=store.get(key,'')||''; inp.placeholder=label; add.append(inp,btn); box.append(add);
+  const save=()=>{ store.set(key,inp.value.trim()||def||''); closeModal(); renderSettings(); };
+  btn.onclick=save; inp.onkeydown=e=>{ if(e.key==='Enter')save(); };
+  setTimeout(()=>{inp.focus();inp.select();},40);
+}); }
+async function exportAll(){
+  let ms=[]; try{ ms=await (await fetch('/api/meetings')).json(); }catch{}
+  if(!ms.length){ toast('No meetings to export yet.'); return; }
+  let md=`# My Assistant — export\n\n${ms.length} meeting${ms.length===1?'':'s'} · ${new Date().toLocaleString()}\n`;
+  for(const s of ms){ try{ const m=await (await fetch('/api/meetings/'+s.id)).json();
+    md+=`\n\n## ${m.title}\n${[new Date(m.startedAt).toLocaleString(), prettyApp(m.app), fmtDur(m)].filter(Boolean).join(' · ')}\n`;
+    if(m.summary) md+=`\n${m.summary}\n`;
+    if(m.notes) md+=`\n**Notes:** ${m.notes}\n`;
+    md+='\n'+(m.lines||[]).map(l=>`**${l.speaker}:** ${l.text}`).join('\n\n'); }catch{} }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([md],{type:'text/markdown'}));
+  a.download='my-assistant-export.md'; a.click(); URL.revokeObjectURL(a.href);
+  toast('Exported '+ms.length+' meeting'+(ms.length===1?'':'s'));
 }
 function srowShell(row){
   const r=document.createElement('div'); r.className='srow';
