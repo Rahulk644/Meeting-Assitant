@@ -206,10 +206,12 @@ per-keypress helper spawn. The loop:
 3. **Strip silence (Silero VAD)** — the buffer is resampled to 16 kHz (box-average low-pass, not plain
    decimation, which aliases) and run through **Silero VAD** — the `voice_activity_detector` crate over a
    **statically-linked ONNX Runtime** (`ort`), the same model family Handy bundles as `silero_vad_v4.onnx`.
-   Only speech regions reach Whisper; a clip with no speech produces nothing. This is what stops Whisper
-   from hallucinating a fluent loop on a long or accidental recording. (Why this is *not* a contradiction
-   of the "no VAD prefilter" rule: see Transcription rule 3 — dictation feeds short clips, the meeting path
-   feeds gated whole utterances.)
+   The detector is **built once and cached**, calling `reset()` between utterances to clear only the LSTM
+   state — exactly Handy's pattern (its `SileroVad` holds the session for the app's life and resets between
+   clips), so the model load never recurs per dictation. Only speech regions reach Whisper; a clip with no
+   speech produces nothing. This is what stops Whisper from hallucinating a fluent loop on a long or
+   accidental recording. (Why this is *not* a contradiction of the "no VAD prefilter" rule: see Transcription
+   rule 3 — dictation feeds short clips, the meeting path feeds gated whole utterances.)
 4. **Transcribe** — the speech-only WAV POSTs to **`POST /api/transcribe`** (Node runs `ensureWhisper()`,
    then forwards to `transcribe-server` — the seam a future cloud provider slots into). Dictation pins
    **`language=en` + the transcribe task** (`translate=false`), matching Handy's *runtime* (its debug log
@@ -221,8 +223,17 @@ per-keypress helper spawn. The loop:
    called from the transcription thread.
 
 Progress and results ride the existing SSE channel: `emit_dstate()` POSTs `dictation-state` to `/ingest`
-(drives the pill), and the final text POSTs `{type:'dictation'}` (drives the Dictation view). Config
-(mode, language, vocabulary) rides the `/api/state` poll from **Settings → Dictation**.
+(drives the pill), and the final text POSTs `{type:'dictation'}` (drives the Dictation view).
+
+**Settings are real, and split by who applies them.** The server owns only what it applies at transcription
+time — **language** and **punctuation** (Off strips it) — via `/api/config`. Everything the app process owns
+is pushed straight to it through the **`set_dictation`** command: the start/stop **sound** + **feedback
+volume** (`afplay -v`), **clipboard behaviour** (restore your clipboard vs. keep the dictated text), the
+**overlay** on/off + position, push-to-talk, and the **rebindable** start-and-cancel shortcuts. The hotkey
+is swapped live (unregister old → register new, validated so an unmappable combo keeps the working one);
+**Esc-to-cancel** is a modifier-less global grab armed only while recording and released the instant it ends.
+Custom vocabulary still feeds the transcribe prompt. Rows we can't yet honor on-device (system-audio muting,
+auto-pause) were **removed** rather than shipped inert — every switch in the panel now does what it says.
 
 **The pill overlay** — a borderless, click-through window (`app/overlay.html`) that Rust alone shows/hides.
 To float over **every** app, including another app's **full-screen** space, it is converted at show-time
@@ -234,6 +245,30 @@ never pulls focus off the field you're dictating into.
 
 **Setup:** none of the old friction — no Input Monitoring grant, no 🌐/Fn-key remap. Microphone
 auto-prompts on first use; Accessibility is the single shared grant (with Meetings) for the paste.
+
+## Packaging & portability
+
+A packaged `.app` is self-contained for **code**, and resolves **data + model** to writable, per-user
+locations — so it runs when moved off the repo:
+
+- **Bundled into `Contents/Resources/`** (via `bundle.resources`): the web app + server (`webui/`) and the
+  Swift/STT binaries (`stt/`, `meeting-state/`). `init_paths()` points `RES_BASE` at the Resources dir in a
+  release build and at the repo in dev; server + helpers spawn from there. The web dir is staged as
+  `webui/`, **not** `app/` — a top-level `app/` resource collides with the crate's own `app` binary during
+  Tauri's dev staging (EEXIST).
+- **Writable state → `~/Library/Application Support/My Assistant/`** (the bundle is read-only): saved
+  meetings + recordings under `data/`, the model under `models/`. Node receives these as `ASSISTANT_DATA_DIR`
+  / `ASSISTANT_MODELS_DIR`; the baked repo path rides along as `ASSISTANT_REPO` so a build machine that
+  already has the model never re-downloads it.
+- **The model is NOT bundled** (845 MB). The server resolves it across `[models dir → repo → ./run.sh
+  layout]`; if it's absent the UI **asks first** (Handy's way — never silent): `GET /api/model/status` → a
+  first-run prompt → `POST /api/model/download` streams the GGUF from Hugging Face into `models/` with
+  progress over SSE.
+- **The `.dmg`** is built by `desktop/make-dmg.sh` (plain `hdiutil`, a drag-to-Applications installer) —
+  **not** Tauri's DMG step, whose create-dmg fork always runs a Finder AppleScript that fails in any
+  non-interactive shell. So `bundle.targets` is `["app"]`: `npm run build` makes the signed `.app`,
+  `make-dmg.sh` makes the installer. Signing uses the self-signed **My Assistant Dev** identity
+  (`bundle.macOS.signingIdentity`); distribution to other Macs still needs Developer-ID + notarization.
 
 ## Traps checklist (the landmines)
 
@@ -252,6 +287,13 @@ auto-prompts on first use; Accessibility is the single shared grant (with Meetin
 - Don't paste with `enigo`/character keys off the main thread, and don't give the pill a plain NSWindow —
   use raw keycode 9 for ⌘V (no HIToolbox layout lookup → no SIGTRAP), and a non-activating `NSPanel` for
   the pill (a plain NSWindow won't float over another app's full-screen space at any level).
+- Don't stage web resources into a top-level `app/` bundle dir — it collides with the crate's own `app`
+  binary during Tauri's dev staging (EEXIST). Stage them under `webui/`.
+- Don't rely on Tauri's `.dmg` step in a non-interactive shell — its create-dmg fork always runs a Finder
+  AppleScript that fails there. Build the DMG with `desktop/make-dmg.sh` (plain `hdiutil`).
+- Don't ship a Settings row that does nothing — every dictation control maps to real behavior (sound ·
+  volume · clipboard · overlay · rebindable hotkey via `set_dictation`; language · punctuation via the
+  server). If it can't be honored on-device, remove it rather than fake it.
 
 ## Repo layout
 
@@ -262,6 +304,8 @@ auto-prompts on first use; Accessibility is the single shared grant (with Meetin
 | `stt/transcribe-server/` | our transcribe.cpp HTTP wrapper (source + pinned-commit `build.sh`) |
 | `stt/whisper/` | GGUF model (git-ignored; fetched by `setup.sh`) |
 | `meeting-state/meeting-state.swift` | Accessibility layer: speaker names, mute/share |
-| `app/server.js` | SSE relay + meeting store + on-demand engine/LLM + summary/ask + video serving (no deps) |
+| `app/server.js` | SSE relay + meeting store + on-demand engine/LLM + `/api/transcribe` + first-run model download + video serving (no deps) |
 | `app/index.html` | the UI — nav, live transcript, Library + detail, settings; light/dark |
+| `app/overlay.html` | the floating Dictation Pill (pill-only; the menu-bar dropdown is a native macOS menu) |
+| `desktop/make-dmg.sh` | portable drag-to-install `.dmg` (hdiutil; bypasses Tauri's AppleScript DMG step) |
 | `run.sh` · `setup.sh` | dev launcher · one-time build + model download |

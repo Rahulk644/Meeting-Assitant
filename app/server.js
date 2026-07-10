@@ -12,7 +12,10 @@ const PORT = process.env.PORT || 8787; // respect preview's assigned port; 8787 
 const clients = new Set();
 let lastState = {}; // so a client connecting mid-meeting gets current title/participants/speaker
 let msProc = null, msShutdown = false; // meeting-state child + shutdown flag (respawn it if it dies mid-session)
-const MEETINGS_DIR = path.join(__dirname, "..", "data", "meetings");
+// Writable data root: packaged builds pass ASSISTANT_DATA_DIR (~/Library/Application Support/My Assistant/data,
+// since the .app bundle itself is read-only); dev / ./run.sh fall back to the repo's data/.
+const DATA_ROOT = process.env.ASSISTANT_DATA_DIR || path.join(__dirname, "..", "data");
+const MEETINGS_DIR = path.join(DATA_ROOT, "meetings");
 const REC_DIR = path.join(MEETINGS_DIR, "rec"); // screen recordings (.mp4), written by meeting-tap
 // Resolve tool paths explicitly — a packaged (GUI-spawned) node has no shell PATH.
 function findBin(name) { for (const d of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) { const p = path.join(d, name); if (fs.existsSync(p)) return p; } return name; }
@@ -31,9 +34,11 @@ let detected = false, manual = null, manualDetected = false, manualHard = false;
 let autoDetect = true; // the "Detect meetings automatically" setting — off = only manual start records
 let unloadIdle = true; // "Unload model when idle" setting — off = keep whisper hot between calls
 let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
-// Dictation (Handy-style push-to-talk): the config is broadcast into /api/state so meeting-tap reads it
-// the same way it reads video/translate/vocab; results come back via POST /ingest {type:'dictation'}.
-let dictationCfg = { enabled: false, trigger: { fn: true }, mode: "ptt", language: "auto", translate: false, sound: true, punctuation: "auto", clipboard: "restore", cancel: 53 };
+// Dictation: only the bits the SERVER applies at transcription time live here — the spoken language and
+// the punctuation behaviour. Everything the desktop app owns (sound, volume, clipboard, overlay, the
+// rebindable hotkey, push-to-talk) is set directly in that process via its set_dictation command, not
+// through here. Results come back via POST /ingest {type:'dictation'}.
+let dictationCfg = { enabled: false, language: "auto", punctuation: "auto" };
 let recentDictations = []; // last N dictation results — in-memory, session-lived (dictated text stays off disk)
 // Feature modules — everything is OFF until the user opts in (onboarding), so NO macOS permission is
 // requested until a module is enabled. meeting-tap/meeting-state gate their capability use on these.
@@ -233,8 +238,55 @@ const WHISPER_PORT = +(process.env.WHISPER_PORT || 8091);
 // and ~2x the speed of whisper-server on Apple Silicon, and cleaner output (proper punctuation, no dropped
 // onsets). Falls back to whisper.cpp's whisper-server if transcribe-server isn't built on this machine.
 const TS_BIN = path.join(__dirname, "..", "stt", "transcribe-server", "transcribe-server");
-const TS_MODEL = path.join(__dirname, "..", "stt", "whisper", "whisper-large-v3-turbo-Q8_0.gguf");
-const WHISPER_MODEL = path.join(__dirname, "..", "stt", "whisper", "ggml-large-v3-turbo-q8_0.bin"); // whisper.cpp fallback
+// Model files aren't bundled in the .app (845 MB) — resolve them across the canonical models dir (packaged:
+// App Support, via ASSISTANT_MODELS_DIR), the build machine's repo (ASSISTANT_REPO), and ./run.sh's repo
+// layout. First hit wins, so a machine that already has the model never re-downloads it.
+const GGUF_NAME = "whisper-large-v3-turbo-Q8_0.gguf";   // transcribe.cpp (primary engine)
+const GGML_NAME = "ggml-large-v3-turbo-q8_0.bin";       // whisper.cpp (fallback)
+const GGUF_URL = "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/" + GGUF_NAME;
+const MODELS_DIR = process.env.ASSISTANT_MODELS_DIR || path.join(__dirname, "..", "stt", "whisper");
+function modelDirs() {
+  const d = [MODELS_DIR];
+  if (process.env.ASSISTANT_REPO) d.push(path.join(process.env.ASSISTANT_REPO, "stt", "whisper"));
+  d.push(path.join(__dirname, "..", "stt", "whisper"));
+  return [...new Set(d)];
+}
+function findModel(name) { for (const d of modelDirs()) { const p = path.join(d, name); if (fs.existsSync(p)) return p; } return null; }
+function modelPresent() { return !!(findModel(GGUF_NAME) || findModel(GGML_NAME)); }
+
+// First-run model download (Handy's way — the UI ASKS the user before this runs; nothing downloads silently).
+// Streams the GGUF into the canonical models dir with progress over SSE; atomic via a .part file so a failed
+// or cancelled download never leaves a half-written model behind.
+let modelDownloading = false;
+async function startModelDownload() {
+  if (modelDownloading) return;
+  if (modelPresent()) { broadcast({ type: "model-progress", pct: 100, done: true }); return; }
+  modelDownloading = true;
+  broadcast({ type: "model-progress", pct: 0 });
+  const dir = MODELS_DIR; fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, GGUF_NAME), tmp = dest + ".part";
+  try {
+    const r = await fetch(GGUF_URL);
+    if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
+    const total = +(r.headers.get("content-length") || 0);
+    let got = 0, lastPct = -1;
+    const out = fs.createWriteStream(tmp);
+    const stream = require("stream").Readable.fromWeb(r.body);
+    stream.on("data", (c) => {
+      got += c.length;
+      const pct = total ? Math.floor((got / total) * 100) : 0;
+      if (pct !== lastPct) { lastPct = pct; broadcast({ type: "model-progress", pct }); }
+    });
+    await new Promise((resolve, reject) => { stream.pipe(out); out.on("finish", resolve); out.on("error", reject); stream.on("error", reject); });
+    fs.renameSync(tmp, dest);
+    broadcast({ type: "model-progress", pct: 100, done: true });
+    console.error("model: downloaded", GGUF_NAME);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch {}
+    broadcast({ type: "model-progress", error: String(e.message || e) });
+    console.error("model: download failed:", e.message || e);
+  } finally { modelDownloading = false; }
+}
 const WHISPER_IDLE_MS = 10 * 60 * 1000; // keep the model hot 10 min so back-to-back dictation is fast (was 2 min → cold reloads felt slow)
 let whisperProc = null, whisperIdle = null; // the STT-server child WE started (null if not ours)
 async function ensureWhisper() {
@@ -242,14 +294,15 @@ async function ensureWhisper() {
   if (whisperProc) return;                                        // ours, already up
   if (await portOpen("127.0.0.1", WHISPER_PORT)) return;          // someone else's (dev) — leave it
   let bin, args;
-  if (fs.existsSync(TS_BIN) && fs.existsSync(TS_MODEL)) {         // primary: transcribe.cpp
+  const tsModel = findModel(GGUF_NAME), ggml = findModel(GGML_NAME);
+  if (fs.existsSync(TS_BIN) && tsModel) {                          // primary: transcribe.cpp
     bin = TS_BIN;
-    args = ["-m", TS_MODEL, "--host", "127.0.0.1", "--port", String(WHISPER_PORT)];
+    args = ["-m", tsModel, "--host", "127.0.0.1", "--port", String(WHISPER_PORT)];
   } else {                                                        // fallback: whisper.cpp — no Silero VAD (it
     const ws = findBin("whisper-server");                         // degraded clean speech: dropped onsets, lost
-    if (ws === "whisper-server" || !fs.existsSync(WHISPER_MODEL)) return; // punctuation). Whole-utterance capture
+    if (ws === "whisper-server" || !ggml) return;                 // punctuation). Whole-utterance capture
     bin = ws;                                                     // + the mic energy-gate + conf gate handle noise.
-    args = ["-m", WHISPER_MODEL, "--host", "127.0.0.1", "--port", String(WHISPER_PORT), "-t", "4", "--suppress-nst"];
+    args = ["-m", ggml, "--host", "127.0.0.1", "--port", String(WHISPER_PORT), "-t", "4", "--suppress-nst"];
   }
   whisperProc = spawn(bin, args, { stdio: "ignore" });
   whisperProc.on("exit", () => { whisperProc = null; });
@@ -414,6 +467,8 @@ http.createServer((req, res) => {
         const body = await r.text();
         if (!r.ok) throw new Error(`${r.status} ${body.slice(0, 160)}`);
         let text = ""; try { text = String(JSON.parse(body).text || "").trim(); } catch {}
+        // "Punctuation behaviour" = Off → strip the punctuation Whisper adds; Automatic leaves it untouched.
+        if (dictationCfg.punctuation === "off" && text) text = text.replace(/[.,!?;:…]+/g, "").replace(/\s{2,}/g, " ").trim();
         res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ text }));
       } catch (e) {
         res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(e.message || e) }));
@@ -426,6 +481,13 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/dictation/stop" && req.method === "POST") { // pill/tray Stop → meeting-tap finishes (transcribes) the current dictation
     dictStopSeq++; res.writeHead(204); return res.end();
+  }
+  if (req.url === "/api/model/status" && req.method === "GET") { // first-run: is the on-device model here yet?
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ present: modelPresent(), downloading: modelDownloading }));
+  }
+  if (req.url === "/api/model/download" && req.method === "POST") { // user tapped "Download" → fetch it (progress via SSE)
+    startModelDownload(); res.writeHead(202); return res.end();
   }
   if (req.url === "/api/open-settings" && req.method === "POST") { // deep-link a macOS Privacy pane (permission checklist)
     readBody(req).then(b => {

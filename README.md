@@ -80,12 +80,15 @@ pasted straight into whatever text field is focused, **including full-screen app
 on-device transcription as Meetings, so nothing leaves your machine.
 
 - **Tap-to-toggle** by default — press to start, press to stop; or switch to **hold-to-talk** in
-  **Settings → Dictation**.
-- **Silence-aware** — a neural voice-activity detector (**Silero VAD**, bundled) strips the quiet around
-  your speech before transcription, so pauses and stray recordings don't turn into gibberish.
-- A small **pill** at the bottom of the screen shows it's listening and floats above every app — even
-  full-screen ones — without stealing focus from what you're typing into.
-- **Custom Vocabulary** and language are shared with Meetings.
+  **Settings → Dictation**. The shortcut is **rebindable**, and **Esc** cancels a recording.
+- **Silence-aware** — a neural voice-activity detector (**Silero VAD**, bundled, loaded once and reset
+  between clips like Handy) strips the quiet around your speech before transcription, so pauses and stray
+  recordings don't turn into gibberish.
+- A small **pill** shows it's listening and floats above every app — even full-screen ones — without
+  stealing focus. Turn it off, or reposition it, in **Settings → General**.
+- **Every Settings → Dictation control is live** — the start/stop sound + feedback volume, clipboard
+  behaviour, Automatic/Off punctuation, and the rebindable shortcuts all do what they say. **Custom
+  Vocabulary** and language are shared with Meetings.
 
 > **One-time setup:** on your first dictation macOS prompts once for **Microphone** — allow it.
 > **Accessibility** (already granted from Meetings) is what lets it paste. That's all — **no Input
@@ -127,23 +130,24 @@ heavy sits resident between or during calls beyond what's actively transcribing.
 ```bash
 ./setup.sh                                          # one-time: build transcribe.cpp + LiteRT-LM + models
 cd desktop && npm install                           # one-time: the Tauri CLI
-npx tauri build --bundles app                       # build "My Assistant.app"
-codesign --force --deep --sign - \
-  "src-tauri/target/release/bundle/macos/My Assistant.app"   # ← re-sign valid, or macOS re-prompts every launch
-cp -R "src-tauri/target/release/bundle/macos/My Assistant.app" /Applications/
+npm run build                                       # build + sign "My Assistant.app" (signingIdentity in tauri.conf)
+./make-dmg.sh                                        # → a drag-to-install "My Assistant_0.1.0_aarch64.dmg"
+cp -R "src-tauri/target/release/bundle/macos/My Assistant.app" /Applications/   # (or install from the .dmg)
 ```
 
-Then **double-click "My Assistant.app"**. On the first call macOS prompts for **Microphone**, **Screen
+Then **double-click "My Assistant.app"**. On first use macOS prompts for **Microphone**, **Screen
 Recording**, and **Accessibility** (three separate toggles) — grant each once. The app starts everything
-itself (no terminal); get on a call and it transcribes.
+itself (no terminal).
 
-> **Why the `codesign` step?** Tauri's ad-hoc "linker-signed" output is an *invalid* signature, so macOS
-> can't verify the app and re-asks for permissions on every launch. Re-signing makes it valid → grants
-> stick. This build still reuses the models/binaries `setup.sh` installed on *this* machine; a portable,
-> **Developer-ID-signed + notarized** installer (grants that survive rebuilds, runs on any Mac) is on the
-> roadmap. *Tip: if you rebuild often, sign with a **stable self-signed certificate*** (`--sign "My
-> Assistant Dev"` instead of `--sign -`) *and the grants survive rebuilds too — see
-> [ARCHITECTURE.md](ARCHITECTURE.md).*
+> **Signing & portability.** The build signs with a **stable self-signed certificate** ("My Assistant Dev",
+> set as `bundle.macOS.signingIdentity`) so macOS TCC grants **survive rebuilds** — no re-prompt every
+> launch, and no manual `codesign` step. The `.app` bundles the web app + native helpers and reads writable
+> state (saved meetings, the model) from `~/Library/Application Support/My Assistant/`, so it runs off the
+> repo. The **845 MB speech model is not bundled** — on a machine without it the app **asks** on first launch
+> and downloads it (Handy's way). The `.dmg` is built by `desktop/make-dmg.sh` (plain `hdiutil`), since
+> Tauri's own DMG step runs a Finder AppleScript that fails non-interactively. A **Developer-ID-signed +
+> notarized** build (runs on *any* Mac, no Gatekeeper nag) is still on the roadmap — see
+> [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Development
 
@@ -216,12 +220,13 @@ For the full design rationale, the transcription/permissions deep-dives, and the
 - [x] **Meeting history** + **post-call AI** (summary, action items, "ask"), **rename**, recording **thumbnails**
 - [x] **Desktop app (Tauri)** — double-click, self-starts the stack, **menu-bar recording indicator**, ask-once permissions
 - [x] **Screen-share stealth** · **video screen recording** (whole call / only-when-shared)
-- [x] **Dictation** — press **⌃⇧D** to speak into any app (even full-screen); on-device transcription with **Silero VAD** silence-stripping, pasted in place (tap-to-toggle or hold-to-talk)
+- [x] **Dictation** — press **⌃⇧D** to speak into any app (even full-screen); on-device transcription with **cached Silero VAD** silence-stripping, pasted in place. Every Settings control is live (sound · volume · clipboard · overlay · **rebindable** shortcut + **Esc**-to-cancel)
+- [x] **Portable `.app` + `.dmg`** — bundles the web app + native helpers, keeps data + the model in Application Support, and **asks before downloading** the 845 MB model on first run (Handy's way); drag-to-install DMG via `make-dmg.sh`
 
 **Next**
 
 - [ ] **Real-time Copilot** — in-call coaching in an always-on **stealth** overlay (the keystone)
-- [ ] **Portable installer** — Developer-ID sign + notarize + bundle the models, so any Mac runs it (no `setup.sh`, no re-grant)
+- [ ] **Developer-ID sign + notarize** — so the installer runs on *any* Mac with no Gatekeeper nag (the `.app` / `.dmg` and first-run model download already ship; this is the last distribution step)
 - [ ] **Browser + Slack** meetings — detect Google Meet / Zoom web / Slack huddles
 - [ ] **audio in screen recordings**; **launch-at-login** + folder pickers (need Tauri plugins)
 - [ ] **Curated model picker + provider API keys** — on-device Parakeet, and cloud STT/LLM (Groq / OpenAI / Deepgram / ElevenLabs / Anthropic / Gemini) with per-model capabilities

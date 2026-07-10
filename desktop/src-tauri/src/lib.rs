@@ -12,10 +12,40 @@ use tauri::{
     AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 
-// Absolute path to the repo, baked at build time. Fine for a build you run on your own machine; a fully
-// portable installer would instead bundle app/ + the Swift binaries + the whisper model as app resources.
+// Absolute path to the repo, baked at build time. In DEV this is where everything lives. In a PACKAGED build
+// the app's own files come from the bundle's Resources dir instead (see init_paths); REPO is still passed to
+// the server as ASSISTANT_REPO so a build machine that already has the model never re-downloads it.
 const REPO: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 const SERVER: &str = "http://127.0.0.1:8790";
+
+// Resolved once at startup (init_paths). RES_BASE = where the app's OWN files live (dev: the repo; packaged:
+// the .app's read-only Resources dir). DATA_DIR / MODELS_DIR = WRITABLE locations for saved meetings and the
+// downloaded model (dev: the repo; packaged: ~/Library/Application Support/My Assistant, since the bundle is
+// read-only). Node reads these via env; the Swift helpers get RES_BASE-relative paths.
+static RES_BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static DATA_DIR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static MODELS_DIR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+fn res_base() -> String { RES_BASE.get().cloned().unwrap_or_else(|| REPO.to_string()) }
+fn data_dir() -> String { DATA_DIR.get().cloned().unwrap_or_else(|| format!("{}/data", REPO)) }
+// The web assets (server.js + UI) live in the repo's app/ in dev, but the bundle stages them under webui/ —
+// a plain "app/" resource dir would collide with the crate's own `app` binary during Tauri's dev staging.
+fn web_dir() -> String { if cfg!(debug_assertions) { format!("{}/app", res_base()) } else { format!("{}/webui", res_base()) } }
+fn init_paths(app: &tauri::App) {
+    let (res, data, models) = if cfg!(debug_assertions) {
+        (REPO.to_string(), format!("{}/data", REPO), format!("{}/stt/whisper", REPO))
+    } else {
+        let res = app.path().resource_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| REPO.to_string());
+        let home = std::env::var("HOME").unwrap_or_default();
+        (res,
+         format!("{}/Library/Application Support/My Assistant/data", home),
+         format!("{}/Library/Application Support/My Assistant/models", home))
+    };
+    let _ = std::fs::create_dir_all(&data);
+    let _ = std::fs::create_dir_all(&models);
+    let _ = RES_BASE.set(res);
+    let _ = DATA_DIR.set(data);
+    let _ = MODELS_DIR.set(models);
+}
 
 // Sidecars the app spawns — all killed when it quits (so the mic is never left held).
 static CHILDREN: Mutex<Vec<Child>> = Mutex::new(Vec::new());
@@ -47,7 +77,7 @@ fn port_open(port: u16) -> bool {
 // the app's Accessibility grant (mic/screen-recording DO reach a direct child, but AX does not reach a
 // grandchild), which is why names never showed. Its NDJSON is forwarded to the server's /ingest.
 fn start_meeting_state() {
-    let ms = format!("{}/meeting-state/meeting-state", REPO);
+    let ms = format!("{}/meeting-state/meeting-state", res_base());
     if !Path::new(&ms).exists() { return; }
     if let Ok(mut child) = Command::new(&ms).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
         if let Some(out) = child.stdout.take() {
@@ -73,11 +103,16 @@ fn start_stack() {
     if !port_open(8790) {
         if let Some(node) = find_bin("node") {
             track(Command::new(node)
-                .arg(format!("{}/app/server.js", REPO))
+                .arg(format!("{}/server.js", web_dir()))
                 .env("PORT", "8790")
                 // Packaged: the app spawns meeting-state itself (a DIRECT child, so it gets the AX grant) —
                 // tell node to skip its own copy. In dev (debug), node owns meeting-state under Terminal's grant.
                 .env("ASSISTANT_RUST_MEETING_STATE", if cfg!(debug_assertions) { "0" } else { "1" })
+                // Packaged: point node at the WRITABLE data + models dirs (the bundle is read-only) and pass
+                // the baked repo path so a machine that already has the model skips the first-run download.
+                .env("ASSISTANT_DATA_DIR", data_dir())
+                .env("ASSISTANT_MODELS_DIR", MODELS_DIR.get().cloned().unwrap_or_default())
+                .env("ASSISTANT_REPO", REPO)
                 .stdout(Stdio::null()).stderr(Stdio::null()).spawn());
         }
     }
@@ -85,9 +120,9 @@ fn start_stack() {
 
     // whisper-server is NOT started here — node spawns it on demand when a call begins and unloads it when
     // idle (it's ~1.5 GB), so it's off RAM between calls.
-    let tap = format!("{}/stt/meeting-tap", REPO);
+    let tap = format!("{}/stt/meeting-tap", res_base());
     if Path::new(&tap).exists() {
-        let recdir = format!("{}/data/meetings/rec", REPO);
+        let recdir = format!("{}/meetings/rec", data_dir());
         let log = std::fs::File::create("/tmp/assistant-tap.log").map(Stdio::from).unwrap_or_else(|_| Stdio::null());
         track(Command::new(tap)
             .args(["8790", "http://127.0.0.1:8091/inference", "--gate", "on", "--rec-dir", &recdir])
@@ -96,11 +131,11 @@ fn start_stack() {
     start_meeting_state(); // names + participants — direct child so Accessibility works
 }
 
-// ---- overlays: the floating Dictation Pill + the Menu Bar Tray popover -----------------------------
-// Two borderless, transparent, always-on-top windows loading app/overlay.html from the local server. The
-// PILL is click-through (set_ignore_cursor_events) so it floats over whatever you're dictating into and can
-// NEVER steal focus — the dictated text always pastes into your document. (Making the pill's buttons
-// mouse-clickable needs a non-activating NSPanel; that's a follow-up.) The TRAY is interactive.
+// ---- overlay: the floating Dictation Pill ----------------------------------------------------------
+// One borderless, transparent, always-on-top window loading app/overlay.html?win=pill from the local
+// server. It's click-through (set_ignore_cursor_events) so it floats over whatever you're dictating into
+// and can NEVER steal focus — the dictated text always pastes into your document. (The menu-bar dropdown
+// is a native macOS menu, built below, not a webview.)
 const PILL_W: f64 = 208.0;
 const PILL_H: f64 = 46.0;
 
@@ -134,7 +169,15 @@ fn position_pill(app: &AppHandle, w: f64, h: f64) {
         let sf = mon.scale_factor();
         let sw = mon.size().width as f64 / sf;
         let sh = mon.size().height as f64 / sf;
-        let _ = win.set_position(LogicalPosition::new((sw - w) / 2.0, sh - h - 10.0)); // hug the bottom rim, like Handy
+        let (_, _, _, _, pos) = dict_prefs();  // Settings "Overlay position"
+        let m = 10.0;                           // screen-edge margin; top rows clear the menu bar
+        let (x, y) = match pos {
+            1 => (sw - w - m, sh - h - m),      // bottom-right
+            2 => (sw - w - m, m + 24.0),        // top-right
+            3 => ((sw - w) / 2.0, m + 24.0),    // top-center
+            _ => ((sw - w) / 2.0, sh - h - m),  // bottom-center (default) — hug the bottom rim, like Handy
+        };
+        let _ = win.set_position(LogicalPosition::new(x, y));
     }
 }
 
@@ -170,40 +213,10 @@ fn pill_float_over_all_apps(app: &AppHandle) {
     }
 }
 
-// ---- Tauri commands the overlay JS calls (window.__TAURI__.core.invoke) ----------------------------
+// ---- Tauri commands the UI calls (window.__TAURI__.core.invoke) ------------------------------------
 #[tauri::command]
 fn set_stealth(window: tauri::WebviewWindow, on: bool) -> Result<(), String> {
     window.set_content_protected(on).map_err(|e| e.to_string())
-}
-
-// One entry point for every overlay button. `on`/`min` ride along for the pill.
-#[tauri::command]
-fn overlay_action(app: AppHandle, action: String, on: Option<bool>, min: Option<bool>) {
-    let open_main = |a: &AppHandle| {
-        if let Some(w) = a.get_webview_window("main") { let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus(); }
-    };
-    match action.as_str() {
-        "pill_visible" => {
-            if let Some(w) = app.get_webview_window("pill") {
-                if on.unwrap_or(false) { position_pill(&app, PILL_W, PILL_H); let _ = w.show(); }
-                else { let _ = w.hide(); }
-            }
-        }
-        "pill_size" => { // minimized chip vs full pill — resize + re-centre so clicks map to the visible pill
-            if min.unwrap_or(false) { position_pill(&app, 132.0, 44.0); }
-            else { position_pill(&app, PILL_W, PILL_H); }
-        }
-        "tray_hide" => { if let Some(w) = app.get_webview_window("tray") { let _ = w.hide(); } }
-        "open_main" => open_main(&app),
-        "settings"  => { open_main(&app); if let Some(w) = app.get_webview_window("main") { let _ = w.eval("try{setView('settings')}catch(e){}"); } }
-        "open_writing" => { open_main(&app); if let Some(w) = app.get_webview_window("main") { let _ = w.eval("try{setView('writing')}catch(e){}"); } }
-        "stop_dictation" => dictation_stop(),
-        "quit" => app.exit(0),
-        _ => {}
-    }
-    if action != "pill_visible" && action != "pill_size" {
-        if let Some(w) = app.get_webview_window("tray") { let _ = w.hide(); }
-    }
 }
 
 // Animate the menu-bar tray icon with an audio-wave title while a call records (the UI calls this on start/stop).
@@ -315,15 +328,27 @@ fn resample_16k(samples: &[f32], rate: u32) -> Vec<f32> {
 // hotkey press with nothing said inserts nothing. The model + onnxruntime are statically linked (via the
 // `ort` crate, exactly as Handy ships it); if init ever fails we fall back to the full clip rather than
 // silently drop audio.
+//
+// CACHED like Handy: Handy's SileroVad holds the ONNX session for the app's lifetime and calls reset()
+// between utterances (clearing only the LSTM hidden/cell state — NO model reload). We do the same: build
+// the detector on first use, keep it here, and reset() before each clip. That moves the ~one-time model
+// load off every dictation's "Transcribing" phase. The detector owns an `ort` Session (Send), so it lives
+// safely in a static Mutex even though each dictation finishes on its own short-lived thread.
+static VAD: Mutex<Option<voice_activity_detector::VoiceActivityDetector>> = Mutex::new(None);
 fn vad_extract_speech(samples16k: &[f32]) -> Vec<f32> {
     use voice_activity_detector::{IteratorExt, VoiceActivityDetector};
-    let mut vad = match VoiceActivityDetector::builder().sample_rate(16_000i64).chunk_size(512usize).build() {
-        Ok(v) => v,
-        Err(_) => return samples16k.to_vec(),
-    };
+    let mut guard = VAD.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_none() {
+        match VoiceActivityDetector::builder().sample_rate(16_000i64).chunk_size(512usize).build() {
+            Ok(v) => *guard = Some(v),
+            Err(_) => return samples16k.to_vec(), // model unavailable → keep the whole clip rather than drop audio
+        }
+    }
+    let vad = guard.as_mut().unwrap();
+    vad.reset(); // clear the LSTM state so this utterance doesn't inherit the previous one's recurrent context
     // threshold 0.5 = Silero's default speech probability; pad 3 chunks (~96 ms) so onsets/tails aren't clipped.
     let mut out = Vec::with_capacity(samples16k.len());
-    for chunk in samples16k.iter().copied().label(&mut vad, 0.5f32, 3usize) {
+    for chunk in samples16k.iter().copied().label(&mut *vad, 0.5f32, 3usize) {
         if chunk.is_speech() { out.extend(chunk.iter().copied()); }
     }
     out
@@ -349,22 +374,40 @@ fn emit_dstate(phase: &str) { ingest(&format!("{{\"type\":\"dictation-state\",\"
 // primary "is it on?" cue, like Handy) + the menu-bar title "● Dictating" + the pill window (shown/hidden
 // from Rust here, so it no longer depends on the overlay webview calling back — which was silently failing).
 static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+
+// Dictation preferences pushed from Settings via set_dictation. The in-process dictation owns recording,
+// the paste, the sound cues and the pill, so these rows only take effect if THIS process honors them —
+// they used to flow to the removed `meeting-tap --dictate` and silently no-op'd. clipboard: 0 = restore
+// the user's previous clipboard after paste ("Never save"), 1 = leave the dictated text on it (Save/Replace).
+// overlay_pos: 0 bottom-center · 1 bottom-right · 2 top-right · 3 top-center.
+struct DictPrefs { sound: bool, volume: f32, clipboard: u8, overlay: bool, overlay_pos: u8 }
+static DICT_PREFS: Mutex<DictPrefs> = Mutex::new(DictPrefs { sound: true, volume: 0.7, clipboard: 0, overlay: true, overlay_pos: 0 });
+fn dict_prefs() -> (bool, f32, u8, bool, u8) {
+    let p = DICT_PREFS.lock().unwrap_or_else(|e| e.into_inner());
+    (p.sound, p.volume, p.clipboard, p.overlay, p.overlay_pos)
+}
+
 fn play(sound: &str) {
+    // "Dictation sound" off → no cue at all. Otherwise play at the Settings "Feedback volume" (afplay -v 0..1).
+    let (on, vol, _, _, _) = dict_prefs();
+    if !on { return; }
     // Reap afplay (.status() waits) on a detached thread so it doesn't accumulate as a zombie on each
     // start/stop cue — a bare spawn() is never reaped and would pile up over a long session.
     let path = format!("/System/Library/Sounds/{}.aiff", sound);
-    std::thread::spawn(move || { let _ = Command::new("afplay").arg(path).status(); });
+    let v = format!("{:.2}", vol.clamp(0.0, 1.0));
+    std::thread::spawn(move || { let _ = Command::new("afplay").arg("-v").arg(v).arg(path).status(); });
 }
 fn dict_feedback(on: bool) {
     if let Some(app) = APP.get() {
         // MUST run on the main thread — tray/window (Cocoa) calls from the transcription thread abort the
         // app (SIGABRT). run_on_main_thread marshals it safely from whatever thread we're on.
+        let (_, _, _, overlay, _) = dict_prefs(); // "Dictation overlay" off → tray title still animates, pill stays hidden
         let app = app.clone();
         let handle = app.clone();
         let _ = handle.run_on_main_thread(move || {
             if let Some(t) = app.tray_by_id("tray") { let _ = t.set_title(Some(if on { " ● Dictating" } else { "" })); }
             if let Some(w) = app.get_webview_window("pill") {
-                if on {
+                if on && overlay {
                     position_pill(&app, PILL_W, PILL_H);
                     let _ = w.show();
                     #[cfg(target_os = "macos")]
@@ -390,7 +433,11 @@ fn dict_get_clip() -> String {
 fn dict_paste(text: &str) {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-    let old = dict_get_clip();
+    // "Clipboard behaviour": Never save (0) → snapshot the old clipboard and restore it after the paste;
+    // Save/Replace (1) → leave the dictated text on the clipboard (skip the restore).
+    let (_, _, clip, _, _) = dict_prefs();
+    let restore = clip == 0;
+    let old = if restore { dict_get_clip() } else { String::new() };
     dict_set_clip(text);
     // Synthesize ⌘V with the Command flag set EXPLICITLY on the V (keycode 9) event — the proven,
     // deterministic paste (same as the old working meeting-tap code), not enigo's modifier tracking which
@@ -406,7 +453,7 @@ fn dict_paste(text: &str) {
         }
     }
     std::thread::sleep(Duration::from_millis(250));
-    dict_set_clip(&old);
+    if restore { dict_set_clip(&old); }
 }
 
 // Two modes off ONE hotkey (⌃⇧D): tap-to-talk toggles on each press; push-to-talk starts on press and
@@ -426,6 +473,7 @@ fn dictation_start() {
     g.started = Some(Instant::now());
     drop(g);
     play("Tink"); dict_feedback(true); emit_dstate("listening");
+    esc_arm(true); // Esc-to-cancel is live only while recording (a modifier-less global grab)
 }
 fn dictation_stop_rec() {
     let mut g = DICT.lock().unwrap();
@@ -433,6 +481,7 @@ fn dictation_stop_rec() {
     let ms = g.started.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
     g.started = None;
     drop(g);
+    esc_arm(false); // recording is ending → stop grabbing Esc
     play("Pop");   // immediate stop cue (encode + transcription run on the thread below)
     std::thread::spawn(move || dictation_finish(rec, ms));
 }
@@ -472,14 +521,143 @@ fn dictation_finish(mut rec: Recorder, ms: u64) {
     dict_feedback(false);
 }
 
-// UI → turn dictation on/off. On an EXPLICIT enable (prompt=true) we ask for Accessibility under THIS
-// app's identity so the grant covers the paste; boot passes prompt=false so a relaunch never nags.
+// Esc while recording → throw the clip away: stop capture, no resample / VAD / transcribe / paste.
+fn dictation_cancel() {
+    let rec = { let mut g = DICT.lock().unwrap(); g.started = None; g.rec.take() };
+    let Some(mut rec) = rec else { return; };
+    esc_arm(false);
+    rec.stop.store(true, Ordering::Relaxed);
+    if let Some(h) = rec.handle.take() { let _ = h.join(); }
+    emit_dstate("idle");
+    dict_feedback(false);
+}
+
+// Esc-to-cancel is a modifier-less global grab, so we arm it ONLY while recording and disarm the instant
+// recording ends. Done off the caller's thread: the arm request can arrive from inside the hotkey handler,
+// and a re-entrant register on that thread can wedge the shortcut plugin.
+static DICT_ESC: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
+static DICT_CANCEL: Mutex<Option<tauri_plugin_global_shortcut::Code>> = Mutex::new(None); // the rebindable cancel key (None → Esc)
+fn esc_arm(arm: bool) {
+    let Some(app) = APP.get() else { return; };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, Code, ShortcutState};
+        let gs = app.global_shortcut();
+        let mut g = DICT_ESC.lock().unwrap_or_else(|e| e.into_inner());
+        if arm {
+            if g.is_some() { return; }
+            let code = DICT_CANCEL.lock().unwrap_or_else(|e| e.into_inner()).unwrap_or(Code::Escape);
+            let sc = Shortcut::new(None, code);
+            if gs.on_shortcut(sc.clone(), |_a, _s, ev| { if ev.state() == ShortcutState::Pressed { dictation_cancel(); } }).is_ok() {
+                *g = Some(sc);
+            }
+        } else if let Some(sc) = g.take() {
+            let _ = gs.unregister(sc);
+        }
+    });
+}
+
+// ---- rebindable start/stop hotkey -----------------------------------------------------------------
+// The dictation shortcut is rebindable from Settings (default ⌃⇧D). We keep the currently-registered
+// Shortcut so a change can unregister the old one before adding the new. A dictation hotkey MUST carry a
+// modifier — a bare global key would be swallowed system-wide.
+#[derive(serde::Deserialize, Default)]
+struct HotkeySpec { #[serde(default)] mods: Vec<String>, #[serde(default)] key: String }
+static DICT_HOTKEY: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
+
+fn key_to_code(key: &str) -> Option<tauri_plugin_global_shortcut::Code> {
+    use std::str::FromStr;
+    let k = key.trim();
+    let name = if k.chars().count() == 1 {
+        let c = k.chars().next().unwrap().to_ascii_uppercase();
+        if c.is_ascii_alphabetic() { format!("Key{}", c) }
+        else if c.is_ascii_digit() { format!("Digit{}", c) }
+        else { return None; }
+    } else {
+        match k.to_ascii_lowercase().as_str() {
+            "space" | "spacebar" => "Space".to_string(),
+            "enter" | "return"   => "Enter".to_string(),
+            "tab"                => "Tab".to_string(),
+            "esc" | "escape"     => "Escape".to_string(),
+            "period" | "."       => "Period".to_string(),
+            "comma"  | ","       => "Comma".to_string(),
+            _ => return None,
+        }
+    };
+    tauri_plugin_global_shortcut::Code::from_str(&name).ok()
+}
+
+// tap toggles (or, in push-to-talk, press starts / release stops). The handler no-ops until dictation is on.
+fn on_dict_hotkey(state: tauri_plugin_global_shortcut::ShortcutState) {
+    use tauri_plugin_global_shortcut::ShortcutState;
+    let ptt = DICT_PTT.load(Ordering::Relaxed);
+    match state {
+        ShortcutState::Pressed  => if ptt { dictation_start() } else { dictation_toggle() },
+        ShortcutState::Released => if ptt { dictation_stop_rec() },
+    }
+}
+
+// Swap the registered dictation shortcut. Validates BEFORE unregistering the old one, so an unmappable
+// combo leaves the working shortcut intact. Returns false if the spec can't be registered.
+fn register_dict_hotkey(app: &AppHandle, spec: &HotkeySpec) -> bool {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, Modifiers};
+    let Some(code) = key_to_code(&spec.key) else { return false; };
+    let mut mods = Modifiers::empty();
+    for m in &spec.mods {
+        match m.to_ascii_lowercase().as_str() {
+            "ctrl" | "control"          => mods |= Modifiers::CONTROL,
+            "shift"                     => mods |= Modifiers::SHIFT,
+            "alt" | "option" | "opt"    => mods |= Modifiers::ALT,
+            "cmd" | "meta" | "super" | "win" => mods |= Modifiers::SUPER,
+            _ => {}
+        }
+    }
+    if mods.is_empty() { return false; } // refuse a modifier-less global hotkey — it'd swallow that key everywhere
+    let gs = app.global_shortcut();
+    if let Some(prev) = DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner()).take() { let _ = gs.unregister(prev); }
+    let sc = Shortcut::new(Some(mods), code);
+    match gs.on_shortcut(sc.clone(), |_app, _scut, event| on_dict_hotkey(event.state())) {
+        Ok(_)  => { *DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner()) = Some(sc); true }
+        Err(_) => false,
+    }
+}
+
+// UI → push the full dictation config into this process. Everything the in-process dictation owns (sound,
+// volume, clipboard, overlay, the rebindable hotkey) is applied here so the Settings rows actually take
+// effect. On an EXPLICIT enable (prompt=true) we ask for Accessibility under THIS app's identity so the
+// grant covers the paste; boot passes prompt=false so a relaunch never nags.
+#[derive(serde::Deserialize)]
+struct DictCfg {
+    enabled: bool,
+    ptt: bool,
+    #[serde(default = "def_true")] sound: bool,
+    #[serde(default = "def_vol")] volume: u8,
+    #[serde(default)] clipboard: String,      // "restore" | "save" | "replace"
+    #[serde(default = "def_true")] overlay: bool,
+    #[serde(default)] overlay_pos: String,    // "bottom-center" | "bottom-right" | "top-right" | "top-center"
+    #[serde(default)] hotkey: Option<HotkeySpec>,
+    #[serde(default)] cancel: Option<HotkeySpec>, // the "Cancel" key armed while recording (default Esc)
+    #[serde(default)] prompt: bool,
+}
+fn def_true() -> bool { true }
+fn def_vol() -> u8 { 70 }
+
 #[tauri::command]
-fn set_dictation(enabled: bool, ptt: bool, prompt: bool) {
-    DICT.lock().unwrap().enabled = enabled;
-    DICT_PTT.store(ptt, Ordering::Relaxed);
-    let _ = prompt;
-    if enabled {
+fn set_dictation(app: AppHandle, cfg: DictCfg) {
+    DICT.lock().unwrap().enabled = cfg.enabled;
+    DICT_PTT.store(cfg.ptt, Ordering::Relaxed);
+    {
+        let mut p = DICT_PREFS.lock().unwrap_or_else(|e| e.into_inner());
+        p.sound = cfg.sound;
+        p.volume = (cfg.volume.min(100) as f32) / 100.0;
+        p.clipboard = if cfg.clipboard == "restore" || cfg.clipboard.is_empty() { 0 } else { 1 };
+        p.overlay = cfg.overlay;
+        p.overlay_pos = match cfg.overlay_pos.as_str() { "bottom-right" => 1, "top-right" => 2, "top-center" => 3, _ => 0 };
+    }
+    // Cancel key (armed only while recording). Unmappable / missing → None → Esc.
+    *DICT_CANCEL.lock().unwrap_or_else(|e| e.into_inner()) = cfg.cancel.as_ref().and_then(|c| key_to_code(&c.key));
+    if let Some(hk) = cfg.hotkey.as_ref() { register_dict_hotkey(&app, hk); }
+    if cfg.enabled && cfg.prompt {
         // Prompts ONLY when not already trusted; silent once granted (the stable cert makes it stick). This
         // is what re-asks once after a signature change / TCC reset, then never again — the paste needs it.
         let _ = macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
@@ -488,6 +666,13 @@ fn set_dictation(enabled: bool, ptt: bool, prompt: bool) {
 // Tray "Stop" → finish the current dictation (only if one is recording).
 #[tauri::command]
 fn dictation_stop() { dictation_stop_rec(); }
+
+// Settings "Show tray icon" → show/hide the menu-bar icon. Tray mutations are AppKit → main thread.
+#[tauri::command]
+fn set_tray_visible(app: AppHandle, on: bool) {
+    let a = app.clone();
+    let _ = app.run_on_main_thread(move || { if let Some(t) = a.tray_by_id("tray") { let _ = t.set_visible(on); } });
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -498,6 +683,7 @@ pub fn run() {
                 app.handle().plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())?;
             }
 
+            init_paths(app);   // resolve RES_BASE / DATA_DIR / MODELS_DIR before anything spawns
             start_stack();
             let handle = app.handle().clone();
             let _ = APP.set(handle.clone());   // dictation fns use this for sound/tray/pill feedback
@@ -517,19 +703,10 @@ pub fn run() {
                 });
             }
 
-            // Global dictation hotkey (⌃⇧D) — Carbon RegisterEventHotKey, needs NO macOS permission. Tap
-            // to start, tap to stop. Registered unconditionally; the handler no-ops until dictation is on.
-            {
-                use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, Modifiers, Code, ShortcutState};
-                let sc = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
-                let _ = handle.global_shortcut().on_shortcut(sc, |_app, _scut, event| {
-                    let ptt = DICT_PTT.load(Ordering::Relaxed);
-                    match event.state() {
-                        ShortcutState::Pressed => if ptt { dictation_start() } else { dictation_toggle() },
-                        ShortcutState::Released => if ptt { dictation_stop_rec() },
-                    }
-                });
-            }
+            // Global dictation hotkey — default ⌃⇧D (Carbon RegisterEventHotKey, needs NO macOS permission).
+            // Registered via register_dict_hotkey so Settings can rebind it live; the handler no-ops until
+            // dictation is on. The UI re-pushes the stored shortcut on load (set_dictation).
+            register_dict_hotkey(&handle, &HotkeySpec { mods: vec!["ctrl".into(), "shift".into()], key: "D".into() });
 
             if std::env::var("ASSISTANT_STEALTH").is_ok() {
                 if let Some(w) = app.get_webview_window("main") { let _ = w.set_content_protected(true); }
@@ -564,12 +741,10 @@ pub fn run() {
                     api.prevent_close();
                     let _ = window.hide();
                 }
-                // The tray popover dismisses when it loses focus, like a real menu.
-                tauri::WindowEvent::Focused(false) if window.label() == "tray" => { let _ = window.hide(); }
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![set_stealth, set_tray_recording, overlay_action, set_dictation, dictation_stop])
+        .invoke_handler(tauri::generate_handler![set_stealth, set_tray_recording, set_dictation, dictation_stop, set_tray_visible])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {

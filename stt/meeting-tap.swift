@@ -6,8 +6,7 @@
 // chunks) is what makes it accurate — a mid-sentence cut severs context and the model hallucinates.
 //
 // Build:  swiftc -O -target arm64-apple-macos13.0 meeting-tap.swift -o meeting-tap \
-//           -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
-//           -framework AppKit -framework CoreGraphics \
+//           -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework AppKit \
 //           -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist
 //
 // Run:    meeting-tap <guiPort=8787> <whisperURL> [--app auto|all|<id>] [--mic on|off] [--me <name>]
@@ -36,8 +35,8 @@ import Foundation
 import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
-import AppKit          // NSFullUserName (the "(Me)" label). Dictation's hotkey + ⌘V paste now live in the
-import CoreGraphics    // app process itself (see desktop/src-tauri) — this binary only records audio.
+import AppKit          // NSFullUserName (the "(Me)" label). Dictation's hotkey + ⌘V paste live in the app
+                       // process itself (see desktop/src-tauri) — this binary only records meeting audio.
 
 func err(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
 func f2(_ v: Float) -> String { String(format: "%.4f", v) }
@@ -391,51 +390,6 @@ if LIST_APPS {
         exit(0)
     }
     RunLoop.main.run()
-}
-
-// --dictate <wav>: one-shot dictation capture for the app's in-process dictation. The APP owns the hotkey
-// and the ⌘V paste now (so ONE Accessibility grant on "My Assistant" covers them — no fragmented helper);
-// this only records the mic — as a DIRECT child it inherits the app's Mic grant — and writes a 16k-mono WAV
-// when the app sends SIGTERM. No key tap, no paste here (that was the old design's TCC-identity trap).
-final class DictRecorder {
-    let engine = AVAudioEngine(); var samples = [Float](); let out: String
-    init(_ out: String) { self.out = out }
-    func start() {
-        let input = engine.inputNode
-        let inFmt = input.inputFormat(forBus: 0)
-        guard inFmt.sampleRate > 0, inFmt.channelCount > 0,
-              let outFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: SR, channels: 1, interleaved: false),
-              let conv = AVAudioConverter(from: inFmt, to: outFmt) else { err("dictate: mic init failed"); exit(1) }
-        input.installTap(onBus: 0, bufferSize: 4096, format: inFmt) { [weak self] b, _ in
-            guard let self = self else { return }
-            let capN = AVAudioFrameCount(Double(b.frameLength) * SR / inFmt.sampleRate) + 1024
-            guard let o = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: capN) else { return }
-            var e: NSError?; var fed = false
-            conv.convert(to: o, error: &e) { _, st in if fed { st.pointee = .noDataNow; return nil }; fed = true; st.pointee = .haveData; return b }
-            if let ch = o.floatChannelData, o.frameLength > 0 { self.samples.append(contentsOf: UnsafeBufferPointer(start: ch[0], count: Int(o.frameLength))) }
-        }
-        engine.prepare()
-        do { try engine.start() } catch { err("dictate: engine.start failed: \(error)"); exit(1) }
-        err("dictate: recording → \(out)")
-    }
-    func finishAndExit() -> Never {
-        engine.inputNode.removeTap(onBus: 0); engine.stop()
-        writeWav16(samples, to: URL(fileURLWithPath: out))
-        err("dictate: wrote \(samples.count) samples (\(f1(Double(samples.count) / SR))s)")
-        exit(0)
-    }
-}
-if let di = A.firstIndex(of: "--dictate"), di + 1 < A.count {
-    let rec = DictRecorder(A[di + 1]); rec.start()
-    DispatchQueue.main.asyncAfter(deadline: .now() + 120) { rec.finishAndExit() }   // safety cap: never hold the mic > 2 min
-    var dsig: [DispatchSourceSignal] = []
-    for s in [SIGTERM, SIGINT] {
-        signal(s, SIG_IGN)
-        let src = DispatchSource.makeSignalSource(signal: s, queue: .main)
-        src.setEventHandler { rec.finishAndExit() }
-        src.resume(); dsig.append(src)
-    }
-    RunLoop.main.run()   // record until the app SIGTERMs us on the second hotkey tap
 }
 
 // Capture is GATED on being in a real call: the mic + system taps run only while we self-detect a call

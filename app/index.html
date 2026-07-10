@@ -759,9 +759,38 @@ $('#fcSupport').onclick=(e)=>{ e.stopPropagation(); toast('Thank you for the sup
 /* ---------- native (Tauri) bridge + server config ---------- */
 function isTauri(){ return !!(window.__TAURI__ && window.__TAURI__.core); }
 async function setStealth(on){ try{ await window.__TAURI__.core.invoke('set_stealth',{on}); }catch(e){} }
-// In-app dictation (the app itself owns the ⌃⇧D hotkey + paste). Tell Rust when the module is on/off; ask
-// for Accessibility only on an explicit enable (ask=true), so a relaunch with dictation already on never nags.
-function syncDictation(ask){ if(isTauri()){ try{ window.__TAURI__.core.invoke('set_dictation',{enabled:moduleOn('dictation'),ptt:!!store.get('push_to_talk',DEFAULTS.push_to_talk),prompt:!!ask}); }catch(e){} } }
+// In-app dictation: the app process owns the hotkey, recording, paste, sound cues and the pill, so push the
+// FULL config to it (not just on/off). ask=true → prompt for Accessibility on an explicit enable, so a
+// relaunch with dictation already on never nags. The server gets only language+punctuation (pushDictation).
+function dictClipMode(){ const c=store.get('clipboard',DEFAULTS.clipboard); return c==='Replace clipboard'?'replace':(c==='Save after dictation'?'save':'restore'); }
+const OVERLAY_POS={'Bottom center':'bottom-center','Bottom right':'bottom-right','Top right':'top-right','Top center':'top-center'};
+// "⌃⇧D" or "⌃+⇧+D" → {mods:['ctrl','shift'], key:'D'} for the app's global-shortcut registrar (Fn is dropped — it can't be a global shortcut).
+function dictHotkey(str){
+  const raw=String(str||'').split('+').map(s=>s.trim()).filter(Boolean);
+  const runes=[]; for(const p of raw){ if(p.length>1 && /[⌘⌃⌥⇧]/.test(p)){ for(const ch of p) runes.push(ch); } else runes.push(p); }
+  const mods=[]; let key='';
+  for(const r of runes){
+    if(r==='⌘'||/^(cmd|command|meta)$/i.test(r)) mods.push('cmd');
+    else if(r==='⌃'||/^(ctrl|control)$/i.test(r)) mods.push('ctrl');
+    else if(r==='⌥'||/^(alt|opt|option)$/i.test(r)) mods.push('alt');
+    else if(r==='⇧'||/^shift$/i.test(r)) mods.push('shift');
+    else if(/^fn$/i.test(r)){ /* Fn isn't a registrable global shortcut — ignore, keep the current hotkey */ }
+    else if(r) key=r;
+  }
+  return {mods, key};
+}
+function syncDictation(ask){ if(!isTauri()) return; try{ window.__TAURI__.core.invoke('set_dictation',{cfg:{
+  enabled: moduleOn('dictation'),
+  ptt: !!store.get('push_to_talk',DEFAULTS.push_to_talk),
+  sound: !!store.get('dict_sound',true),
+  volume: +store.get('volume',DEFAULTS.volume)||70,
+  clipboard: dictClipMode(),
+  overlay: !!store.get('overlay_enabled',true),
+  overlay_pos: OVERLAY_POS[store.get('overlay_pos',DEFAULTS.overlay_pos)]||'bottom-center',
+  hotkey: dictHotkey(store.get('sc_start',DEFAULTS.sc_start)),
+  cancel: dictHotkey(store.get('sc_cancel',DEFAULTS.sc_cancel)),
+  prompt: !!ask,
+}}); }catch(e){} }
 async function cfg(patch){ try{ await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)}); }catch{} }
 const setVideoMode=m=>cfg({videoMode:m}), setTranslate=on=>cfg({translate:on}), setLanguage=l=>cfg({language:l});
 
@@ -799,40 +828,18 @@ $('#waToggle').onclick=()=>{ const v=!store.get('wa_enabled',true); store.set('w
 $('#waModelChange').onclick=()=>{ setView('settings'); setPanel('writing'); };
 paintWa();
 
-/* ---------- dictation (Handy-style push-to-talk; native capture lives in meeting-tap) ---------- */
-// macOS virtual keycodes (US layout) — a recorded chord maps to what the CGEvent tap watches for.
-const KEYCODES={a:0,s:1,d:2,f:3,h:4,g:5,z:6,x:7,c:8,v:9,b:11,q:12,w:13,e:14,r:15,y:16,t:17,'1':18,'2':19,'3':20,'4':21,'6':22,'5':23,'=':24,'9':25,'7':26,'-':27,'8':28,'0':29,']':30,o:31,u:32,'[':33,i:34,p:35,l:37,j:38,k:40,n:45,m:46,space:49,spacebar:49,return:36,enter:36,tab:48,esc:53,escape:53};
-const keycodeOf=n=>KEYCODES[String(n||'').trim().toLowerCase()];
-// "Fn" → {fn:true};  "⌘+⇧+D" → {keycode, mods:[…]}.  Falls back to Fn if the key isn't mappable.
-function dictTrigger(str){
-  const parts=String(str||'').split('+').map(s=>s.trim()).filter(Boolean);
-  if(!parts.length||parts.some(p=>/^fn$/i.test(p))) return {fn:true};
-  const mods=[]; let key='';
-  for(const p of parts){
-    if(p==='⌘'||/^(cmd|command|meta)$/i.test(p)) mods.push('cmd');
-    else if(p==='⌃'||/^(ctrl|control)$/i.test(p)) mods.push('ctrl');
-    else if(p==='⌥'||/^(alt|opt|option)$/i.test(p)) mods.push('alt');
-    else if(p==='⇧'||/^shift$/i.test(p)) mods.push('shift');
-    else key=p;
-  }
-  const kc=keycodeOf(key);
-  return kc==null ? {fn:true} : {keycode:kc, mods};
-}
-const DICT_SELECTS=new Set(['dict_lang','punctuation','clipboard']);
+/* ---------- dictation (Handy-style; recording + paste run in the desktop app process) ---------- */
+const DICT_PUSH=new Set(['dict_lang','punctuation']);   // selects the SERVER applies (language, punctuation)
+const DICT_SYNC=new Set(['clipboard','overlay_pos']);   // selects the app process applies (clipboard, pill position)
 const DICT_LANG={'Auto-detect':'auto','English':'en','हिन्दी':'hi','Español':'es','Deutsch':'de','Français':'fr'};
-// Build the dictation config from settings and hand it to the server → meeting-tap reads it from /api/state.
+// The server applies only language + punctuation at transcription time; everything else the app process owns
+// (see syncDictation). Keep this tiny and honest.
 function pushDictation(){
-  const punc=store.get('punctuation',DEFAULTS.punctuation), clip=store.get('clipboard',DEFAULTS.clipboard);
+  const punc=store.get('punctuation',DEFAULTS.punctuation);
   cfg({dictation:{
     enabled: moduleOn('dictation'),
-    trigger: dictTrigger(store.get('sc_start',DEFAULTS.sc_start)),
-    cancel: (keycodeOf(String(store.get('sc_cancel',DEFAULTS.sc_cancel)).split('+').pop()) ?? 53),
-    mode: store.get('push_to_talk',DEFAULTS.push_to_talk) ? 'ptt' : 'toggle',
     language: DICT_LANG[store.get('dict_lang',DEFAULTS.dict_lang)]||'auto',
-    translate: false,
-    sound: store.get('dict_sound',true),
-    punctuation: /^auto/i.test(punc)?'auto':(punc==='Off'?'off':'spoken'),
-    clipboard: clip==='Replace clipboard'?'replace':(clip==='Save after dictation'?'save':'restore'),
+    punctuation: /^auto/i.test(punc)?'auto':'off',
   }});
   paintDictHints();
 }
@@ -893,8 +900,8 @@ const PANEL_ICONS={
   experimental:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3h5M10.5 3v5.2L5 16.6A2 2 0 0 0 6.8 20h10.4a2 2 0 0 0 1.8-3.4L13.5 8.2V3"/><line x1="8" y1="15" x2="16" y2="15"/></svg>',
 };
 const DEFAULTS={
-  mic:'Auto (Default)', app_lang:'English', app_updates:'Always', show_tray:true, overlay_type:'Pill', overlay_pos:'Bottom center', start_login:false, start_hidden:false, stealth:false,
-  dict_enabled:true, dict_lang:'Auto-detect', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, auto_pause:true, mute_system:false, volume:70, push_to_talk:false, floating_widget:false, hide_dock:false, auto_delete:'Never', sc_start:'⌃⇧D', sc_cancel:'Esc',
+  mic:'Auto (Default)', app_lang:'English', app_updates:'Always', show_tray:true, overlay_enabled:true, overlay_pos:'Bottom center', start_login:false, start_hidden:false, stealth:false,
+  dict_enabled:true, dict_lang:'Auto-detect', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, volume:70, push_to_talk:false, sc_start:'⌃⇧D', sc_cancel:'Esc',
   wa_selection:true, wa_noneditable:true, wa_translate_lang:'English', wa_open:'⌃+Space', wa_close:'Esc',
   mtg_source:'Local', live_indicator:true, auto_detect:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, notes_path:'/Users/rahul/Documents/My Assistant/Meetings', mtg_shortcut:'Not set',
   unload_model:true, engine:'Whisper large-v3-turbo', log_dir:'~/Library/Logs/My Assistant', whats_new:true,
@@ -922,34 +929,26 @@ const SCHEMA={
     ]},
     {label:'MENU BAR & OVERLAY', rows:[
       {id:'show_tray',title:'Show tray icon',desc:'Keep My Assistant in the menu bar.',type:'toggle'},
-      {id:'overlay_type',title:'Overlay type',desc:'The shape of the in-progress indicator.',type:'select',options:['Pill','Bar','Compact']},
-      {id:'overlay_pos',title:'Overlay position',desc:'',type:'select',options:['Bottom center','Bottom right','Top right','Top center']},
+      {id:'overlay_enabled',title:'Dictation overlay',desc:'Show the floating pill while you dictate.',type:'toggle'},
+      {id:'overlay_pos',title:'Overlay position',desc:'Where the pill appears while dictating.',type:'select',options:['Bottom center','Bottom right','Top right','Top center']},
     ]},
   ],
   dictation:[
     {label:'CONFIGURATION', rows:[
-      {id:'dict_enabled',title:'Enable dictation',desc:'Speak anywhere on your Mac — tap ⌃⇧D to start, tap again to insert. All on-device.',type:'toggle'},
+      {id:'dict_enabled',title:'Enable dictation',desc:'Speak anywhere on your Mac — tap the shortcut to start, tap again to insert. All on-device.',type:'toggle'},
+      {id:'push_to_talk',title:'Push-to-talk',desc:'On: hold the shortcut to dictate, release to insert. Off: tap to start, tap again to insert.',type:'toggle'},
       {id:'dict_lang',title:'Language',desc:'Spoken language. Auto-detect handles mixed speech per utterance.',type:'select',options:['Auto-detect','English','हिन्दी','Español','Deutsch','Français']},
+      {id:'punctuation',title:'Punctuation',desc:'Automatic keeps the punctuation the model adds; Off inserts plain text.',type:'select',options:['Automatic','Off']},
+      {id:'clipboard',title:'Clipboard behaviour',desc:'What happens to your clipboard after the text is pasted.',type:'select',options:['Never save','Save after dictation','Replace clipboard']},
       {id:'custom_vocab',title:'Custom vocabulary',desc:'Teach names, acronyms, and domain terms it should recognise.',type:'button',btn:'Configure'},
-      {id:'snippets',title:'Snippets',desc:'Spoken shortcuts that expand into saved phrases, links, or templates.',type:'button',btn:'Configure'},
-      {id:'punctuation',title:'Punctuation behaviour',desc:'',type:'select',options:['Automatic','Spoken only','Off']},
-      {id:'clipboard',title:'Clipboard behaviour',desc:'What happens to your clipboard after dictation.',type:'select',options:['Never save','Save after dictation','Replace clipboard']},
     ]},
     {label:'SOUND', rows:[
       {id:'dict_sound',title:'Dictation sound',desc:'Play a sound when you start and stop recording.',type:'toggle'},
-      {id:'auto_pause',title:'Auto-pause audio',desc:'Pause music and video when recording starts.',type:'toggle'},
-      {id:'mute_system',title:'Mute system audio while recording',desc:'',type:'toggle'},
-      {id:'volume',title:'Feedback volume',desc:'',type:'range'},
-    ]},
-    {label:'BEHAVIOUR', rows:[
-      {id:'push_to_talk',title:'Push-to-talk',desc:'On: hold ⌃⇧D to dictate, release to insert. Off: tap ⌃⇧D to start, tap again to insert.',type:'toggle'},
-      {id:'floating_widget',title:'Floating widget',desc:'Show a floating control at the edge of the screen.',type:'toggle'},
-      {id:'hide_dock',title:'Hide from dock',desc:'Run from the menu bar only.',type:'toggle'},
-      {id:'auto_delete',title:'Auto-delete recordings',desc:'',type:'select',options:['Never','After transcription','After 7 days','After 30 days']},
+      {id:'volume',title:'Feedback volume',desc:'Loudness of the start / stop cue.',type:'range'},
     ]},
     {label:'SHORTCUTS', rows:[
       {id:'sc_start',title:'Start / stop dictation',desc:'',type:'shortcut'},
-      {id:'sc_cancel',title:'Cancel',desc:'Discard the current recording.',type:'shortcut'},
+      {id:'sc_cancel',title:'Cancel',desc:'Discard the current recording (armed only while recording).',type:'shortcut'},
     ]},
   ],
   writing:[
@@ -1107,8 +1106,10 @@ function settingRow(row){
     else if(id==='unload_model'){ getV=()=>store.get('unload_model',true); setV=v=>{store.set('unload_model',v); cfg({unloadIdle:v})}; }  // off → keep the model hot
     else if(id==='live_indicator'){ getV=()=>store.get('live_indicator',true); setV=v=>{store.set('live_indicator',v); callRender()}; }  // reflect on the overlay immediately
     else if(id==='dict_enabled'){ getV=()=>moduleOn('dictation'); setV=v=>{ setModule('dictation',v); pushDictation(); renderDictations(); }; }        // master on/off = the Dictation module
-    else if(id==='push_to_talk'){ getV=()=>store.get('push_to_talk',DEFAULTS.push_to_talk); setV=v=>{store.set('push_to_talk',v); pushDictation(); syncDictation(false);}; } // push-to-talk vs tap-to-talk
-    else if(id==='dict_sound'){ getV=()=>store.get('dict_sound',true); setV=v=>{store.set('dict_sound',v); pushDictation()}; }
+    else if(id==='push_to_talk'){ getV=()=>store.get('push_to_talk',DEFAULTS.push_to_talk); setV=v=>{store.set('push_to_talk',v); syncDictation(false);}; } // push-to-talk vs tap-to-talk
+    else if(id==='dict_sound'){ getV=()=>store.get('dict_sound',true); setV=v=>{store.set('dict_sound',v); syncDictation(false)}; }         // start/stop cue on/off
+    else if(id==='overlay_enabled'){ getV=()=>store.get('overlay_enabled',true); setV=v=>{store.set('overlay_enabled',v); syncDictation(false)}; } // show/hide the dictation pill
+    else if(id==='show_tray'){ getV=()=>store.get('show_tray',true); setV=v=>{store.set('show_tray',v); if(isTauri()){try{window.__TAURI__.core.invoke('set_tray_visible',{on:v})}catch(e){}}}; } // menu-bar icon on/off
     else if(id==='stealth'){ gate=!isTauri(); getV=()=>isTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
       if(gate) l.querySelector('.st').insertAdjacentHTML('beforeend','<span class="badge">DESKTOP</span>'); }
     else { getV=()=>store.get(id,DEFAULTS[id]||false); setV=v=>store.set(id,v); }
@@ -1120,7 +1121,7 @@ function settingRow(row){
     const w=WIRED[id];
     const opts=row.options||[];
     const cur = w ? (w.from[store.get(w.key,w.def)]||opts[0]) : store.get(id, DEFAULTS[id]!=null?DEFAULTS[id]:opts[0]);
-    const pick=(label)=>{ if(w){ const code=w.to[label]; store.set(w.key,code); w.apply(code); } else { store.set(id,label); if(DICT_SELECTS.has(id)) pushDictation(); } };
+    const pick=(label)=>{ if(w){ const code=w.to[label]; store.set(w.key,code); w.apply(code); } else { store.set(id,label); if(DICT_PUSH.has(id)) pushDictation(); if(DICT_SYNC.has(id)) syncDictation(false); } };
     if(row.type==='segmented'){
       const seg=document.createElement('div'); seg.className='segm';
       opts.forEach(o=>{ const b=document.createElement('button'); b.className=(o===cur?'on':''); b.textContent=o;
@@ -1151,6 +1152,7 @@ function settingRow(row){
     const inp=document.createElement('input'); inp.type='range'; inp.min=0; inp.max=100; inp.value=store.get(id,DEFAULTS[id]??70); inp.style.width='200px';
     const v=document.createElement('span'); v.className='v'; v.textContent=inp.value;
     inp.oninput=()=>{ v.textContent=inp.value; store.set(id,+inp.value); };
+    inp.onchange=()=>{ if(id==='volume') syncDictation(false); };   // apply the new feedback volume on release
     w.append(inp,v); c.append(w); return r;
   }
 
@@ -1380,7 +1382,7 @@ function recordShortcut(id,title){ openModal(title||'Shortcut', box=>{
     if(['Meta','Control','Alt','Shift'].includes(e.key)){ cap.textContent=mods(e).join(' ')+' …'; return; }  // show mods as they're held
     const p=mods(e); p.push(e.key.length===1?e.key.toUpperCase():e.key);
     store.set(id,p.join('+')); closeModal(); renderSettings();
-    if(id==='sc_start'||id==='sc_cancel'){ pushDictation(); toast('Dictation shortcut updated.'); }
+    if(id==='sc_start'||id==='sc_cancel'){ syncDictation(false); paintDictHints(); toast('Dictation shortcut updated.'); }
     else toast('Shortcut saved — global keys activate with the desktop app.'); };
   _modalCleanup=()=>{ delete $('#mScrim').dataset.recording; document.removeEventListener('keydown',handler,true); }; // runs however the modal closes
   document.addEventListener('keydown',handler,true);
@@ -1624,7 +1626,8 @@ es.onopen=()=>{connEl.textContent='● connected';connEl.className='ok'};
 es.onerror=()=>{connEl.textContent='reconnecting…';connEl.className=''};
 es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
   if(m.type==='state'&&m.state)onState(m.state);else if(m.type==='caption')addCaption(m);
-  else if(m.type==='dictation')onDictation(m);else if(m.type==='dictation-state')onDictListening(m)};
+  else if(m.type==='dictation')onDictation(m);else if(m.type==='dictation-state')onDictListening(m);
+  else if(m.type==='model-progress')onModelProgress(m)};
 
 /* ================= IN-CALL OVERLAY (Call Panel) =================
    Floats over every view while a real call is being recorded (gated on the live_indicator
@@ -1766,8 +1769,41 @@ setVideoMode(store.get('videoMode','off'));
 setLanguage(store.get('language','auto'));
 setTranslate(store.get('translate',true));
 cfg({autoDetect:store.get('auto_detect',true), unloadIdle:store.get('unload_model',true), vocab:vocabPrompt()});
+/* ---------- first-run: on-device speech model (Handy-style — we ASK before downloading) ---------- */
+async function modelGate(){
+  let s; try{ s=await (await fetch('/api/model/status')).json(); }catch{ return; }
+  if(!s || s.present) return;      // model already here (or server not ready yet) → no prompt
+  openModal('Set up speech model', box=>{
+    box.innerHTML=`
+      <div class="msub" style="padding:2px 20px 10px">My Assistant transcribes entirely on your Mac. Download the speech model once (about 845 MB) to start dictating and taking meeting notes — nothing leaves your device.</div>
+      <div id="mdlProg" style="display:none;padding:6px 20px 2px">
+        <div style="height:8px;border-radius:6px;background:rgba(130,130,140,.25);overflow:hidden"><div id="mdlBar" style="height:100%;width:0;background:var(--win);transition:width .25s"></div></div>
+        <div id="mdlPct" class="mnote" style="margin-top:8px">Starting…</div>
+      </div>
+      <div id="mdlBtns" style="display:flex;gap:10px;justify-content:flex-end;padding:8px 20px 2px">
+        <button class="obtn" id="mdlLater">Later</button>
+        <button class="obtn solid" id="mdlGet">Download (845 MB)</button>
+      </div>
+      <div class="mnote" style="padding:6px 20px 14px">Prefer the cloud? Add your own API key in Settings and skip the download.</div>`;
+    box.querySelector('#mdlLater').onclick=()=>closeModal();
+    box.querySelector('#mdlGet').onclick=()=>{
+      box.querySelector('#mdlBtns').style.display='none';
+      box.querySelector('#mdlProg').style.display='block';
+      fetch('/api/model/download',{method:'POST'}).catch(()=>{});   // progress arrives over SSE (onModelProgress)
+    };
+  });
+}
+function onModelProgress(m){
+  const bar=$('#mdlBar'), pct=$('#mdlPct'), btns=$('#mdlBtns'), prog=$('#mdlProg');
+  if(m.error){ if(pct) pct.textContent='Download failed — check your connection and try again.';
+    if(btns) btns.style.display='flex'; if(prog) prog.style.display='none'; toast('Model download failed'); return; }
+  if(bar) bar.style.width=(m.pct||0)+'%';
+  if(pct) pct.textContent=m.done?'Finishing…':((m.pct||0)+'% of ~845 MB');
+  if(m.done){ toast('Speech model ready — you’re all set.'); closeModal(); }
+}
 pushDictation(); initDictation();
 cfg({modules:modules()}); paintNav(); syncDictation(false);
+modelGate();
 // Onboarding removed — open straight to the app; each feature asks for its one permission the first time it's used.
 </script>
 </body>
