@@ -362,12 +362,10 @@ case .watch:
     var prompted = false
     while true {
         if !axTrusted(prompt: false) {
-            // meeting-state is now spawned as a DIRECT child of the app, so Accessibility CAN be granted to it
-            // (via the app's grant). Request it once per launch; once granted, a valid app signature makes it
-            // stick, so it won't nag again. Detection still works without it (the capturer self-detects); this
-            // only enables speaker names.
-            emit(Line(type: "status", axTrusted: false, msg: "Grant Accessibility for speaker names: System Settings > Privacy & Security > Accessibility"))
-            if !prompted { _ = axTrusted(prompt: true); prompted = true }
+            // Do NOT auto-prompt for Accessibility at launch — permission requests are driven by the app's
+            // per-module opt-in (enabling Meetings opens the Accessibility pane). Speaker names degrade
+            // silently until then; call detection + capture don't need this (the capturer self-detects).
+            if !prompted { emit(Line(type: "status", axTrusted: false, msg: "Accessibility off — speaker names disabled until you enable Meetings")); prompted = true }
             Thread.sleep(forTimeInterval: max(interval, 3))
             continue
         }

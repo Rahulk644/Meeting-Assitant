@@ -33,8 +33,11 @@ let unloadIdle = true; // "Unload model when idle" setting — off = keep whispe
 let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
 // Dictation (Handy-style push-to-talk): the config is broadcast into /api/state so meeting-tap reads it
 // the same way it reads video/translate/vocab; results come back via POST /ingest {type:'dictation'}.
-let dictationCfg = { enabled: true, trigger: { fn: true }, mode: "ptt", language: "auto", translate: false, sound: true, punctuation: "auto", clipboard: "restore", cancel: 53 };
+let dictationCfg = { enabled: false, trigger: { fn: true }, mode: "ptt", language: "auto", translate: false, sound: true, punctuation: "auto", clipboard: "restore", cancel: 53 };
 let recentDictations = []; // last N dictation results — in-memory, session-lived (dictated text stays off disk)
+// Feature modules — everything is OFF until the user opts in (onboarding), so NO macOS permission is
+// requested until a module is enabled. meeting-tap/meeting-state gate their capability use on these.
+let modules = { dictation: false, meetings: false, writing: false };
 function effectiveRecording() { return manual === "on" ? true : (manual === "paused" || manual === "off") ? false : (autoDetect && detected); }
 function broadcastCall() { // push the composed call state to the UI (and lastState, for reconnects)
   const rec = effectiveRecording();
@@ -329,7 +332,7 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/state" && req.method === "GET") { // meeting-tap polls this to gate capture + video mode + manual override
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ ...lastState, manual: manual || "auto", dictation: dictationCfg }));
+    return res.end(JSON.stringify({ ...lastState, manual: manual || "auto", dictation: dictationCfg, modules }));
   }
   if (req.url === "/api/meeting/control" && req.method === "POST") { // UI start/pause/resume/stop (composes with auto-detect)
     readBody(req).then(b => {
@@ -359,6 +362,11 @@ http.createServer((req, res) => {
         if (typeof j.unloadIdle === "boolean") unloadIdle = j.unloadIdle; // off → keep whisper hot
         if (typeof j.vocab === "string") { vocabPrompt = j.vocab.slice(0, 800); broadcast({ type: "state", state: { vocab: vocabPrompt } }); } // custom vocabulary → meeting-tap
         if (j.dictation && typeof j.dictation === "object") { dictationCfg = { ...dictationCfg, ...j.dictation }; broadcast({ type: "state", state: { dictation: dictationCfg } }); } // Handy-style dictation config → meeting-tap
+        if (j.modules && typeof j.modules === "object") { // feature opt-in → gates every permission-touching capability
+          modules = { ...modules, ...j.modules };
+          dictationCfg.enabled = !!modules.dictation;    // the dictation tap follows the module
+          broadcast({ type: "state", state: { modules, dictation: dictationCfg } });
+        }
       } catch {}
       res.writeHead(204); res.end();
     });
@@ -383,6 +391,15 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/dictations" && req.method === "GET") { // recent dictation results for the Dictation view
     res.writeHead(200, { "Content-Type": "application/json" }); return res.end(JSON.stringify(recentDictations));
+  }
+  if (req.url === "/api/open-settings" && req.method === "POST") { // deep-link a macOS Privacy pane (permission checklist)
+    readBody(req).then(b => {
+      let pane = ""; try { pane = String(JSON.parse(b).pane || ""); } catch {}
+      const PANES = { Privacy_Microphone: 1, Privacy_ScreenCapture: 1, Privacy_Accessibility: 1, Privacy_ListenEvent: 1 }; // whitelist
+      if (PANES[pane]) execFile("open", ["x-apple.systempreferences:com.apple.preference.security?" + pane]);
+      res.writeHead(PANES[pane] ? 204 : 400); res.end();
+    });
+    return;
   }
   const rec = req.url.match(/^\/api\/rec\/([\w.\-]+)$/); // serve a saved screen recording (with range for seeking)
   if (rec && req.method === "GET") {

@@ -637,6 +637,7 @@ func applyDictationConfig(_ dc: [String: Any]) {
 
 let cap = Capture()
 let dictation = Dictation()
+var curModuleMeetings = false   // Meetings opt-in — gates Screen-Recording detection + capture (no opt-in ⇒ no prompt)
 var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curVocab = ""
 // Poll the server for UI-set config (video mode + share state) AND the manual override (start/pause/stop).
 // inMeeting is SELF-DETECTED below; `manual` lets the UI force capture on/off on top of that — e.g. manually
@@ -648,6 +649,7 @@ func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, langua
         return (curSharing, curVideoMode, curTranslate, curLanguage, curManual, curAutoDetect, curVocab)
     }
     if let dc = o["dictation"] as? [String: Any] { applyDictationConfig(dc) }   // Handy-style dictation config (side-effect globals + tap)
+    if let m = o["modules"] as? [String: Any] { curModuleMeetings = (m["meetings"] as? Bool) ?? false }   // Meetings opt-in gate
     return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto", (o["autoDetect"] as? Bool) ?? true, (o["vocab"] as? String) ?? "")
 }
 // Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
@@ -709,6 +711,7 @@ func tick() {
     let cfg = fetchConfig()
     curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language; curManual = cfg.manual; curAutoDetect = cfg.autoDetect; curVocab = cfg.vocab
     cap.updateShare()
+    if !curModuleMeetings { if cap.running { cap.stop() }; return }   // Meetings module off → capture + poll nothing (no Screen-Recording prompt)
     if !GATE { gate("call"); return }                        // --gate off: always capture (still honors manual)
     if screenDenied { return }                               // Screen Recording refused — stop hammering it (recovers on grant + relaunch)
     detectMeetingApp { app in DispatchQueue.main.async { gate(app) } }

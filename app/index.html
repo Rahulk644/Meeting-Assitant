@@ -124,6 +124,35 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .dcard .dc-copy{flex:none;cursor:pointer;color:var(--ink-3);padding:5px;border-radius:8px;transition:.12s}
   .dcard .dc-copy:hover{background:var(--accent-soft);color:var(--accent)}
   .dcard .dc-copy svg{width:16px;height:16px;display:block}
+  /* onboarding + per-module permission gate */
+  .onboard{position:fixed;inset:0;z-index:200;background:var(--win);display:grid;place-items:center;padding:32px;overflow:auto}
+  .ob-card{width:min(560px,100%);background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:32px 32px 26px;box-shadow:0 30px 80px rgba(0,0,0,.16)}
+  .ob-brand{display:flex;align-items:center;gap:13px;margin-bottom:8px}
+  .ob-brand img{width:40px;height:40px;border-radius:10px}
+  .ob-h{font-size:22px;font-weight:680;letter-spacing:-0.02em;color:var(--ink)}
+  .ob-sub{color:var(--ink-2);font-size:13.5px;line-height:1.55;margin-bottom:22px}
+  .ob-mods{display:flex;flex-direction:column;gap:12px}
+  .ob-mod{border:1px solid var(--line);border-radius:16px;padding:15px 16px;transition:.15s}
+  .ob-mod.on{border-color:var(--accent);background:var(--accent-soft)}
+  .ob-mod.soon{opacity:.6}
+  .ob-mhead{display:flex;align-items:center;gap:13px}
+  .ob-mic{width:40px;height:40px;flex:none;border-radius:10px;background:var(--surface-2);display:grid;place-items:center;color:var(--ink)}
+  .ob-mic svg{width:21px;height:21px}
+  .ob-mt{flex:1;min-width:0}
+  .ob-mn{font-weight:620;font-size:15px;color:var(--ink);display:flex;align-items:center;gap:9px}
+  .ob-mb{font-size:12.5px;color:var(--ink-3);margin-top:3px;line-height:1.45}
+  .ob-soon{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);background:var(--surface-2);padding:3px 8px;border-radius:999px}
+  .perms{margin-top:14px;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:11px}
+  .permrow{display:flex;align-items:center;gap:12px}
+  .permic{width:32px;height:32px;flex:none;border-radius:8px;background:var(--win);display:grid;place-items:center;color:var(--accent)}
+  .permic svg{width:17px;height:17px}
+  .permc{flex:1;min-width:0}
+  .permc .pn{font-weight:560;font-size:13.5px;color:var(--ink);display:flex;align-items:center;gap:7px}
+  .permc .pn .opt{font-size:9.5px;font-weight:600;color:var(--ink-3);background:var(--surface-2);padding:1px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em}
+  .permc .pw{font-size:12px;color:var(--ink-3);margin-top:1px}
+  .ob-go{margin-top:24px;width:100%;padding:12px;border:none;border-radius:12px;background:var(--accent);color:var(--accent-ink);font-size:14.5px;font-weight:620;cursor:pointer;transition:.12s}
+  .ob-go:hover{filter:brightness(.96)}
+  .nav.locked{opacity:.6}
   .badge-line{display:inline-flex;align-items:center;gap:9px;margin-top:22px;padding:9px 13px;border-radius:9px;
         background:var(--surface);border:1px solid var(--line)}
   .badge-line .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
@@ -643,6 +672,14 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
 </div>
 
 <!-- ===== reusable settings modal + toast ===== -->
+<div class="onboard" id="onboard" hidden>
+  <div class="ob-card">
+    <div class="ob-brand"><img src="/logo.png" alt=""><div class="ob-h">Welcome to My Assistant</div></div>
+    <div class="ob-sub">Choose what you'd like to use. We only ask for the macOS permissions each one needs — nothing before you turn it on. You can enable more anytime.</div>
+    <div class="ob-mods" id="obMods"></div>
+    <button class="ob-go" id="obGo">Get started</button>
+  </div>
+</div>
 <div class="mscrim" id="mScrim" hidden>
   <div class="mcardm" id="mCard">
     <div class="mhead"><div class="mtitle" id="mTitle"></div>
@@ -712,7 +749,7 @@ function setView(name){
   try{localStorage.setItem('route',name)}catch{}
 }
 document.querySelectorAll('.nav[data-view]').forEach(n=>{
-  n.onclick=()=>{ if(n.dataset.view==='guide') return setView('feedback'); setView(n.dataset.view); };
+  n.onclick=()=>navTo(n.dataset.view);   // gates disabled modules → enable flow
 });
 $('#proCard').onclick=()=>setView('settings');
 $('#docLink').onclick=()=>setView('feedback');
@@ -783,7 +820,7 @@ const DICT_LANG={'Auto-detect':'auto','English':'en','हिन्दी':'hi','
 function pushDictation(){
   const punc=store.get('punctuation',DEFAULTS.punctuation), clip=store.get('clipboard',DEFAULTS.clipboard);
   cfg({dictation:{
-    enabled: store.get('dict_enabled',true),
+    enabled: moduleOn('dictation'),
     trigger: dictTrigger(store.get('sc_start',DEFAULTS.sc_start)),
     cancel: (keycodeOf(String(store.get('sc_cancel',DEFAULTS.sc_cancel)).split('+').pop()) ?? 53),
     mode: store.get('push_to_talk',DEFAULTS.push_to_talk) ? 'ptt' : 'toggle',
@@ -1054,7 +1091,7 @@ function settingRow(row){
     else if(id==='auto_detect'){ getV=()=>store.get('auto_detect',true); setV=v=>{store.set('auto_detect',v); cfg({autoDetect:v})}; }  // off → only manual start records
     else if(id==='unload_model'){ getV=()=>store.get('unload_model',true); setV=v=>{store.set('unload_model',v); cfg({unloadIdle:v})}; }  // off → keep the model hot
     else if(id==='live_indicator'){ getV=()=>store.get('live_indicator',true); setV=v=>{store.set('live_indicator',v); callRender()}; }  // reflect on the overlay immediately
-    else if(id==='dict_enabled'){ getV=()=>store.get('dict_enabled',true); setV=v=>{store.set('dict_enabled',v); pushDictation()}; }        // master on/off for dictation
+    else if(id==='dict_enabled'){ getV=()=>moduleOn('dictation'); setV=v=>{ setModule('dictation',v); pushDictation(); }; }        // master on/off = the Dictation module
     else if(id==='push_to_talk'){ getV=()=>store.get('push_to_talk',DEFAULTS.push_to_talk); setV=v=>{store.set('push_to_talk',v); pushDictation()}; } // hold vs toggle
     else if(id==='dict_sound'){ getV=()=>store.get('dict_sound',true); setV=v=>{store.set('dict_sound',v); pushDictation()}; }
     else if(id==='stealth'){ gate=!isTauri(); getV=()=>isTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
@@ -1236,15 +1273,88 @@ function openSnippets(){ openModal('Snippets', box=>{
   add.append(t,x,btn); box.append(add);
 }); }
 
-/* Permissions — informational status (real OS grants happen in System Settings) */
-const PERMS=[{icon:IC_MIC,name:'Microphone',desc:'Transcribe your voice and the call audio.'},{icon:IC_SCREEN,name:'Screen Recording',desc:'Detect calls and capture shared screens.'},{icon:IC_AXS,name:'Accessibility',desc:'Read participant names from the meeting window.'}];
+/* ---------- feature modules + first-run onboarding + permission gating ---------- */
+const IC_LISTEN='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M7 14.5h10"/></svg>';
+const IC_AGENTS='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l1.5 4.6 4.6 1.5-4.6 1.5L12 15.6l-1.5-4.6L5.9 9.5l4.6-1.5L12 3.4Z"/></svg>';
+const PERM_ICON={'Microphone':IC_MIC,'Screen Recording':IC_SCREEN,'Accessibility':IC_AXS,'Input Monitoring':IC_LISTEN};
+const MODULE_INFO={
+  dictation:{name:'Dictation', blurb:'Speak anywhere and the words land in whatever you’re typing in — all on-device.',
+    perms:[{name:'Microphone',pane:'Privacy_Microphone',why:'Hear your voice.'},
+           {name:'Input Monitoring',pane:'Privacy_ListenEvent',why:'Detect the dictation hotkey.'},
+           {name:'Accessibility',pane:'Privacy_Accessibility',why:'Insert the text into the focused app.'}]},
+  meetings:{name:'Meetings', blurb:'Record and transcribe your calls — named notes, summaries, and search.',
+    perms:[{name:'Microphone',pane:'Privacy_Microphone',why:'Transcribe your side of the call.'},
+           {name:'Screen Recording',pane:'Privacy_ScreenCapture',why:'Detect calls and capture the shared screen.'},
+           {name:'Accessibility',pane:'Privacy_Accessibility',why:'Read participant names (optional).',optional:true}]},
+};
+const SOON={writing:{name:'Writing Assistant',blurb:'Rewrite, fix grammar, or translate any selected text in place.'},agents:{name:'AI Agents',blurb:'Background automations that run your repetitive work.'}};
+function modules(){ const m=store.get('modules',null); return (m&&typeof m==='object')?{dictation:!!m.dictation,meetings:!!m.meetings,writing:!!m.writing}:{dictation:false,meetings:false,writing:false}; }
+function moduleOn(k){ return !!modules()[k]; }
+function setModule(k,on){ const m=modules(); m[k]=!!on; store.set('modules',m); cfg({modules:m}); paintNav(); }
+async function openSettingsPane(pane){ try{ await fetch('/api/open-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pane})}); toast('Opening System Settings — enable “My Assistant”.'); }catch{ toast('Open System Settings › Privacy & Security.'); } }
+function permRows(k){
+  const wrap=el('div','perms');
+  MODULE_INFO[k].perms.forEach(p=>{
+    const row=el('div','permrow'), ic=el('div','permic'); ic.innerHTML=PERM_ICON[p.name]||IC_AXS;
+    const c=el('div','permc'); c.innerHTML=`<div class="pn">${p.name}${p.optional?'<span class="opt">optional</span>':''}</div><div class="pw">${esc(p.why)}</div>`;
+    const b=el('button','abtn'); b.textContent='Open System Settings'; b.onclick=()=>openSettingsPane(p.pane);
+    row.append(ic,c,b); wrap.append(row);
+  });
+  return wrap;
+}
+function moduleCard(k){
+  const info=MODULE_INFO[k], on=moduleOn(k), card=el('div','ob-mod'+(on?' on':''));
+  const head=el('div','ob-mhead'), ic=el('div','ob-mic'); ic.innerHTML=PANEL_ICONS[k];
+  const t=el('div','ob-mt'); t.innerHTML=`<div class="ob-mn">${info.name}</div><div class="ob-mb">${esc(info.blurb)}</div>`;
+  const tgl=el('button','tgl'+(on?' on':'')); tgl.onclick=()=>{ setModule(k,!moduleOn(k)); renderOnboard(); };
+  head.append(ic,t,tgl); card.append(head);
+  if(on) card.append(permRows(k));
+  return card;
+}
+function soonCard(k){
+  const info=SOON[k], card=el('div','ob-mod soon'), head=el('div','ob-mhead'), ic=el('div','ob-mic');
+  ic.innerHTML = k==='writing' ? PANEL_ICONS.writing : IC_AGENTS;
+  const t=el('div','ob-mt'); t.innerHTML=`<div class="ob-mn">${info.name}<span class="ob-soon">Coming soon</span></div><div class="ob-mb">${esc(info.blurb)}</div>`;
+  head.append(ic,t); card.append(head); return card;
+}
+function renderOnboard(){
+  const m=$('#obMods'); if(!m) return; m.innerHTML='';
+  m.append(moduleCard('dictation'), moduleCard('meetings'), soonCard('writing'), soonCard('agents'));
+  $('#obGo').onclick=()=>{ store.set('onboarded',true); $('#onboard').hidden=true; paintNav(); const first=['meetings','dictation'].find(moduleOn); if(first) navTo(first,true); };
+  $('#onboard').hidden=false;
+}
+// Enable a not-yet-enabled module from the sidebar: show its permissions + an Enable button.
+function openModuleGate(k){
+  openModal('Enable '+MODULE_INFO[k].name, box=>{
+    box.append(el('div','msub',MODULE_INFO[k].blurb+' Grant these once to turn it on:'));
+    box.append(permRows(k));
+    const b=el('button','ob-go'); b.textContent='Enable '+MODULE_INFO[k].name;
+    b.onclick=()=>{ setModule(k,true); closeModal(); setView(k); toast(MODULE_INFO[k].name+' enabled.'); };
+    box.append(b);
+  });
+}
+function navTo(v,force){
+  if(v==='guide') return setView('feedback');
+  if(!force && (v==='dictation'||v==='meetings') && !moduleOn(v)) return openModuleGate(v);
+  setView(v);
+}
+function paintNav(){ document.querySelectorAll('.nav[data-view]').forEach(n=>{ const v=n.dataset.view; n.classList.toggle('locked',(v==='dictation'||v==='meetings')&&!moduleOn(v)); }); }
+
+/* Permissions — real deep-links to the macOS Privacy panes (grants happen there). */
+const ALL_PERMS=[
+  {name:'Microphone',pane:'Privacy_Microphone',desc:'Transcribe your voice and the call audio.'},
+  {name:'Screen Recording',pane:'Privacy_ScreenCapture',desc:'Detect calls and capture shared screens.'},
+  {name:'Input Monitoring',pane:'Privacy_ListenEvent',desc:'The global dictation hotkey.'},
+  {name:'Accessibility',pane:'Privacy_Accessibility',desc:'Insert dictated text; read participant names.'},
+];
 function openPermissions(){ openModal('Permissions', box=>{
-  box.append(el('div','msub','My Assistant needs these macOS permissions — grant each once in System Settings › Privacy & Security.'));
+  box.append(el('div','msub','My Assistant only needs the permissions for the features you’ve enabled. Open a pane to grant it.'));
   const list=el('div','mbody');
-  PERMS.forEach(p=>{ const row=el('div','mitem'), tile=el('div','mtile'), c=grow(); tile.innerHTML=p.icon;
+  ALL_PERMS.forEach(p=>{ const row=el('div','mitem'), tile=el('div','mtile'), c=grow(); tile.innerHTML=PERM_ICON[p.name];
     c.innerHTML=`<div class="nm">${p.name}</div><div class="ds">${p.desc}</div>`;
-    row.append(tile,c,el('span','mgrant no',isTauri()?'System Settings':'Desktop only')); list.append(row); });
-  box.append(list); box.append(el('div','mnote','macOS confirms each permission when the app first needs it.'));
+    const b=el('button','abtn'); b.textContent='Open System Settings'; b.onclick=()=>openSettingsPane(p.pane);
+    row.append(tile,c,b); list.append(row); });
+  box.append(list); box.append(el('div','mnote','macOS also prompts automatically the first time an enabled feature uses a permission.'));
 }); }
 
 /* Shortcut recorder — captures + persists a combo (global registration lands with the desktop app) */
@@ -1645,6 +1755,8 @@ setLanguage(store.get('language','auto'));
 setTranslate(store.get('translate',true));
 cfg({autoDetect:store.get('auto_detect',true), unloadIdle:store.get('unload_model',true), vocab:vocabPrompt()});
 pushDictation(); initDictation();
+cfg({modules:modules()}); paintNav();
+if(!store.get('onboarded',false)) renderOnboard();
 </script>
 </body>
 </html>
