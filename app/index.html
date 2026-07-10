@@ -750,7 +750,7 @@ paintWa();
 const PANELS=[['profile','Profile'],['general','General'],['dictation','Dictation'],['writing','Writing Assistant'],['meetings','Meetings'],['advanced','Advanced'],['experimental','Experimental']];
 const PANEL_ICONS={
   profile:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>',
-  general:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="8" r="2.4" fill="var(--sidebar)"/><circle cx="9" cy="16" r="2.4" fill="var(--sidebar)"/></svg>',
+  general:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="8" r="2.4" fill="var(--win)"/><circle cx="9" cy="16" r="2.4" fill="var(--win)"/></svg>',
   dictation:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/></svg>',
   writing:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5V14a1.5 1.5 0 0 1-1.5 1.5H9l-4 3.4V5.5Z"/><path d="M8.5 9.2h7M8.5 12h4.5"/></svg>',
   meetings:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16.5" rx="2.4"/><line x1="3" y1="9.2" x2="21" y2="9.2"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>',
@@ -1344,9 +1344,9 @@ function renderDetailBody(){
     const inp=document.createElement('input'); inp.type='text'; inp.placeholder='Ask this meeting…';
     const go=document.createElement('button'); go.className='abtn'; go.textContent='Ask';
     const qa=document.createElement('div'); qa.className='qa-list';
-    const run=()=>{ const q=inp.value.trim(); if(q){ inp.value=''; askMeeting(qa, m.id, q); } };
+    const run=()=>{ const q=inp.value.trim(); if(q){ inp.value=''; askMeeting(m, q); } };
     go.onclick=run; inp.addEventListener('keydown',e=>{ if(e.key==='Enter') run(); });
-    ask.append(inp,go); w.append(ask,qa);
+    ask.append(inp,go); w.append(ask,qa); paintAsk();
   }
 }
 function splitSummary(text){
@@ -1372,16 +1372,30 @@ async function genSummary(btn){
     $('#det-body').append(err);
   }
 }
-async function askMeeting(qa,id,q){
-  const item=document.createElement('div'); item.className='qa';
-  const qd=document.createElement('div'); qd.className='q'; qd.textContent=q;
-  const ad=document.createElement('div'); ad.className='a spin'; ad.textContent='Thinking…';
-  item.append(qd,ad); qa.append(item);
+// Repaint the Ask tab's Q&A list from curMeeting._qa (the source of truth), so answers
+// survive tab switches — renderDetailBody rebuilds #det-body on every switch.
+function paintAsk(){
+  if(detTab!=='ask'||!curMeeting) return;
+  const qa=$('#det-body .qa-list'); if(!qa) return;
+  qa.innerHTML='';
+  for(const it of (curMeeting._qa||[])){
+    const row=document.createElement('div'); row.className='qa';
+    const qd=document.createElement('div'); qd.className='q'; qd.textContent=it.q;
+    const ad=document.createElement('div');
+    ad.className='a'+(it.a==null?' spin':'')+(it.err?' sum-err':'');
+    ad.textContent=it.a==null?'Thinking…':it.a;
+    row.append(qd,ad); qa.append(row);
+  }
+}
+async function askMeeting(m,q){
+  (m._qa||(m._qa=[])).push({q,a:null,err:false}); const it=m._qa[m._qa.length-1];
+  paintAsk();
   try{
-    const r=await fetch('/api/meetings/'+id+'/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,llm:resolveLLM()})});
+    const r=await fetch('/api/meetings/'+m.id+'/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,llm:resolveLLM()})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
-    ad.className='a'; ad.textContent=j.answer;
-  }catch(e){ ad.className='a sum-err'; ad.textContent="Couldn't answer — set up a model in Settings → Meetings → AI Model."; }
+    it.a=j.answer;
+  }catch(e){ it.a="Couldn't answer — set up a model in Settings → Meetings → AI Model."; it.err=true; }
+  paintAsk();
 }
 $('#det-export').onclick=()=>{ const m=curMeeting; if(!m)return;
   let md=`# ${m.title}\n\n${[new Date(m.startedAt).toLocaleString(), prettyApp(m.app), fmtDur(m)].filter(Boolean).join(' · ')}\n\n`;
