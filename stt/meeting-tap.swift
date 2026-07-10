@@ -494,11 +494,14 @@ final class Dictation {
     var startTs = 0.0
     var lastFn = false
     var tap: CFMachPort?
+    var tapTried = false
     let q = DispatchQueue(label: "stt.dictation")
 
-    // Install the tap lazily the first time dictation is enabled; then just enable/disable it with the setting.
+    // Install the tap ONCE when first enabled (not every tick): if it fails for lack of Input Monitoring /
+    // Accessibility, a later grant needs an app relaunch to take effect anyway — retrying every 2 s just
+    // storms the permission prompt + the log. Then just enable/disable the installed tap with the setting.
     func reconfigure() {
-        if curDictEnabled && tap == nil { install() }
+        if curDictEnabled && tap == nil && !tapTried { tapTried = true; install() }
         if let t = tap { CGEvent.tapEnable(tap: t, enable: curDictEnabled) }
     }
     func install() {
@@ -652,11 +655,13 @@ func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, langua
 // meeting. This is what lets the PACKAGED app detect calls itself: the AX-based meeting-state can't run
 // as a grandchild-of-the-app under macOS TCC, but the capturer is a direct child so its grants work.
 // Returns the app key ("zoom"/"teams"/"call") or nil when not in a call.
-var detectErrLogged = false
+var detectErrLogged = false, screenDenied = false
 func detectMeetingApp(_ done: @escaping (String?) -> Void) {
     SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
         if let error = error {   // almost always: Screen Recording not granted to this app
-            if !detectErrLogged { err(">> can't read the window list to detect the call — grant Screen Recording to Assistant. (\(error.localizedDescription))"); detectErrLogged = true }
+            let ns = error as NSError   // SCStreamError.userDeclined = -3801 → stop polling so we don't storm the prompt
+            if ns.code == -3801 || ns.localizedDescription.lowercased().contains("declined") { screenDenied = true }
+            if !detectErrLogged { err(">> can't read the window list — grant Screen Recording to Assistant in System Settings, then relaunch. (\(error.localizedDescription))"); detectErrLogged = true }
             done(nil); return
         }
         var hit: String? = nil
@@ -705,6 +710,7 @@ func tick() {
     curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language; curManual = cfg.manual; curAutoDetect = cfg.autoDetect; curVocab = cfg.vocab
     cap.updateShare()
     if !GATE { gate("call"); return }                        // --gate off: always capture (still honors manual)
+    if screenDenied { return }                               // Screen Recording refused — stop hammering it (recovers on grant + relaunch)
     detectMeetingApp { app in DispatchQueue.main.async { gate(app) } }
 }
 

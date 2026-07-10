@@ -81,11 +81,15 @@ so nothing leaves your machine.
 
 - **Hold-to-talk** by default (or switch to tap-to-toggle in **Settings → Dictation**); **Esc** cancels.
 - **Rebindable** to any shortcut; **Custom Vocabulary** and language are shared with Meetings.
-- Capture → transcription → paste all live in `meeting-tap` — a direct child of the app, so it already
-  holds the Accessibility grant the paste needs. **No separate permission** beyond what Meetings uses.
+- Capture → transcription → paste live in `meeting-tap` (a direct child of the app, so the **paste** reuses
+  Meetings' **Accessibility** grant). The **global hotkey** additionally needs **Input Monitoring** — a
+  one-time grant to Assistant (macOS prompts on first use).
 
-> **One-time setup:** macOS lets the **🌐/Fn** key open Emoji or Dictation. Set **System Settings →
-> Keyboard → “Press 🌐 to” → Do Nothing** (or rebind dictation to a key chord) so Fn is free.
+> **One-time setup:**
+> 1. **System Settings → Privacy & Security → Input Monitoring** → enable **Assistant** (for the hotkey);
+>    **Accessibility** should already be on from Meetings (for the paste).
+> 2. macOS lets the **🌐/Fn** key open Emoji or Dictation — set **System Settings → Keyboard → “Press 🌐 to”
+>    → Do Nothing** (or rebind dictation to a key chord) so Fn is free.
 
 ## Post-call AI
 
