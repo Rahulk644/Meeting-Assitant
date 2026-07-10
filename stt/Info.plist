@@ -2,7 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key><string>com.rahul.meetingtap</string>
+  <!-- Deliberately the SAME id as the app (com.myassistant.desktop). meeting-tap is a spawned child that
+       needs Screen Recording + Mic; TCC keys grants on the signing identifier, so matching the app's id
+       (and signing with the app's cert) makes this helper satisfy the app's Designated Requirement and
+       RIDE the app's single grant — no separate/again permission prompt. See setup.sh. -->
+  <key>CFBundleIdentifier</key><string>com.myassistant.desktop</string>
   <key>CFBundleName</key><string>MeetingTap</string>
   <key>NSAudioCaptureUsageDescription</key><string>Transcribe meeting audio locally on-device.</string>
   <key>NSMicrophoneUsageDescription</key><string>Transcribe your voice locally on-device.</string>

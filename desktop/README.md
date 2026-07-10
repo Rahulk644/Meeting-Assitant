@@ -15,18 +15,30 @@ browser build share one codebase.
 
 ```bash
 npm install                         # once — the Tauri CLI (needs Rust: https://rustup.rs)
-npx tauri build --bundles app       # → src-tauri/target/release/bundle/macos/Assistant.app
-codesign --force --deep --sign - \
-  src-tauri/target/release/bundle/macos/Assistant.app   # ← repair the signature, or macOS re-prompts every launch
-cp -R src-tauri/target/release/bundle/macos/Assistant.app /Applications/
+../setup.sh                         # builds + cert-signs the native helpers (its 3/3 step; see below)
+npx tauri build --bundles app       # → src-tauri/target/release/bundle/macos/My Assistant.app
+cp -R "src-tauri/target/release/bundle/macos/My Assistant.app" /Applications/
 ```
 
 Double-click it. First launch prompts for **Microphone**, **Screen Recording**, and **Accessibility** —
-grant each once. The `codesign` step matters: Tauri's ad-hoc "linker-signed" output is an *invalid*
-signature, so without it macOS can't verify the app and re-asks for permissions on every launch;
-re-signing makes it valid → grants stick (for *this* build — a rebuild changes the fingerprint and you
-re-grant once). This build references the `setup.sh`-installed models/binaries on *this* machine; a
-portable, Developer-ID-signed + notarized installer is on the roadmap.
+grant each once.
+
+**Why the signing matters (the TCC trap).** macOS keys each permission grant on the requesting binary's
+*code requirement*. For **ad-hoc** code (swiftc's / Tauri's default "linker-signed" output) there is no
+identity to pin, so TCC pins the raw **cdhash** — which changes on every rebuild, so the grant silently
+stops matching and the app re-prompts *forever* (the Settings toggle stays "on" but is dead). The cure is
+a **stable certificate**: `tauri.conf.json` sets `bundle.macOS.signingIdentity: "My Assistant Dev"`, and
+`setup.sh` signs the two spawned helpers (`meeting-tap`, `meeting-state`) **with the same cert *and* the
+app's identifier** (`com.myassistant.desktop`). That makes every binary's requirement
+`identifier "com.myassistant.desktop" and certificate leaf = …` — **cdhash-independent**, so grants
+survive rebuilds *and* the helpers ride the app's single grant instead of each demanding their own.
+
+> If you previously ran an **ad-hoc** build, its dead cdhash-pinned grant will block the new one. Clear it
+> once: `tccutil reset ScreenCapture com.myassistant.desktop` (repeat for `Microphone`, `Accessibility`),
+> then relaunch and grant in System Settings. After that it sticks across all future rebuilds.
+
+This build references the `setup.sh`-installed models/binaries on *this* machine; a portable,
+Developer-ID-signed + notarized installer is on the roadmap.
 
 ## Dev
 

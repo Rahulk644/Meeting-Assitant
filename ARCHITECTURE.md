@@ -102,24 +102,30 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   is a grandchild; macOS attributes its permission check to node, not the app, so it's never trusted.
   Therefore `meeting-state` is spawned **directly by Rust** (`start_meeting_state`), and its NDJSON is
   forwarded to the server via `curl`. `meeting-tap` (also a direct child) inherits Mic + Screen Recording.
-- **Ad-hoc "linker-signed" binaries do not persist TCC grants.** Both Tauri's bundle output *and* the raw
-  `swiftc`/linker output carry a `linker-signed` ad-hoc signature (`flags=0x20002`) that macOS will not
-  hold a grant against → it re-prompts every launch even though the toggle reads ON. **Fix: re-sign with
-  `codesign --force --sign -`** (→ `flags=0x2`, proper ad-hoc). This must be done for the `.app` **and**
-  for `meeting-tap` / `meeting-state` / `transcribe-server`. `setup.sh` and `build.sh` do it after every
-  build; **always re-sign a helper after recompiling it.**
-- **Ad-hoc means grants survive relaunches but not rebuilds.** Any rebuild changes the cdhash → one
-  re-grant. The permanent fix (grants survive rebuilds, runs on any Mac) is **Developer-ID signing +
-  notarization** — the portable-installer milestone.
-- **A stable self-signed identity is the cheap intermediate — grants survive *rebuilds* on this machine.**
-  Sign the `.app` with a locally-created certificate (`codesign --sign "My Assistant Dev" …`) instead of
-  ad-hoc, and TCC keys the grant to that stable identity, so a rebuild no longer re-prompts (verified across
-  rebuilds — the Accessibility/Mic grants held). Caveats: it's untrusted by Gatekeeper (so **not**
-  distributable — Developer-ID is still the answer for *other* Macs); switching an *already-granted* app
-  from ad-hoc to the cert **invalidates the existing grant** (stale `csreq`) — `tccutil reset` the service
-  once, re-grant, then it sticks; and `security find-identity -v` *hides* the cert as
-  `CSSMERR_TP_NOT_TRUSTED`, but it still signs fine. Create it once via Keychain Access → *Create a
-  Certificate* (Code Signing, self-signed).
+- **Ad-hoc signing pins the grant to a bare cdhash — it dies on the next rebuild.** swiftc's linker output
+  *and* Tauri's default bundle output are ad-hoc; ad-hoc code has no stable identity, so when you grant, TCC
+  can only store a bare `cdhash H"…"` requirement (no identifier, no cert). The very next rebuild changes the
+  cdhash → the grant silently stops matching (the Settings toggle still reads ON, but it's a **dead entry**)
+  → re-prompt on every launch. `flags=0x2` ("proper" ad-hoc) vs `0x20002` (linker-signed) makes **no**
+  difference — both are ad-hoc. The fix is a **real certificate**, not "better ad-hoc."
+- **Sign the app AND every direct-child helper with the same self-signed cert *and the app's identifier*.**
+  `tauri.conf.json` sets `bundle.macOS.signingIdentity: "My Assistant Dev"`; `setup.sh` signs `meeting-tap` /
+  `meeting-state` with `codesign --force --identifier com.myassistant.desktop --sign "My Assistant Dev"`.
+  Two effects: (1) TCC stores `identifier "com.myassistant.desktop" and certificate leaf = …` —
+  **cdhash-independent**, so grants survive rebuilds; (2) because each helper carries the *app's* identifier
+  it satisfies the app's Designated Requirement and **rides the app's single grant** instead of demanding its
+  own (a helper with its own id would need — and re-prompt for — a separate grant, even cert-signed).
+  `security find-identity -v` *hides* the cert as `CSSMERR_TP_NOT_TRUSTED`, but it still signs fine; create it
+  once via Keychain Access → *Create a Certificate* (Code Signing, self-signed). Untrusted by Gatekeeper, so
+  **not** distributable to other Macs — Developer-ID + notarization remains the portable-installer answer.
+- **Switching an already-granted binary from ad-hoc → cert invalidates the old grant** (its stored `csreq` is
+  a stale cdhash, not the new identity). `tccutil reset ScreenCapture com.myassistant.desktop` once (or remove
+  the entry in System Settings), relaunch, re-grant — then it sticks across all future rebuilds. Diagnose by
+  decoding the stored requirement: `sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "SELECT
+  hex(csreq) FROM access WHERE service='kTCCServiceScreenCapture' AND client='com.myassistant.desktop'"` — a
+  bare `cdhash H"…"` = dead ad-hoc pin; `identifier … and certificate leaf …` = durable. (Real case: Mic +
+  Accessibility were identity-based and never nagged, while Screen Recording stayed pinned to a dead cdhash and
+  re-prompted every launch — same app, three grants, only one broken.)
 - **Accessibility is cached at launch** — after granting it, restart the process to pick it up.
 - Editing the Swift/JS helpers does **not** churn the app's grant; only rebuilding the Tauri `.app` does.
   Batch anything needing `tauri build` into one rebuild + one re-grant.
@@ -276,7 +282,8 @@ locations — so it runs when moved off the repo:
 - Don't add a VAD prefilter to the **meeting** path (whole utterances) — it clips clean speech; use
   temperature-0. **Dictation is the exception:** its short push-to-talk clips *do* use Silero VAD in-app to
   strip surrounding silence (see Dictation). Different input, different rule.
-- Don't leave any helper `linker-signed` — re-sign with `codesign --force --sign -` after every build.
+- Don't leave any helper ad-hoc / `linker-signed` — re-sign it as `--identifier com.myassistant.desktop
+  --sign "My Assistant Dev"` after every build (ad-hoc pins a cdhash that dies on the next rebuild).
 - Don't spawn permission-needing helpers through node — spawn them directly from Rust.
 - Don't match off-screen meeting windows in detection — gate secondary windows on `isOnScreen`.
 - Don't set `excludesCurrentProcessAudio = true` — it wedges SCK into silent capture.

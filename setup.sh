@@ -31,11 +31,29 @@ echo "3/3  Building native helpers (Swift)…"
     -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist )
 ( cd "$ROOT/meeting-state" && swiftc -O meeting-state.swift -o meeting-state )
-# swiftc emits a "linker-signed" ad-hoc signature, which macOS will NOT persist a TCC grant to — the app
-# would re-prompt for Screen Recording / Mic / Accessibility on every launch. Re-sign both helpers with a
-# PROPER ad-hoc signature (flags 0x2, not 0x20002) so grants stick. ALWAYS do this after rebuilding them.
-codesign --force --sign - "$ROOT/stt/meeting-tap"
-codesign --force --sign - "$ROOT/meeting-state/meeting-state"
+# TCC keys Screen-Recording / Mic / Accessibility grants on a process's SIGNING IDENTIFIER + code
+# requirement — NOT on who its parent is. These helpers are spawned children of the app, but each is its
+# own binary with its own identity, so the app's grant (identifier "com.myassistant.desktop") does NOT
+# cover them: the capturer would get "user declined" and re-prompt on every launch. Two things fix it,
+# together: (1) sign with the SAME cert the app uses ("My Assistant Dev"), and (2) force the SAME signing
+# identifier as the app (APP_ID) — so each helper satisfies the app's Designated Requirement and RIDES the
+# app's single, already-granted permission. No separate toggle, no re-prompt. (swiftc's default ad-hoc
+# signature can't carry a stable identity at all, which is why it must be re-signed.) ALWAYS do this after
+# rebuilding the helpers.
+SIGN_ID="My Assistant Dev"
+APP_ID="com.myassistant.desktop"        # must match tauri.conf.json "identifier"
+if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
+  codesign --force --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/stt/meeting-tap"
+  codesign --force --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/meeting-state/meeting-state"
+  echo "     signed native helpers as '$APP_ID' with '$SIGN_ID' — they ride the app's TCC grants (no re-prompt)."
+else
+  echo "     ⚠  Signing identity '$SIGN_ID' not found in your keychain. Falling back to ad-hoc —"
+  echo "        macOS will RE-PROMPT for Screen Recording / Mic / Accessibility on every launch."
+  echo "        Create the self-signed cert (Keychain Access → Certificate Assistant, name it exactly"
+  echo "        '$SIGN_ID', type 'Code Signing') and re-run this script to make the prompts stop."
+  codesign --force --identifier "$APP_ID" --sign - "$ROOT/stt/meeting-tap"
+  codesign --force --identifier "$APP_ID" --sign - "$ROOT/meeting-state/meeting-state"
+fi
 
 cat <<'EOF'
 
