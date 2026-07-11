@@ -107,7 +107,10 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   voice) + System Audio Recording Only (the others' voices via the tap) — **not** Screen Recording. Screen
   Recording is asked for **only when recording video**. Call detection reads the Core Audio process list and
   needs no permission. Accessibility is only for Zoom speaker names. (Dictation needs none of these — its
-  Carbon hotkey + ⌘V paste are permission-free.)
+  Carbon hotkey + ⌘V paste are permission-free.) **Settings → General → Permissions** surfaces the live
+  grant status of each — a `perm_status` command checks `AXIsProcessTrusted()` (Accessibility) and
+  `CGPreflightScreenCaptureAccess()` (Screen Recording) in-process, rendering *Allowed* or an
+  Open-System-Settings action and re-polling while open.
 - **Grants reach a direct child, not a grandchild.** A helper spawned *through node* (`app → node → helper`)
   is a grandchild; macOS attributes its permission check to node, not the app, so it's never trusted.
   Therefore `meeting-state` is spawned **directly by Rust** (`start_meeting_state`), and its NDJSON is
@@ -305,6 +308,10 @@ locations — so it runs when moved off the repo:
 - Don't paste with `enigo`/character keys off the main thread, and don't give the pill a plain NSWindow —
   use raw keycode 9 for ⌘V (no HIToolbox layout lookup → no SIGTRAP), and a non-activating `NSPanel` for
   the pill (a plain NSWindow won't float over another app's full-screen space at any level).
+- Don't position the pill (or any window) with `primary_monitor()` + a *global* `set_position` — with an
+  external display attached, the right/left-edge positions land off-screen (the symmetric centre positions
+  stay visible, so it reads as "centre works, edges don't"). Position relative to the monitor the window is
+  actually on: `current_monitor()` + its `position()` origin offset, then clamp x/y into that monitor.
 - Don't stage web resources into a top-level `app/` bundle dir — it collides with the crate's own `app`
   binary during Tauri's dev staging (EEXIST). Stage them under `webui/`.
 - Don't rely on Tauri's `.dmg` step in a non-interactive shell — its create-dmg fork always runs a Finder

@@ -28,7 +28,7 @@ is the next milestone; see the [roadmap](#roadmap).
 ```
  you (mic, AVAudioEngine)  ┐                         detect the call + capture, on the Apple GPU
  the other participants'   ├─▶  stt/meeting-tap (Swift)
- audio (ScreenCaptureKit)  ┘      │ self-detects the call from the window list (no Accessibility needed)
+ audio (Core Audio tap)    ┘      │ self-detects the call from the Core Audio process list (no permission)
                                   │ energy-VAD splits speech into per-utterance WAVs
                                   ▼
                     transcribe-server (transcribe.cpp + Metal GPU · large-v3-turbo)
@@ -40,9 +40,10 @@ is the next milestone; see the [roadmap](#roadmap).
                     meeting-state (Swift, Accessibility) ─┘  speaker names, mute/share state
 ```
 
-- **Detect + capture** — `meeting-tap` finds the call in the ScreenCaptureKit window list (a Zoom
-  meeting / floating-video / share window) using only **Screen Recording**, then taps the meeting app's
-  system audio **and** your mic, splitting each into utterances.
+- **Detect + capture** — `meeting-tap` finds the call from the **Core Audio process list** (which app is
+  doing audio I/O — **no permission**), then captures the meeting app's audio with a **Core Audio process
+  tap** (the *System Audio Recording Only* permission) **and** your mic, splitting each into utterances.
+  ScreenCaptureKit is used **only** when you record video.
 - **Transcribe** — `transcribe-server` (started on demand) transcribes each whole utterance in ~3 s on
   the GPU, auto-detecting the language and translating to English.
 - **Names** — `meeting-state` reads Zoom's Accessibility tree for the active speaker (and mute/share);
@@ -122,7 +123,9 @@ heavy sits resident between or during calls beyond what's actively transcribing.
 
 ## Requirements
 
-- macOS 13+ on Apple Silicon
+- **macOS 14.4+** on Apple Silicon — meeting audio is captured with Core Audio process taps, which need the
+  macOS **14.2+ SDK** (`meeting-tap` builds with `-target …14.4`). Update Command Line Tools if
+  `xcrun --show-sdk-version` reports < 14.
 - Xcode Command Line Tools (`xcode-select --install`), [Homebrew](https://brew.sh), CMake, Node, Rust ([rustup](https://rustup.rs)) — `setup.sh` builds the transcription engine from source with CMake
 
 ## Install & run the app
@@ -135,9 +138,11 @@ npm run build                                       # build + sign "My Assistant
 cp -R "src-tauri/target/release/bundle/macos/My Assistant.app" /Applications/   # (or install from the .dmg)
 ```
 
-Then **double-click "My Assistant.app"**. On first use macOS prompts for **Microphone**, **Screen
-Recording**, and **Accessibility** (three separate toggles) — grant each once. The app starts everything
-itself (no terminal).
+Then **double-click "My Assistant.app"**. It asks for macOS permissions **only as each feature needs them**,
+never upfront: **Microphone** + **System Audio Recording Only** (the Core Audio tap for the other
+participants) the first time you record a meeting, **Accessibility** for speaker names and dictation paste,
+and **Screen Recording** only if you turn on video recording. Grant each once — **Settings → General →
+Permissions** shows the live status of each. The app starts everything itself (no terminal).
 
 > **Signing & portability.** The build signs with a **stable self-signed certificate** ("My Assistant Dev",
 > set as `bundle.macOS.signingIdentity`) so macOS TCC grants **survive rebuilds** — no re-prompt every
@@ -169,7 +174,7 @@ packaged `.app` gets its own. Flags pass through (`--app all`, `--mic off`, `--m
 |---|---|
 | `desktop/` | **Tauri app** — self-starts the stack; native window, menu-bar tray, screen-share stealth |
 | `run.sh` · `setup.sh` | dev launcher · one-time install (engine + models + native helpers) |
-| `stt/meeting-tap.swift` | ScreenCaptureKit capture (audio **and** video) + call self-detection + utterance segmentation |
+| `stt/meeting-tap.swift` | Core Audio tap (audio, no Screen Recording) + ScreenCaptureKit (video) + process-list call detection + utterance segmentation |
 | `stt/transcribe-server/` | our HTTP wrapper around [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) (source + `build.sh`, pinned commit) |
 | `stt/whisper/` | GGUF transcription model (git-ignored; fetched by `setup.sh`) |
 | `app/server.js` | SSE relay + meeting store + on-demand Whisper/LLM + summary/ask + video serving (no deps) |
@@ -188,11 +193,12 @@ For the full design rationale, the transcription/permissions deep-dives, and the
   must be toggled on. Whisper `large-v3-turbo` is multilingual (handles Hindi-English), higher quality,
   always available. **On demand, not resident** — spawned when a call starts, unloaded ~2 min after, so
   it isn't holding ~1.5 GB between calls (first call after idle waits ~10 s for the model to load).
-- **Self-detection over the Accessibility detector** — the capturer detects the call from the SCK window
-  list (Screen Recording only). Accessibility is then needed *only* for speaker names, so the core loop
+- **Self-detection over the Accessibility detector** — the capturer detects the call from the Core Audio
+  process list (no permission). Accessibility is then needed *only* for speaker names, so the core loop
   survives if that grant is missing.
-- **ScreenCaptureKit, not Core Audio process taps** — taps need the macOS 14.2+ SDK; this toolchain
-  ships 13.3, where SCK is available.
+- **Core Audio process taps for audio, ScreenCaptureKit only for video** — the taps capture the other
+  participants under *System Audio Recording Only* (no Screen Recording); SCK is used only when recording
+  video. Needs the macOS 14.2+ SDK (update Command Line Tools if `xcrun --show-sdk-version` < 14).
 
 ## Known limitations
 
@@ -201,18 +207,19 @@ For the full design rationale, the transcription/permissions deep-dives, and the
 - **Native meeting apps only** for *auto*-detection — it recognizes Zoom/Teams/Webex/FaceTime windows.
   **Browser calls** (Google Meet, Zoom web, Slack huddles) aren't auto-detected yet — start them by hand
   with **Record**.
-- **Ad-hoc signing** — every rebuild changes the app's fingerprint, so you re-grant the three permissions
-  once per build. Developer-ID + notarization (roadmap) fixes this permanently.
+- **Self-signed, not Developer-ID** — the packaged app is signed with a stable self-signed certificate, so
+  your permission grants *survive* rebuilds. But Gatekeeper still shows an "unidentified developer" warning
+  on other Macs (right-click → Open once); Developer-ID + notarization (roadmap) removes it.
 - Screen recordings are **silent** (audio mux is a follow-up); **Only-when-shared** currently keys off
   *your* share.
-- ScreenCaptureKit audio can occasionally go silent after long uptime — reset with `sudo killall coreaudiod`.
+- System-audio capture can occasionally go silent after long uptime — reset with `sudo killall coreaudiod`.
 - **Recording calls may require consent** depending on jurisdiction. That's on you.
 
 ## Roadmap
 
 **Shipped**
 
-- [x] **Self-detecting capture** — finds the call from the window list (Screen Recording only), transcribes you + the others, only while in a call
+- [x] **Self-detecting capture** — finds the call from the Core Audio process list (no permission) and captures the others via a Core Audio tap, transcribes you + the others, only while in a call
 - [x] **Speaker names** from Zoom's AX tree (detector spawned as a direct child so its grant works)
 - [x] **transcribe.cpp engine** (≈2× faster, ≈half the RAM of whisper.cpp) — **whole-utterance**, **auto-detect → English**; language + translate toggles; **custom vocabulary** biases recognition of names/jargon
 - [x] **Manual + auto recording** — **start / pause / stop by hand** (composed with auto-detect, so pause/stop really releases the mic), plus a **floating in-call panel** (live transcript + scratchpad)
