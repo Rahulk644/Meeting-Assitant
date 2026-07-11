@@ -413,7 +413,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .qa .q{font-weight:600;font-size:13.5px;color:var(--ink)}
   .qa .a{white-space:pre-wrap;color:var(--ink-2);font-size:14px;line-height:1.6;margin-top:4px}
   .qa .a.spin{color:var(--ink-3)}
-  /* ===== settings modals (vocab / templates / modes / snippets / permissions) ===== */
+  /* ===== settings modals (vocab / templates / modes / permissions) ===== */
   .mscrim{position:fixed;inset:0;z-index:120;background:rgba(15,14,12,.34);display:flex;align-items:center;justify-content:center;padding:24px}
   .mscrim[hidden]{display:none!important}
   .mcardm{width:440px;max-width:100%;max-height:calc(100vh - 80px);display:flex;flex-direction:column;background:var(--surface);
@@ -681,14 +681,6 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
 </div>
 
 <!-- ===== reusable settings modal + toast ===== -->
-<div class="onboard" id="onboard" hidden>
-  <div class="ob-card">
-    <div class="ob-brand"><img src="/logo.png" alt=""><div class="ob-h">Welcome to My Assistant</div></div>
-    <div class="ob-sub">Choose what you'd like to use. We only ask for the macOS permissions each one needs — nothing before you turn it on. You can enable more anytime.</div>
-    <div class="ob-mods" id="obMods"></div>
-    <button class="ob-go" id="obGo">Get started</button>
-  </div>
-</div>
 <div class="mscrim" id="mScrim" hidden>
   <div class="mcardm" id="mCard">
     <div class="mhead"><div class="mtitle" id="mTitle"></div>
@@ -1110,7 +1102,7 @@ async function exportAll(){
 function srowShell(row){
   const r=document.createElement('div'); r.className='srow';
   const l=document.createElement('div'); l.className='sl';
-  l.innerHTML=`<div class="st">${row.title}</div>`+(row.desc?`<div class="sd">${row.desc}</div>`:'');
+  l.innerHTML=`<div class="st">${esc(row.title)}</div>`+(row.desc?`<div class="sd">${esc(row.desc)}</div>`:''); // esc: some rows (Profile) carry user-set name/email
   const c=document.createElement('div'); c.className='sc';
   r.append(l,c); return {r,l,c};
 }
@@ -1243,7 +1235,7 @@ function el(tag,cls,text){ const e=document.createElement(tag); if(cls)e.classNa
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>{t.hidden=true},2400); }
 let _modalCleanup=null; // a modal (e.g. the shortcut recorder) can register teardown that must run however it closes
 function closeModal(){ if(_modalCleanup){ _modalCleanup(); _modalCleanup=null; } $('#mScrim').hidden=true; $('#mContent').innerHTML=''; }
-function openModal(title,build){ $('#mTitle').textContent=title; const box=$('#mContent'); box.innerHTML=''; build(box); $('#mScrim').hidden=false; }
+function openModal(title,build){ if(_modalCleanup){ _modalCleanup(); _modalCleanup=null; } $('#mTitle').textContent=title; const box=$('#mContent'); box.innerHTML=''; build(box); $('#mScrim').hidden=false; } // run any prior modal's teardown (e.g. a poll interval) before replacing content
 $('#mClose').onclick=closeModal;
 $('#mScrim').onclick=(e)=>{ if(e.target===$('#mScrim')) closeModal(); };
 document.addEventListener('keydown',e=>{ if(e.key==='Escape' && !$('#mScrim').hidden && !$('#mScrim').dataset.recording) closeModal(); });
@@ -1256,7 +1248,6 @@ function settingAction(id){
   if(id==='custom_vocab') return openVocab();
   if(id==='templates') return openTemplates();
   if(id==='wa_modes') return openModes();
-  if(id==='snippets') return openSnippets();
   if(id==='permissions') return openPermissions();
   if(id==='version') return toast("You’re on the latest version — 0.1.0");
   if(id==='support_creator') return toast('Thank you for the support! 💛');
@@ -1314,84 +1305,14 @@ function openModes(){ openModal('Assistant modes', box=>{
   const dash=el('div','mdash','+ New mode'); dash.onclick=()=>toast('Custom modes are coming soon.'); box.append(dash);
 }); }
 
-/* Snippets — persists; dictation expands these when it ships */
-function snippets(){ const s=store.get('snippets_list',[]); return Array.isArray(s)?s:[]; }
-function openSnippets(){ openModal('Snippets', box=>{
-  box.append(el('div','msub','Spoken shortcuts that expand into saved text.'));
-  const list=el('div','mbody');
-  const render=()=>{ list.innerHTML=''; const items=snippets();
-    if(!items.length) list.append(el('div','mnote','No snippets yet.'));
-    items.forEach((s,i)=>{ const row=el('div','mitem'), c=grow();
-      c.innerHTML=`<div class="nm">${esc(s.trigger)}</div><div class="ds">${esc(s.text)}</div>`;
-      const x=el('button','mrmv'); x.innerHTML=IC_X_SM; x.onclick=()=>{ const l=snippets(); l.splice(i,1); store.set('snippets_list',l); render(); };
-      row.append(c,x); list.append(row); }); };
-  render(); box.append(list);
-  const add=el('div','maddrow'), t=el('input','minput'), x=el('input','minput'), btn=el('div','maddbtn','Add');
-  t.placeholder='Trigger — e.g. “my email”'; x.placeholder='Expands to…';
-  btn.onclick=()=>{ const trigger=t.value.trim(), text=x.value.trim(); if(!trigger||!text)return; const l=snippets(); l.push({trigger,text}); store.set('snippets_list',l); t.value='';x.value=''; render(); };
-  add.append(t,x,btn); box.append(add);
-}); }
-
-/* ---------- feature modules + first-run onboarding + permission gating ---------- */
+/* ---------- feature modules + permission gating ---------- */
 const IC_LISTEN='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M7 14.5h10"/></svg>';
 const IC_AGENTS='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l1.5 4.6 4.6 1.5-4.6 1.5L12 15.6l-1.5-4.6L5.9 9.5l4.6-1.5L12 3.4Z"/></svg>';
 const PERM_ICON={'Microphone':IC_MIC,'Screen Recording':IC_SCREEN,'Accessibility':IC_AXS,'Input Monitoring':IC_LISTEN};
-// Only the grants macOS makes you toggle in System Settings are listed. Microphone is NOT here — macOS
-// prompts for it automatically the first time we record, and stays granted after (like every other app).
-const MODULE_INFO={
-  dictation:{name:'Dictation', blurb:'Speak anywhere and the words land in whatever you’re typing in — all on-device.',
-    perms:[{name:'Accessibility',pane:'Privacy_Accessibility',why:'Insert the text into the app you’re typing in, and catch the hotkey.'}]},
-  meetings:{name:'Meetings', blurb:'Record and transcribe your calls — named notes, summaries, and search.',
-    perms:[{name:'Screen Recording',pane:'Privacy_ScreenCapture',why:'Detect calls and capture the shared screen.'},
-           {name:'Accessibility',pane:'Privacy_Accessibility',why:'Read participant names (optional).',optional:true}]},
-};
-const SOON={writing:{name:'Writing Assistant',blurb:'Rewrite, fix grammar, or translate any selected text in place.'},agents:{name:'AI Agents',blurb:'Background automations that run your repetitive work.'}};
 function modules(){ const m=store.get('modules',null); return (m&&typeof m==='object')?{dictation:!!m.dictation,meetings:!!m.meetings,writing:!!m.writing}:{dictation:true,meetings:true,writing:false}; } // default ON (onboarding removed → off-by-default = dead app); an explicit toggle-off persists
 function moduleOn(k){ return !!modules()[k]; }
 function setModule(k,on){ const m=modules(); m[k]=!!on; store.set('modules',m); cfg({modules:m}); if(k==='dictation') syncDictation(!!on); paintNav(); }
 async function openSettingsPane(pane){ try{ await fetch('/api/open-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pane})}); toast('Opening System Settings — enable “My Assistant”.'); }catch{ toast('Open System Settings › Privacy & Security.'); } }
-function permRows(k){
-  const wrap=el('div','perms');
-  MODULE_INFO[k].perms.forEach(p=>{
-    const row=el('div','permrow'), ic=el('div','permic'); ic.innerHTML=PERM_ICON[p.name]||IC_AXS;
-    const c=el('div','permc'); c.innerHTML=`<div class="pn">${p.name}${p.optional?'<span class="opt">optional</span>':''}</div><div class="pw">${esc(p.why)}</div>`;
-    const b=el('button','abtn'); b.textContent='Open System Settings'; b.onclick=()=>openSettingsPane(p.pane);
-    row.append(ic,c,b); wrap.append(row);
-  });
-  wrap.append(el('div','permnote','🎙️ Microphone is asked for automatically the first time you use it — nothing to set up here.'));
-  return wrap;
-}
-function moduleCard(k){
-  const info=MODULE_INFO[k], on=moduleOn(k), card=el('div','ob-mod'+(on?' on':''));
-  const head=el('div','ob-mhead'), ic=el('div','ob-mic'); ic.innerHTML=PANEL_ICONS[k];
-  const t=el('div','ob-mt'); t.innerHTML=`<div class="ob-mn">${info.name}</div><div class="ob-mb">${esc(info.blurb)}</div>`;
-  const tgl=el('button','tgl'+(on?' on':'')); tgl.onclick=()=>{ setModule(k,!moduleOn(k)); renderOnboard(); };
-  head.append(ic,t,tgl); card.append(head);
-  if(on) card.append(permRows(k));
-  return card;
-}
-function soonCard(k){
-  const info=SOON[k], card=el('div','ob-mod soon'), head=el('div','ob-mhead'), ic=el('div','ob-mic');
-  ic.innerHTML = k==='writing' ? PANEL_ICONS.writing : IC_AGENTS;
-  const t=el('div','ob-mt'); t.innerHTML=`<div class="ob-mn">${info.name}<span class="ob-soon">Coming soon</span></div><div class="ob-mb">${esc(info.blurb)}</div>`;
-  head.append(ic,t); card.append(head); return card;
-}
-function renderOnboard(){
-  const m=$('#obMods'); if(!m) return; m.innerHTML='';
-  m.append(moduleCard('dictation'), moduleCard('meetings'), soonCard('writing'), soonCard('agents'));
-  $('#obGo').onclick=()=>{ store.set('onboarded',true); $('#onboard').hidden=true; paintNav(); const first=['meetings','dictation'].find(moduleOn); if(first) navTo(first,true); };
-  $('#onboard').hidden=false;
-}
-// Enable a not-yet-enabled module from the sidebar: show its permissions + an Enable button.
-function openModuleGate(k){
-  openModal('Enable '+MODULE_INFO[k].name, box=>{
-    box.append(el('div','msub',MODULE_INFO[k].blurb+' Grant these once to turn it on:'));
-    box.append(permRows(k));
-    const b=el('button','ob-go'); b.textContent='Enable '+MODULE_INFO[k].name;
-    b.onclick=()=>{ setModule(k,true); closeModal(); setView(k); toast(MODULE_INFO[k].name+' enabled.'); };
-    box.append(b);
-  });
-}
 function navTo(v,force){
   if(v==='guide') return setView('feedback');
   setView(v);   // no gating — browse freely; a feature asks for its permission when you first use it
@@ -1538,7 +1459,7 @@ function onState(s){
   if(s.participants&&s.participants.length)renderPeople(s.participants,s.activeSpeaker);
   if(s.activeSpeaker){speakingEl.hidden=false;activeEl.textContent=s.activeSpeaker;renderPeople(null,s.activeSpeaker)}
   if(s.inMeeting===true){ setRec(true); $('#goLive').hidden=false; if(!liveShown && mtCurrent==='library'){ liveShown=true; mtShow('live'); } }
-  else if(s.inMeeting===false){ setRec(false); liveShown=false; if(mtCurrent==='live'){ mtShow('library'); loadLibrary(); } else if(mtCurrent==='library') loadLibrary(); }
+  else if(s.inMeeting===false){ setRec(false); liveShown=false; if(mtCurrent==='live'){ mtShow('library'); } else if(mtCurrent==='library') loadLibrary(); } // mtShow('library') already loadLibrary()s — don't double-fetch
 }
 function setRec(on){ const d=$('#liveDot'); if(d)d.hidden=!on;
   try{ window.__TAURI__?.core?.invoke('set_tray_recording',{on}); }catch{}
@@ -1702,6 +1623,7 @@ async function genSummary(btn){
   try{
     const r=await fetch('/api/meetings/'+id+'/summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm:resolveLLM(),deeper:store.get('deeper',false),template:selectedTemplatePrompt()})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    if(curMeetingId!==id) return; // navigated to another meeting while generating — it's saved server-side; don't paint A's summary onto B
     if(curMeeting) curMeeting.summary=j.summary;
     renderDetailBody();
   }catch(e){
@@ -1869,7 +1791,7 @@ function callSnap(w,h){ const M=16, TOP=16, W=window.innerWidth, H=window.innerH
   callXY={x,y}; callDragging=false; callPlace(callMin?$('#callChip'):$('#callPanel')); }
 
 function initCall(){
-  try{ for(const k in localStorage) if(k.indexOf('call.notes.')===0) localStorage.removeItem(k); }catch{} // clear orphaned scratchpads from a crashed call
+  try{ Object.keys(localStorage).forEach(k=>{ if(k.indexOf('call.notes.')===0 && k!=='call.notes.'+callStart) localStorage.removeItem(k); }); }catch{} // clear orphaned scratchpads (snapshot keys — mutating during for-in skips keys; keep the active call's)
   $('#cpMin').onclick=()=>{ if(_callDragMoved)return; callMin=true; callRender(); };
   $('#callChip').onclick=()=>{ if(_callDragMoved)return; callMin=false; callRender(); };
   $('#cpTabT').onclick=()=>{ callTab='transcript'; callRender(); };
@@ -1933,7 +1855,7 @@ function onModelProgress(m){
   if(pct) pct.textContent=m.done?'Finishing…':((m.pct||0)+'% of ~845 MB');
   if(m.done){ toast('Speech model ready — you’re all set.'); closeModal(); }
 }
-boot();
+boot().catch(e=>console.error('boot failed:',e));
 // Onboarding removed — open straight to the app; each feature asks for its one permission the first time it's used.
 </script>
 </body>

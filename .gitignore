@@ -9,6 +9,15 @@ meeting-state/meeting-state
 stt/transcribe-server/transcribe-server
 stt/transcribe-server/.transcribe.cpp/
 
+# Packaged app + installer — produced by `tauri build` / desktop/make-dmg.sh
+# (normally only ever under desktop/src-tauri/target/, which is ignored; belt-and-braces
+#  so a stray bundle in the repo root can never be staged)
+*.app
+*.dmg
+
+# Go-to-market pack (business material, not code) — MUST NOT be committed
+gtm-workflows/
+
 # macOS / editor
 .DS_Store
 *.swp

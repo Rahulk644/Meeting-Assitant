@@ -463,6 +463,7 @@ http.createServer((req, res) => {
         if (j.modules && typeof j.modules === "object") { // feature opt-in → gates every permission-touching capability
           modules = { ...modules, ...j.modules };
           dictationCfg.enabled = !!modules.dictation;    // the dictation tap follows the module
+          settingsBlob["set.modules"] = JSON.stringify(modules); saveSettings(); // persist so the boot-time restore (above) survives a relaunch — was RAM-only, so the server booted all-off until the UI re-pushed
           broadcast({ type: "state", state: { modules, dictation: dictationCfg } });
         }
       } catch {}

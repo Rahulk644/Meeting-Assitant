@@ -56,7 +56,13 @@ fn track(child: std::io::Result<Child>) {
 }
 fn kill_children() {
     if let Ok(mut v) = CHILDREN.lock() {
-        for mut c in v.drain(..) { let _ = c.kill(); }
+        let kids: Vec<Child> = v.drain(..).collect();
+        // SIGTERM first, not SIGKILL: meeting-tap traps SIGTERM to finalize its in-progress .mp4 (write the
+        // moov atom so a recording made right up to quit stays playable). SIGKILL is uncatchable and would
+        // skip that, truncating the file. Give the handlers a brief grace, then hard-kill anything still alive.
+        for c in &kids { let _ = Command::new("/bin/kill").arg(c.id().to_string()).status(); }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        for mut c in kids { let _ = c.kill(); }
     }
 }
 
@@ -114,6 +120,9 @@ fn start_stack() {
                 .env("ASSISTANT_MODELS_DIR", MODELS_DIR.get().cloned().unwrap_or_default())
                 .env("ASSISTANT_REPO", REPO)
                 .stdout(Stdio::null()).stderr(Stdio::null()).spawn());
+        } else {
+            eprintln!("FATAL: `node` not found in /opt/homebrew/bin, /usr/local/bin, /usr/bin, or ~/.local/bin — \
+                       the local server can't start, so the app window will be blank. Install Node.js and relaunch.");
         }
     }
     if cfg!(debug_assertions) { return; } // dev: capture comes from ./run.sh
@@ -484,7 +493,7 @@ fn dict_paste(text: &str) {
 // key tap → no Input Monitoring. Mode = DICT_PTT (set from Settings via set_dictation).
 static DICT_PTT: AtomicBool = AtomicBool::new(false);   // false = tap-to-talk, true = push-to-talk
 fn dictation_start() {
-    let mut g = DICT.lock().unwrap();
+    let mut g = DICT.lock().unwrap_or_else(|e| e.into_inner());
     if !g.enabled || g.rec.is_some() { return; }
     // Start capturing IMMEDIATELY, in-process — no child to launch, so the mic opens as fast as macOS
     // can hand us the device (Handy measures ~230ms for the same step; we skip the ~300ms process spawn).
@@ -499,7 +508,7 @@ fn dictation_start() {
     // Esc-to-cancel is watched inside the event tap (keycode 53) and gated on recording — no separate grab.
 }
 fn dictation_stop_rec() {
-    let mut g = DICT.lock().unwrap();
+    let mut g = DICT.lock().unwrap_or_else(|e| e.into_inner());
     let Some(rec) = g.rec.take() else { return; };
     let ms = g.started.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
     g.started = None;
@@ -508,11 +517,20 @@ fn dictation_stop_rec() {
     std::thread::spawn(move || dictation_finish(rec, ms));
 }
 fn dictation_toggle() {
-    let recording = DICT.lock().unwrap().rec.is_some();
+    let recording = DICT.lock().unwrap_or_else(|e| e.into_inner()).rec.is_some();
     if recording { dictation_stop_rec() } else { dictation_start() }
 }
 // Serializes the finish tail so two quick back-to-back dictations can't race the shared /tmp WAV or clipboard.
 static DICT_FINISH: Mutex<()> = Mutex::new(());
+// Reset the pill + tray to idle — but ONLY if no newer dictation is already recording. dictation_finish runs
+// on a detached thread and can take up to 60s (transcription); by the time it ends the user may have started
+// a new dictation that now owns the pill (dictation_stop_rec take()s the Recorder, so a new start is allowed
+// the instant Stop is pressed). Without this guard the old, slow finish stomps the new "listening" pill to idle.
+fn dict_ui_idle() {
+    if DICT.lock().unwrap_or_else(|e| e.into_inner()).rec.is_some() { return; }
+    emit_dstate("idle");
+    dict_feedback(false);
+}
 fn dictation_finish(mut rec: Recorder, ms: u64) {
     rec.stop.store(true, Ordering::Relaxed);
     if let Some(h) = rec.handle.take() { let _ = h.join(); } // stream fully stopped, buffer settled
@@ -527,7 +545,7 @@ fn dictation_finish(mut rec: Recorder, ms: u64) {
     let _finish = DICT_FINISH.lock().unwrap_or_else(|e| e.into_inner());
     let wav = "/tmp/myassistant-dictation.wav".to_string();
     // No speech detected → skip the engine entirely (no paste, no hallucinated text).
-    if speech.is_empty() || !write_wav16k(&wav, &speech) { emit_dstate("idle"); dict_feedback(false); return; }
+    if speech.is_empty() || !write_wav16k(&wav, &speech) { dict_ui_idle(); return; }
     let out = Command::new("curl")
         .args(["-s", "--max-time", "60", &format!("{}/api/transcribe", SERVER), "-F", &format!("file=@{}", wav)])
         .output();
@@ -539,14 +557,13 @@ fn dictation_finish(mut rec: Recorder, ms: u64) {
         dict_paste(&text);
         ingest(&serde_json::json!({ "type": "dictation", "text": text, "ms": ms }).to_string());
     }
-    emit_dstate("idle");
-    dict_feedback(false);
+    dict_ui_idle();
 }
 
 // Esc while recording → throw the clip away: stop capture, no resample / VAD / transcribe / paste. The
 // stop+join runs off-thread because this is invoked from the Esc hotkey handler (the main thread).
 fn dictation_cancel() {
-    let rec = { let mut g = DICT.lock().unwrap(); g.started = None; g.rec.take() };
+    let rec = { let mut g = DICT.lock().unwrap_or_else(|e| e.into_inner()); g.started = None; g.rec.take() };
     let Some(mut rec) = rec else { return; };
     emit_dstate("idle");
     dict_feedback(false);
@@ -768,7 +785,7 @@ fn def_vol() -> u8 { 70 }
 
 #[tauri::command]
 fn set_dictation(app: AppHandle, cfg: DictCfg) {
-    DICT.lock().unwrap().enabled = cfg.enabled;
+    DICT.lock().unwrap_or_else(|e| e.into_inner()).enabled = cfg.enabled;
     DICT_PTT.store(cfg.ptt, Ordering::Relaxed);
     {
         let mut p = DICT_PREFS.lock().unwrap_or_else(|e| e.into_inner());
@@ -894,8 +911,10 @@ pub fn run() {
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit My Assistant", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &settings, &sep, &quit])?;
-            TrayIconBuilder::with_id("tray")
-                .icon(app.default_window_icon().unwrap().clone())
+            // The bundle always ships a tray icon, but default_window_icon() is an Option — don't .unwrap()
+            // it on the setup path (a None would panic the whole setup closure → the app never launches).
+            // Fall back to a text-only tray instead of crashing.
+            let mut tray = TrayIconBuilder::with_id("tray")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .tooltip("My Assistant")
@@ -904,8 +923,9 @@ pub fn run() {
                     "settings" => { if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); let _ = w.eval("try{setView('settings')}catch(e){}"); } }
                     "quit" => app.exit(0),
                     _ => {}
-                })
-                .build(app)?;
+                });
+            if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
+            tray.build(app)?;
 
             Ok(())
         })
