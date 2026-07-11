@@ -6,7 +6,14 @@
     "main",
     "pill"
   ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:8790",
+      "http://localhost:8790"
+    ]
+  },
   "permissions": [
-    "core:default"
+    "core:default",
+    "allow-app-commands"
   ]
 }

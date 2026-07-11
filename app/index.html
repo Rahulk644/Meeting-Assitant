@@ -108,6 +108,10 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
         border:1px solid var(--line);color:var(--ink);font-size:13px;font-weight:550;cursor:pointer;transition:.12s}
   .obtn:hover{background:var(--surface-2)} .obtn svg{width:15px;height:15px}
   .obtn.solid{font-weight:600} .obtn .rdot{width:9px;height:9px;border-radius:50%;background:var(--live)}
+  /* A disabled button must stay clearly PRESENT (muted), never fade toward invisible — a 0.5-opacity button
+     reads as "no button", which is exactly why the shortcut recorder's Save looked missing. */
+  .obtn:disabled{opacity:1;background:var(--surface-2);color:var(--ink-3);border-color:var(--line);cursor:not-allowed}
+  .obtn:disabled:hover{background:var(--surface-2)}
   .tag{display:inline-flex;align-items:center;gap:7px;padding:7px 12px;border-radius:999px;background:var(--surface-2);
         color:var(--ink-2);font-size:12.5px} .tag svg{width:14px;height:14px}
   .sect{margin-top:42px;font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--ink-3);text-transform:uppercase}
@@ -706,7 +710,7 @@ function updateThemeIcon(){
     : '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
 }
 function setTheme(mode){
-  try{localStorage.setItem('theme',mode)}catch{}
+  try{localStorage.setItem('theme',mode);mirror('theme',mode)}catch{}
   document.documentElement.dataset.theme=effTheme(mode);
   applyAccent();
   updateThemeIcon();
@@ -716,9 +720,20 @@ $('#themeToggle').onclick=()=>setTheme(effTheme(themePref())==='dark'?'light':'d
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{ if(themePref()==='system') setTheme('system') });
 updateThemeIcon();
 
+/* ---------- durable settings (server-backed) ----------
+   WKWebView does NOT persist localStorage for the http://localhost origin Tauri loads (storage is bound to the
+   tauri:// protocol, not an external URL) — so every setting was lost on relaunch, resetting all feature
+   modules to off and leaving dictation/meetings dead. Fix: mirror setting writes to the server
+   (DATA_DIR/settings.json) at the write sites (store.set / theme / route) and rehydrate on boot. We mirror at
+   the call sites rather than overriding localStorage.setItem — Safari/WKWebView rejects reassigning Storage
+   methods, which throws under "use strict" and would kill the whole script. */
+let __pending={}, __mtimer=null;
+function mirror(k,v){ __pending[k]=(v==null?null:String(v)); if(!__mtimer) __mtimer=setTimeout(()=>{ const p=__pending; __pending={}; __mtimer=null; fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({set:p})}).catch(()=>{}); },250); }
+async function hydrateSettings(){ let kv=null; try{ kv=await (await fetch('/api/settings')).json(); }catch{} if(kv&&typeof kv==='object') for(const k in kv){ if(kv[k]!=null) try{ localStorage.setItem(k,kv[k]); }catch{} } }
+
 /* ---------- store ---------- */
 const store={get(k,d){try{const v=localStorage.getItem('set.'+k);return v==null?d:JSON.parse(v)}catch{return d}},
-             set(k,v){try{localStorage.setItem('set.'+k,JSON.stringify(v))}catch{}}};
+             set(k,v){try{const s=JSON.stringify(v);localStorage.setItem('set.'+k,s);mirror('set.'+k,s)}catch{}}};
 
 /* ---------- accent (a theme within each mode) ---------- */
 // [light, dark] per accent — dark is lifted so it pops on the near-black canvas. Keep in sync with the <head> boot map.
@@ -747,7 +762,7 @@ function setView(name){
   $('#appTitle').textContent=TITLES[name]||'';
   $('#docLink').hidden=!(name==='dictation'||name==='writing');
   if(name==='settings') renderSettings();
-  try{localStorage.setItem('route',name)}catch{}
+  try{localStorage.setItem('route',name);mirror('route',name)}catch{}
 }
 document.querySelectorAll('.nav[data-view]').forEach(n=>{
   n.onclick=()=>navTo(n.dataset.view);   // gates disabled modules → enable flow
@@ -757,7 +772,7 @@ $('#docLink').onclick=()=>setView('feedback');
 $('#fcSupport').onclick=(e)=>{ e.stopPropagation(); toast('Thank you for the support! 💛'); };
 
 /* ---------- native (Tauri) bridge + server config ---------- */
-function isTauri(){ return !!(window.__TAURI__ && window.__TAURI__.core); }
+function inTauri(){ return !!(window.__TAURI__ && window.__TAURI__.core); }
 async function setStealth(on){ try{ await window.__TAURI__.core.invoke('set_stealth',{on}); }catch(e){} }
 // In-app dictation: the app process owns the hotkey, recording, paste, sound cues and the pill, so push the
 // FULL config to it (not just on/off). ask=true → prompt for Accessibility on an explicit enable, so a
@@ -765,8 +780,15 @@ async function setStealth(on){ try{ await window.__TAURI__.core.invoke('set_stea
 function dictClipMode(){ const c=store.get('clipboard',DEFAULTS.clipboard); return c==='Replace clipboard'?'replace':(c==='Save after dictation'?'save':'restore'); }
 const OVERLAY_POS={'Bottom center':'bottom-center','Bottom right':'bottom-right','Top right':'top-right','Top center':'top-center'};
 // "⌃⇧D" or "⌃+⇧+D" → {mods:['ctrl','shift'], key:'D'} for the app's global-shortcut registrar (Fn is dropped — it can't be a global shortcut).
+// A bare-modifier trigger (Handy-style right ⌘ / Option) is stored as "mod:<name>" (e.g. "mod:command_right").
+// Everything else is a normal combo string like "⌃⇧D". These helpers keep the two forms straight everywhere.
+const MOD_LABELS={command_left:'Left ⌘',command_right:'Right ⌘',control_left:'Left ⌃',control_right:'Right ⌃',option_left:'Left ⌥',option_right:'Right ⌥',shift_left:'Left ⇧',shift_right:'Right ⇧'};
+function isModTrigger(raw){ return String(raw||'').startsWith('mod:'); }
+function triggerLabel(raw){ raw=String(raw||''); return isModTrigger(raw) ? (MOD_LABELS[raw.slice(4)]||raw.slice(4)) : raw; }
 function dictHotkey(str){
-  const raw=String(str||'').split('+').map(s=>s.trim()).filter(Boolean);
+  str=String(str||'');
+  if(str.startsWith('mod:')) return {mods:[], key:'', modifier:str.slice(4)}; // bare-modifier trigger → Rust runs the event tap
+  const raw=str.split('+').map(s=>s.trim()).filter(Boolean);
   // peel any leading modifier glyphs (handles "⌃⇧D"); the remainder is the key (so "⌥Space" → ⌥ + "Space", not S·p·a·c·e)
   const runes=[]; for(const p of raw){ let s=p; while(s.length && /[⌘⌃⌥⇧]/.test(s[0])){ runes.push(s[0]); s=s.slice(1); } if(s) runes.push(s); }
   const mods=[]; let key='';
@@ -780,10 +802,10 @@ function dictHotkey(str){
   }
   return {mods, key};
 }
-function syncDictation(ask){ if(!isTauri()) return;
+function syncDictation(ask){ if(!inTauri()) return;
   let scStart=store.get('sc_start',DEFAULTS.sc_start);
-  { const h=dictHotkey(scStart); if(!(h.mods.length>0 && scMappable(h.key))){ scStart=DEFAULTS.sc_start; store.set('sc_start',scStart); } } // self-heal an invalid stored start shortcut so the UI + Rust agree
-  try{ window.__TAURI__.core.invoke('set_dictation',{cfg:{
+  { const h=dictHotkey(scStart); const ok = h.modifier ? true : (h.mods.length>0 && scMappable(h.key)); if(!ok){ scStart=DEFAULTS.sc_start; store.set('sc_start',scStart); } } // self-heal an invalid stored start shortcut (a bare-modifier trigger IS valid)
+  const cfg={
   enabled: moduleOn('dictation'),
   ptt: !!store.get('push_to_talk',DEFAULTS.push_to_talk),
   sound: !!store.get('dict_sound',true),
@@ -794,7 +816,12 @@ function syncDictation(ask){ if(!isTauri()) return;
   hotkey: dictHotkey(scStart),
   cancel: dictHotkey(store.get('sc_cancel',DEFAULTS.sc_cancel)),
   prompt: !!ask,
-}}); }catch(e){} }
+  };
+  // Surface failures instead of swallowing them: a Tauri ACL rejection is a promise REJECTION (not a sync
+  // throw), so the old bare try/catch hid "command not allowed by ACL" completely — which silently disabled
+  // dictation. Log both paths so it can never hide again.
+  try{ const p=window.__TAURI__.core.invoke('set_dictation',{cfg}); if(p&&p.catch) p.catch(e=>console.warn('set_dictation rejected:',e)); }
+  catch(e){ console.warn('set_dictation threw:',e); } }
 async function cfg(patch){ try{ await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)}); }catch{} }
 const setVideoMode=m=>cfg({videoMode:m}), setTranslate=on=>cfg({translate:on}), setLanguage=l=>cfg({language:l});
 
@@ -850,7 +877,7 @@ function pushDictation(){
 function paintDictHints(){
   const t=$('#dictLangTag'); if(t) t.textContent=String(store.get('dict_lang',DEFAULTS.dict_lang)).replace('Auto-detect','Auto');
   const trig=store.get('sc_start',DEFAULTS.sc_start);
-  document.querySelectorAll('#dictHint,#dictHintLead').forEach(k=>{ k.textContent=trig; });
+  document.querySelectorAll('#dictHint,#dictHintLead').forEach(k=>{ k.textContent=triggerLabel(trig); });
 }
 let dictItems=[];
 function dictAgo(ts){ const s=Math.max(0,(Date.now()-ts)/1000);
@@ -1022,10 +1049,15 @@ function renderSettings(){
     b.innerHTML=(PANEL_ICONS[id]||'')+`<span>${label}</span>`; b.onclick=()=>setPanel(id); rail.append(b); });
   const body=$('#setBody'); body.innerHTML='';
   if(curPanel==='profile'){ renderProfile(body); return; }
+  // Dictation: when the module is OFF, every setting below the master toggle is inert — show only the single
+  // "Enable dictation" switch (turning it on reveals the rest). A disabled feature shouldn't flaunt dead knobs.
+  const dictOff = (curPanel==='dictation' && !moduleOn('dictation'));
   for(const sec of (SCHEMA[curPanel]||[])){
+    const rows = dictOff ? sec.rows.filter(r=>r.id==='dict_enabled') : sec.rows;
+    if(!rows.length) continue; // nothing visible in this section → skip its header too
     const l=document.createElement('div'); l.className='sec-l'; l.textContent=sec.label; body.append(l);
     if(sec.note){ const n=document.createElement('div'); n.className='sec-n'; n.textContent=sec.note; body.append(n); }
-    for(const row of sec.rows){
+    for(const row of rows){
       if(row.type==='aimodel') renderAIModel(body,row);
       else body.append(settingRow(row));
     }
@@ -1109,12 +1141,12 @@ function settingRow(row){
     else if(id==='auto_detect'){ getV=()=>store.get('auto_detect',true); setV=v=>{store.set('auto_detect',v); cfg({autoDetect:v})}; }  // off → only manual start records
     else if(id==='unload_model'){ getV=()=>store.get('unload_model',true); setV=v=>{store.set('unload_model',v); cfg({unloadIdle:v})}; }  // off → keep the model hot
     else if(id==='live_indicator'){ getV=()=>store.get('live_indicator',true); setV=v=>{store.set('live_indicator',v); callRender()}; }  // reflect on the overlay immediately
-    else if(id==='dict_enabled'){ getV=()=>moduleOn('dictation'); setV=v=>{ setModule('dictation',v); pushDictation(); renderDictations(); }; }        // master on/off = the Dictation module
+    else if(id==='dict_enabled'){ getV=()=>moduleOn('dictation'); setV=v=>{ setModule('dictation',v); pushDictation(); renderDictations(); renderSettings(); }; }  // master on/off; re-render so dependent rows show/hide
     else if(id==='push_to_talk'){ getV=()=>store.get('push_to_talk',DEFAULTS.push_to_talk); setV=v=>{store.set('push_to_talk',v); syncDictation(false);}; } // push-to-talk vs tap-to-talk
     else if(id==='dict_sound'){ getV=()=>store.get('dict_sound',true); setV=v=>{store.set('dict_sound',v); syncDictation(false)}; }         // start/stop cue on/off
     else if(id==='overlay_enabled'){ getV=()=>store.get('overlay_enabled',true); setV=v=>{store.set('overlay_enabled',v); syncDictation(false)}; } // show/hide the dictation pill
-    else if(id==='show_tray'){ getV=()=>store.get('show_tray',true); setV=v=>{store.set('show_tray',v); if(isTauri()){try{window.__TAURI__.core.invoke('set_tray_visible',{on:v})}catch(e){}}}; } // menu-bar icon on/off
-    else if(id==='stealth'){ gate=!isTauri(); getV=()=>isTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
+    else if(id==='show_tray'){ getV=()=>store.get('show_tray',true); setV=v=>{store.set('show_tray',v); if(inTauri()){try{window.__TAURI__.core.invoke('set_tray_visible',{on:v})}catch(e){}}}; } // menu-bar icon on/off
+    else if(id==='stealth'){ gate=!inTauri(); getV=()=>inTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
       if(gate) l.querySelector('.st').insertAdjacentHTML('beforeend','<span class="badge">DESKTOP</span>'); }
     else { getV=()=>store.get(id,DEFAULTS[id]||false); setV=v=>store.set(id,v); }
     const b=document.createElement('button'); b.className='tgl'+(getV()?' on':''); b.disabled=gate;
@@ -1169,6 +1201,8 @@ function settingRow(row){
     const raw=String(store.get(id,DEFAULTS[id]??'')); const unset=(raw===''||raw==='Not set');
     const w=document.createElement('div'); w.className='sc-row';
     if(unset) w.innerHTML='<span class="notset">Not set</span>';
+    else if(isModTrigger(raw)){ const keys=document.createElement('div'); keys.className='keys'; // a bare-modifier trigger → one friendly chip ("Right ⌘")
+      const s=document.createElement('span'); s.className='keycap'; s.textContent=triggerLabel(raw); keys.append(s); w.append(keys); }
     else { const keys=document.createElement('div'); keys.className='keys';
       raw.split('+').map(k=>k.trim()).filter(Boolean).forEach(k=>{ const s=document.createElement('span'); s.className='keycap'; s.textContent=k; keys.append(s); }); w.append(keys); }
     const chg=document.createElement('div'); chg.className='abtn'; chg.textContent=unset?'Set shortcut':'Change';
@@ -1308,7 +1342,7 @@ const MODULE_INFO={
            {name:'Accessibility',pane:'Privacy_Accessibility',why:'Read participant names (optional).',optional:true}]},
 };
 const SOON={writing:{name:'Writing Assistant',blurb:'Rewrite, fix grammar, or translate any selected text in place.'},agents:{name:'AI Agents',blurb:'Background automations that run your repetitive work.'}};
-function modules(){ const m=store.get('modules',null); return (m&&typeof m==='object')?{dictation:!!m.dictation,meetings:!!m.meetings,writing:!!m.writing}:{dictation:false,meetings:false,writing:false}; }
+function modules(){ const m=store.get('modules',null); return (m&&typeof m==='object')?{dictation:!!m.dictation,meetings:!!m.meetings,writing:!!m.writing}:{dictation:true,meetings:true,writing:false}; } // default ON (onboarding removed → off-by-default = dead app); an explicit toggle-off persists
 function moduleOn(k){ return !!modules()[k]; }
 function setModule(k,on){ const m=modules(); m[k]=!!on; store.set('modules',m); cfg({modules:m}); if(k==='dictation') syncDictation(!!on); paintNav(); }
 async function openSettingsPane(pane){ try{ await fetch('/api/open-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pane})}); toast('Opening System Settings — enable “My Assistant”.'); }catch{ toast('Open System Settings › Privacy & Security.'); } }
@@ -1388,16 +1422,17 @@ function scKeyName(e){
 }
 function scMappable(k){ k=String(k||''); return /^[A-Za-z0-9]$/.test(k)||/^(space|spacebar|enter|return|tab|esc|escape|period|comma|\.|,)$/i.test(k); }
 // Record a shortcut with an explicit Save button + validation (no more auto-saving the first key you press).
-// The start hotkey MUST include a modifier (a bare key would be swallowed system-wide — the same rule Rust
-// enforces); cancel/other rows may be a single key. Escape is captured as a key here (click Cancel to close).
+// The start trigger is either a COMBO (modifier(s)+key, e.g. ⌃⇧D) OR — Handy-style — a single MODIFIER on its
+// own (right ⌘, right ⌥, …), committed on key-up and stored as "mod:<name>". Cancel/other rows are a single key.
 function recordShortcut(id,title){
-  const needsMod=(id==='sc_start');
-  let mods=[], key='';
+  const needsMod=(id==='sc_start'), allowMod=(id==='sc_start'); // sc_start may also be a bare-modifier hold/tap key
+  let mods=[], key='', modTrigger='', everMultiMod=false;
+  const codeToMod=(code)=>({MetaLeft:'command_left',MetaRight:'command_right',ControlLeft:'control_left',ControlRight:'control_right',AltLeft:'option_left',AltRight:'option_right',ShiftLeft:'shift_left',ShiftRight:'shift_right'})[code]||'';
   openModal(title||'Shortcut', box=>{
     $('#mScrim').dataset.recording='1';
     box.innerHTML=`
-      <div class="msub" style="padding:2px 20px 10px">${needsMod
-        ? 'Hold one or more modifiers (⌘ ⌃ ⌥ ⇧) and press a key — for example ⌘⇧D — then click Save.'
+      <div class="msub" style="padding:2px 20px 10px">${allowMod
+        ? 'Press a combination like ⌘⇧D — or tap a single modifier on its own (e.g. right ⌘, right ⌥) to use it as a hold- or tap-to-talk key. Then click Save.'
         : 'Press the key or combination you want (a single key like Esc is fine), then click Save.'}</div>
       <div id="scCap" style="font-size:16px;padding:14px 20px;min-height:30px;display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap"></div>
       <div id="scErr" style="color:#e5484d;padding:0 20px;font-size:12.5px;min-height:16px;text-align:center"></div>
@@ -1408,28 +1443,53 @@ function recordShortcut(id,title){
       </div>`;
     const cap=box.querySelector('#scCap'), errEl=box.querySelector('#scErr'), saveB=box.querySelector('#scSave');
     const combo=()=>[...mods, ...(key?[key]:[])];
-    const valid=()=> !!key && (!needsMod || mods.length>0);
+    const valid=()=> !!modTrigger || (!!key && (!needsMod || mods.length>0));
     const paint=()=>{
-      const c=combo();
-      cap.innerHTML = c.length ? c.map(k=>`<span class="keycap">${k}</span>`).join('') : '<span style="opacity:.45">Listening…</span>';
-      saveB.disabled=!valid(); saveB.style.opacity=valid()?'1':'.5'; saveB.style.pointerEvents=valid()?'':'none';
-      errEl.textContent = (key && needsMod && !mods.length) ? 'A single key can’t be a global shortcut — add a modifier (⌘ ⌃ ⌥ ⇧).' : '';
+      const ok=valid();
+      if(modTrigger){
+        cap.innerHTML=`<span class="keycap">${MOD_LABELS[modTrigger]||modTrigger}</span><span style="margin-left:9px;color:var(--ink-3);font-size:12.5px">hold to talk, or tap</span>`;
+      } else {
+        const c=combo();
+        cap.innerHTML = c.length ? c.map(k=>`<span class="keycap">${k}</span>`).join('') : '<span style="opacity:.45">Listening…</span>';
+      }
+      // Enabled → an obvious accent primary ("click me"); disabled → the muted-but-visible .obtn:disabled style.
+      // Never fade to 0.5 opacity — the button must stay visibly THERE so it never reads as "no Save button".
+      saveB.disabled=!ok;
+      saveB.style.background=ok?'var(--accent)':'';
+      saveB.style.borderColor=ok?'var(--accent)':'';
+      saveB.style.color=ok?'var(--accent-ink)':'';
+      errEl.textContent = modTrigger ? '' : (!combo().length ? '' : (key && needsMod && !mods.length)
+        ? 'A single key can’t be a global shortcut — add a modifier, or tap one modifier on its own.'
+        : (!key ? (allowMod ? 'Add a letter/number — or just release the modifier to use it on its own.' : 'Keep the modifier held and press a letter or number.') : ''));
     };
     const handler=(e)=>{ e.preventDefault(); e.stopPropagation();
+      modTrigger=''; // a keydown means we're forming a combo; a lone-modifier trigger is only committed on key-up
       mods=[]; if(e.metaKey)mods.push('⌘'); if(e.ctrlKey)mods.push('⌃'); if(e.altKey)mods.push('⌥'); if(e.shiftKey)mods.push('⇧');
+      if(mods.length>=2) everMultiMod=true;
       if(!['Meta','Control','Alt','Shift'].includes(e.key)){ const n=scKeyName(e); if(n){ key=n; errEl.textContent=''; } else errEl.textContent='That key can’t be used — try a letter, number, Space, or Esc.'; }
       paint();
     };
-    const done=()=>document.removeEventListener('keydown',handler,true);
-    box.querySelector('#scClear').onclick=()=>{ mods=[]; key=''; errEl.textContent=''; paint(); };
+    // Releasing a lone modifier (no base key pressed, never held two at once, nothing else still down) commits it
+    // as a bare-modifier trigger — the right ⌘ / Option hold-or-tap key Handy uses.
+    const upHandler=(e)=>{
+      if(!allowMod || key || everMultiMod) return;
+      if(['Meta','Control','Alt','Shift'].includes(e.key)){
+        const stillHeld = e.metaKey||e.ctrlKey||e.altKey||e.shiftKey;
+        const m=codeToMod(e.code);
+        if(m && !stillHeld){ modTrigger=m; mods=[]; errEl.textContent=''; paint(); }
+      }
+    };
+    const done=()=>{ document.removeEventListener('keydown',handler,true); document.removeEventListener('keyup',upHandler,true); };
+    box.querySelector('#scClear').onclick=()=>{ mods=[]; key=''; modTrigger=''; everMultiMod=false; errEl.textContent=''; paint(); };
     box.querySelector('#scCancel').onclick=()=>closeModal();
-    saveB.onclick=()=>{ if(!valid()) return; done(); store.set(id, combo().join('+')); closeModal(); renderSettings();
+    saveB.onclick=()=>{ if(!valid()) return; done(); store.set(id, modTrigger ? ('mod:'+modTrigger) : combo().join('+')); closeModal(); renderSettings();
       if(id==='sc_start'||id==='sc_cancel'){ syncDictation(false); paintDictHints(); toast('Dictation shortcut updated.'); }
       else if(id==='wa_open'||id==='wa_close') toast('Saved. Writing Assistant shortcuts activate when that module ships.');
       else if(id==='mtg_shortcut') toast('Saved. A global meeting shortcut is coming soon.');
       else toast('Shortcut saved.'); };
     _modalCleanup=()=>{ delete $('#mScrim').dataset.recording; done(); };
     document.addEventListener('keydown',handler,true);
+    document.addEventListener('keyup',upHandler,true);
     paint();
   });
 }
@@ -1806,15 +1866,21 @@ function initCall(){
 }
 
 /* ---------- boot ---------- */
-initCall();
-applyAccent();
-setView((()=>{try{const r=localStorage.getItem('route');return (r&&TITLES[r])?r:'meetings'}catch{return 'meetings'}})());
-mtShow('library');
-if(isTauri() && store.get('stealth',false)) setStealth(true);
-setVideoMode(store.get('videoMode','off'));
-setLanguage(store.get('language','auto'));
-setTranslate(store.get('translate',true));
-cfg({autoDetect:store.get('auto_detect',true), unloadIdle:store.get('unload_model',true), vocab:vocabPrompt()});
+async function boot(){
+  await hydrateSettings();                 // pull durable settings BEFORE reading any (WKWebView localStorage isn't persisted for this origin)
+  setTheme(themePref());                    // re-apply theme + accent now the real values are hydrated (the pre-paint inline read saw empty storage)
+  initCall();
+  setView((()=>{try{const r=localStorage.getItem('route');return (r&&TITLES[r])?r:'meetings'}catch{return 'meetings'}})());
+  mtShow('library');
+  if(inTauri() && store.get('stealth',false)) setStealth(true);
+  setVideoMode(store.get('videoMode','off'));
+  setLanguage(store.get('language','auto'));
+  setTranslate(store.get('translate',true));
+  cfg({autoDetect:store.get('auto_detect',true), unloadIdle:store.get('unload_model',true), vocab:vocabPrompt()});
+  pushDictation(); initDictation();
+  cfg({modules:modules()}); paintNav(); syncDictation(false);
+  modelGate();
+}
 /* ---------- first-run: on-device speech model (Handy-style — we ASK before downloading) ---------- */
 async function modelGate(){
   let s; try{ s=await (await fetch('/api/model/status')).json(); }catch{ return; }
@@ -1847,9 +1913,7 @@ function onModelProgress(m){
   if(pct) pct.textContent=m.done?'Finishing…':((m.pct||0)+'% of ~845 MB');
   if(m.done){ toast('Speech model ready — you’re all set.'); closeModal(); }
 }
-pushDictation(); initDictation();
-cfg({modules:modules()}); paintNav(); syncDictation(false);
-modelGate();
+boot();
 // Onboarding removed — open straight to the app; each feature asks for its one permission the first time it's used.
 </script>
 </body>

@@ -44,6 +44,27 @@ let recentDictations = []; // last N dictation results — in-memory, session-li
 // requested until a module is enabled. meeting-tap/meeting-state gate their capability use on these.
 let modules = { dictation: false, meetings: false, writing: false };
 let dictStopSeq = 0; // bumped by POST /api/dictation/stop (pill/tray Stop) → meeting-tap finishes the current dictation
+// Durable settings — WKWebView does NOT persist localStorage for the http://localhost origin Tauri loads
+// (storage is bound to the tauri:// custom protocol, not an external URL), so EVERY UI setting was lost on
+// relaunch (modules reset to off → dictation dead). Fix: the UI mirrors every setting write here and
+// rehydrates on boot. settings.json is a flat mirror of the UI's localStorage keys, values stored verbatim.
+const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
+let settingsBlob = {};
+try { settingsBlob = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) || {}; } catch { settingsBlob = {}; }
+let _settingsTimer = null;
+function saveSettings() {
+  clearTimeout(_settingsTimer);
+  _settingsTimer = setTimeout(() => {
+    try { const tmp = SETTINGS_FILE + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(settingsBlob)); fs.renameSync(tmp, SETTINGS_FILE); }
+    catch (e) { console.error("settings save failed:", e.message); }
+  }, 300);
+}
+// Restore module gating from durable settings immediately, so meeting-tap sees the right state on restart
+// (before the UI boots and re-pushes it) instead of the all-off default above.
+try {
+  const m = settingsBlob["set.modules"] && JSON.parse(settingsBlob["set.modules"]);
+  if (m && typeof m === "object") { modules = { dictation: !!m.dictation, meetings: !!m.meetings, writing: !!m.writing }; dictationCfg.enabled = !!modules.dictation; }
+} catch {}
 function effectiveRecording() { return manual === "on" ? true : (manual === "paused" || manual === "off") ? false : (autoDetect && detected); }
 function broadcastCall() { // push the composed call state to the UI (and lastState, for reconnects)
   const rec = effectiveRecording();
@@ -406,6 +427,25 @@ http.createServer((req, res) => {
       let notes = ""; try { notes = String(JSON.parse(b).notes || ""); } catch {}
       if (cur) { cur.notes = notes.slice(0, 8000); saveMeeting(cur); }
       res.writeHead(cur ? 204 : 409); res.end(); // 409 = no live meeting to attach to
+    });
+    return;
+  }
+  if (req.url === "/api/settings" && req.method === "GET") { // durable mirror of the UI's localStorage (WKWebView drops it for the http origin)
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify(settingsBlob));
+  }
+  if (req.url === "/api/settings" && req.method === "POST") { // the UI mirrors every setting write here so it survives relaunch
+    readBody(req).then(b => {
+      try {
+        const j = JSON.parse(b);
+        const patch = j && j.set && typeof j.set === "object" ? j.set : null;
+        if (patch) {
+          for (const k in patch) { if (patch[k] == null) delete settingsBlob[k]; else settingsBlob[k] = String(patch[k]); }
+          saveSettings();
+          try { const m = patch["set.modules"] != null && JSON.parse(patch["set.modules"]); if (m && typeof m === "object") { modules = { dictation: !!m.dictation, meetings: !!m.meetings, writing: !!m.writing }; dictationCfg.enabled = !!modules.dictation; } } catch {}
+        }
+      } catch {}
+      res.writeHead(204); res.end();
     });
     return;
   }

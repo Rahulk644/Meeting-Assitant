@@ -2,7 +2,7 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -563,7 +563,13 @@ fn esc_arm(arm: bool) {
 // Shortcut so a change can unregister the old one before adding the new. A dictation hotkey MUST carry a
 // modifier — a bare global key would be swallowed system-wide.
 #[derive(serde::Deserialize, Default)]
-struct HotkeySpec { #[serde(default)] mods: Vec<String>, #[serde(default)] key: String }
+struct HotkeySpec {
+    #[serde(default)] mods: Vec<String>,
+    #[serde(default)] key: String,
+    // A bare-modifier trigger (Handy-style), e.g. "command_right", "option", "control_left". Non-empty → the
+    // event tap below drives dictation and no Carbon hotkey is registered (Carbon can't bind a lone modifier).
+    #[serde(default)] modifier: String,
+}
 static DICT_HOTKEY: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
 
 fn key_to_code(key: &str) -> Option<tauri_plugin_global_shortcut::Code> {
@@ -631,6 +637,97 @@ fn register_dict_hotkey(app: &AppHandle, spec: &HotkeySpec) -> bool {
     }
 }
 
+// ---- bare-modifier trigger (Handy-style: right ⌘, Option, etc. as a hold/tap-to-talk key) --------------
+// Carbon RegisterEventHotKey (the plugin above) CANNOT bind a lone modifier. So when the trigger IS a bare
+// modifier we run a listen-only CGEventTap on .flagsChanged and watch that modifier's device-flag bit go
+// down/up, feeding the SAME on_dict_hotkey(Pressed/Released). Push-to-talk on → hold-to-talk, off →
+// tap-to-talk — identical to Handy, and it reuses everything we already built.
+static DICT_MOD_MASK: AtomicU64 = AtomicU64::new(0);    // device-flag bit to watch; 0 = no modifier trigger (use Carbon)
+static DICT_MOD_DOWN: AtomicBool = AtomicBool::new(false); // last observed state of that modifier (edge detection)
+static DICT_TAP_UP: AtomicBool = AtomicBool::new(false);   // is the event-tap thread live? (guards against a double tap)
+
+// Modifier name (from the UI) → macOS device-dependent flag bit(s). The *_right / *_left device masks are what
+// let us tell the two ⌘ keys apart — the generic Command flag can't. Fn has no device bit, so it rides the
+// generic SecondaryFn mask. These constants are the classic NX_DEVICE*KEYMASK values.
+fn modifier_mask(name: &str) -> u64 {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "control_left"  | "ctrl_left"  => 0x0000_0001,
+        "shift_left"                    => 0x0000_0002,
+        "shift_right"                   => 0x0000_0004,
+        "command_left"  | "cmd_left"   => 0x0000_0008,
+        "command_right" | "cmd_right"  => 0x0000_0010,
+        "option_left"   | "alt_left"   => 0x0000_0020,
+        "option_right"  | "alt_right"  => 0x0000_0040,
+        "control_right" | "ctrl_right" => 0x0000_2000,
+        // either-side (device bits OR'd together):
+        "command" | "cmd"              => 0x0000_0018,
+        "option"  | "alt" | "opt"      => 0x0000_0060,
+        "control" | "ctrl"             => 0x0000_2001,
+        "shift"                        => 0x0000_0006,
+        "fn"                           => 0x0080_0000, // SecondaryFn (Fn has no L/R device bit)
+        _ => 0,
+    }
+}
+
+// Spawned once (and retried when a modifier trigger is first set, in case Accessibility was just granted). A
+// dedicated thread owns the tap and its CFRunLoop — the tap is !Send and the loop parks the thread forever.
+// The WATCHED modifier is swapped live via DICT_MOD_MASK, so rebinding needs no teardown. Needs Accessibility
+// (the same grant the paste uses); if it isn't granted the tap can't be created → we log and give up until relaunch.
+fn start_modifier_tap() {
+    if DICT_TAP_UP.swap(true, Ordering::SeqCst) { return; } // already running — don't create a second tap
+    std::thread::spawn(|| {
+        use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement, CGEventTapOptions, CGEventType};
+        use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
+        let tap = CGEventTap::new(
+            CGEventTapLocation::Session,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::ListenOnly,
+            vec![CGEventType::FlagsChanged],
+            |_proxy, etype, event| {
+                // Only modifier-change events carry a trigger. Ignore the TapDisabled* control events macOS
+                // delivers here — reading their flags would spoof a spurious press/release.
+                if matches!(etype, CGEventType::FlagsChanged) {
+                    let mask = DICT_MOD_MASK.load(Ordering::Relaxed);
+                    if mask != 0 {
+                        // act only when OUR modifier's device bit transitions
+                        let down = (event.get_flags().bits() & mask) != 0;
+                        if down != DICT_MOD_DOWN.swap(down, Ordering::Relaxed) {
+                            // Marshal to the MAIN thread so start/stop runs on the same thread as the Carbon
+                            // hotkey path (keeps CoreAudio/AppKit on main) and keeps this tap callback fast.
+                            if let Some(app) = APP.get() {
+                                let _ = app.run_on_main_thread(move || {
+                                    use tauri_plugin_global_shortcut::ShortcutState;
+                                    on_dict_hotkey(if down { ShortcutState::Pressed } else { ShortcutState::Released });
+                                });
+                            }
+                        }
+                    }
+                }
+                None // listen-only: never modify or swallow the event
+            },
+        );
+        match tap {
+            Ok(tap) => match tap.mach_port.create_runloop_source(0) {
+                Ok(src) => {
+                    let rl = CFRunLoop::get_current();
+                    unsafe { rl.add_source(&src, kCFRunLoopCommonModes); }
+                    tap.enable();
+                    eprintln!("dictation: modifier event-tap running");
+                    // Run the loop in short slices and re-enable after each: macOS disables an event tap under
+                    // load (kCGEventTapDisabledByTimeout), and without re-enabling, the modifier trigger would
+                    // silently die until relaunch. This mirrors Handy's handy-keys run loop; enable() is idempotent.
+                    loop {
+                        CFRunLoop::run_in_mode(unsafe { kCFRunLoopDefaultMode }, Duration::from_millis(250), false);
+                        tap.enable();
+                    }
+                }
+                Err(_) => { eprintln!("dictation: modifier tap runloop-source failed"); DICT_TAP_UP.store(false, Ordering::SeqCst); }
+            },
+            Err(_) => { eprintln!("dictation: modifier event-tap FAILED to create (grant Accessibility, then relaunch)"); DICT_TAP_UP.store(false, Ordering::SeqCst); }
+        }
+    });
+}
+
 // UI → push the full dictation config into this process. Everything the in-process dictation owns (sound,
 // volume, clipboard, overlay, the rebindable hotkey) is applied here so the Settings rows actually take
 // effect. On an EXPLICIT enable (prompt=true) we ask for Accessibility under THIS app's identity so the
@@ -665,7 +762,20 @@ fn set_dictation(app: AppHandle, cfg: DictCfg) {
     }
     // Cancel key (armed only while recording). Unmappable / missing → None → Esc.
     *DICT_CANCEL.lock().unwrap_or_else(|e| e.into_inner()) = cfg.cancel.as_ref().and_then(|c| key_to_code(&c.key));
-    if let Some(hk) = cfg.hotkey.as_ref() { register_dict_hotkey(&app, hk); }
+    // Trigger: a bare modifier (event tap) OR a Carbon combo — never both at once.
+    let mm = cfg.hotkey.as_ref().map(|hk| modifier_mask(&hk.modifier)).unwrap_or(0);
+    if cfg.enabled && mm != 0 {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        DICT_MOD_MASK.store(mm, Ordering::Relaxed);
+        DICT_MOD_DOWN.store(false, Ordering::Relaxed); // resync edge state to the new modifier
+        // retire any Carbon hotkey so the old ⌃⇧D can't fire alongside the modifier
+        if let Some(prev) = DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner()).take() { let _ = app.global_shortcut().unregister(prev); }
+        start_modifier_tap(); // idempotent; also retries the tap now that Accessibility may have just been granted
+        eprintln!("dictation: modifier trigger set ({} = {:#x})", cfg.hotkey.as_ref().map(|h| h.modifier.as_str()).unwrap_or(""), mm);
+    } else {
+        DICT_MOD_MASK.store(0, Ordering::Relaxed); // fall back to a Carbon combo
+        if let Some(hk) = cfg.hotkey.as_ref() { register_dict_hotkey(&app, hk); }
+    }
     if cfg.enabled && cfg.prompt {
         // Prompts ONLY when not already trusted; silent once granted (the stable cert makes it stick). This
         // is what re-asks once after a signature change / TCC reset, then never again — the paste needs it.
@@ -706,17 +816,25 @@ pub fn run() {
                     std::thread::sleep(Duration::from_millis(400)); // let the HTTP route come fully up
                     let h2 = h.clone();
                     let _ = h.run_on_main_thread(move || {
-                        // Node is up now → (re)load the main window so it shows the UI. The window is created
-                        // at launch from tauri.conf.json (so it appears immediately and in the FOREGROUND),
-                        // but its first load raced node startup and failed, leaving it blank. Reload it here
-                        // and focus it — without this the window stayed blank forever ("quits but never
-                        // reopens"). Same reason the pill below is deferred until the server answers.
-                        if let Some(w) = h2.get_webview_window("main") {
-                            if let Ok(u) = format!("{}/", SERVER).parse() { let _ = w.navigate(u); }
-                            let _ = w.show();
-                            let _ = w.unminimize();
-                            let _ = w.set_focus();
+                        // Create the main window FRESH here, after node answers — NOT from tauri.conf at launch.
+                        // A config window races node startup: its first load fails (connection refused), and a
+                        // later navigate() loads the DOM but WKWebView never runs the page's inline <script> on
+                        // that recovered frame → the whole UI was a dead static shell (nav clicks, dictation,
+                        // settings, config-sync all silently broken; only the pill, built fresh below, worked).
+                        // Building main the same proven way — WebviewWindowBuilder after node-up — makes its
+                        // inline script actually execute. tauri.conf's windows list is now empty for this reason.
+                        if h2.get_webview_window("main").is_none() {
+                            if let Ok(u) = format!("{}/", SERVER).parse() {
+                                let _ = WebviewWindowBuilder::new(&h2, "main", WebviewUrl::External(u))
+                                    .title("My Assistant")
+                                    .inner_size(1120.0, 720.0)
+                                    .min_inner_size(900.0, 600.0)
+                                    .center()
+                                    .resizable(true)
+                                    .build();
+                            }
                         }
+                        if let Some(w) = h2.get_webview_window("main") { let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus(); }
                         make_overlay(&h2, "pill", "pill", PILL_W, PILL_H, true); // click-through: never steals focus
                         position_pill(&h2, PILL_W, PILL_H);
                     });
@@ -726,7 +844,8 @@ pub fn run() {
             // Global dictation hotkey — default ⌃⇧D (Carbon RegisterEventHotKey, needs NO macOS permission).
             // Registered via register_dict_hotkey so Settings can rebind it live; the handler no-ops until
             // dictation is on. The UI re-pushes the stored shortcut on load (set_dictation).
-            register_dict_hotkey(&handle, &HotkeySpec { mods: vec!["ctrl".into(), "shift".into()], key: "D".into() });
+            register_dict_hotkey(&handle, &HotkeySpec { mods: vec!["ctrl".into(), "shift".into()], key: "D".into(), ..Default::default() });
+            start_modifier_tap(); // bring up the bare-modifier event tap (right ⌘ / Option triggers); no-op if Accessibility isn't granted yet
 
             if std::env::var("ASSISTANT_STEALTH").is_ok() {
                 if let Some(w) = app.get_webview_window("main") { let _ = w.set_content_protected(true); }

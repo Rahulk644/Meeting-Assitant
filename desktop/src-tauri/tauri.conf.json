@@ -10,19 +10,7 @@
   "app": {
     "macOSPrivateApi": true,
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "My Assistant",
-        "center": true,
-        "width": 1120,
-        "height": 720,
-        "minWidth": 900,
-        "minHeight": 600,
-        "resizable": true,
-        "fullscreen": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

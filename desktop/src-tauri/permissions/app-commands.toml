@@ -1,0 +1,14 @@
+# App-level permission granting the app's OWN commands to the (remote-origin) UI.
+# The UI loads from http://127.0.0.1:8790, a REMOTE origin, which Tauri v2 subjects to the ACL. App commands
+# have no auto-generated permission, so a remote window is denied ("Command X not allowed by ACL") — which
+# silently disabled dictation (set_dictation never ran → DICT.enabled stayed false). This grants them.
+[[permission]]
+identifier = "allow-app-commands"
+description = "Allow the app's own dictation / tray / stealth commands from the local-server UI origin."
+commands.allow = [
+    "set_dictation",
+    "dictation_stop",
+    "set_tray_visible",
+    "set_tray_recording",
+    "set_stealth",
+]
