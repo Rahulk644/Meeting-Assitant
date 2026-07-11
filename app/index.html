@@ -16,7 +16,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
     --accent:#2f6bed; --accent-soft:color-mix(in srgb, #2f6bed 13%, transparent); --accent-ink:#ffffff;
     --win:#f7f6f4; --sidebar:#efeeeb; --surface:#ffffff; --surface-2:#f3f2ef; --field:#ffffff;
     --ink:#1f1e1d; --ink-2:#6c6862; --ink-3:#9c988f;
-    --line:#e8e6e1; --line-2:#dcd9d3; --live:#e5484d;
+    --line:#e8e6e1; --line-2:#dcd9d3; --live:#e5484d; --ok:#12805c;
     --shadow:rgba(35,30,24,.16); --track:#e2e0da;
     --r-sm:6px; --r-md:8px; --r-lg:12px;
   }
@@ -24,7 +24,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
     --accent:#5b8cff; --accent-soft:color-mix(in srgb, #5b8cff 15%, transparent); --accent-ink:#0d1526;
     --win:#1b1b1e; --sidebar:#151517; --surface:#242428; --surface-2:#2c2c31; --field:#26262b;
     --ink:#f3f2f0; --ink-2:#a6a4a0; --ink-3:#706e6a;
-    --line:#313136; --line-2:#3b3b41; --live:#ff5f63;
+    --line:#313136; --line-2:#3b3b41; --live:#ff5f63; --ok:#3fb98a;
     --shadow:rgba(0,0,0,.55); --track:#34343a;
   }
   *{box-sizing:border-box}
@@ -445,6 +445,10 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .mgrant.ok{color:#12805c;background:color-mix(in srgb,#12805c 12%,transparent)}
   .mgrant.no{color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line)}
   .mnote{font-size:11.5px;color:var(--ink-3);margin-top:8px;text-align:center;flex-shrink:0}
+  .permok{display:inline-flex;align-items:center;gap:5px;flex-shrink:0;font-size:12.5px;font-weight:600;color:var(--ok);
+          padding:5px 11px;border-radius:999px;background:color-mix(in srgb, var(--ok) 13%, transparent)}
+  .permok svg{width:14px;height:14px}
+  .permwait{flex-shrink:0;font-size:12px;color:var(--ink-3);padding:6px 11px}
   .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:140;background:var(--ink);color:var(--win);
     font-size:12.5px;font-weight:560;padding:9px 15px;border-radius:9px;box-shadow:0 8px 26px var(--shadow);animation:maRise .18s ease}
   .toast[hidden]{display:none!important}
@@ -778,7 +782,7 @@ async function setStealth(on){ try{ await window.__TAURI__.core.invoke('set_stea
 // FULL config to it (not just on/off). ask=true → prompt for Accessibility on an explicit enable, so a
 // relaunch with dictation already on never nags. The server gets only language+punctuation (pushDictation).
 function dictClipMode(){ const c=store.get('clipboard',DEFAULTS.clipboard); return c==='Replace clipboard'?'replace':(c==='Save after dictation'?'save':'restore'); }
-const OVERLAY_POS={'Bottom center':'bottom-center','Bottom right':'bottom-right','Top right':'top-right','Top center':'top-center'};
+const OVERLAY_POS={'Bottom center':'bottom-center','Bottom right':'bottom-right','Top right':'top-right','Top center':'top-center','Left center':'left-center','Right center':'right-center'};
 // "⌃⇧D" or "⌃+⇧+D" → {mods:['ctrl','shift'], key:'D'} for the app's global-shortcut registrar (Fn is dropped — it can't be a global shortcut).
 // A bare-modifier trigger (Handy-style right ⌘ / Option) is stored as "mod:<name>" (e.g. "mod:command_right").
 // Everything else is a normal combo string like "⌃⇧D". These helpers keep the two forms straight everywhere.
@@ -961,7 +965,7 @@ const SCHEMA={
     {label:'MENU BAR & OVERLAY', rows:[
       {id:'show_tray',title:'Show tray icon',desc:'Keep My Assistant in the menu bar.',type:'toggle'},
       {id:'overlay_enabled',title:'Dictation overlay',desc:'Show the floating pill while you dictate.',type:'toggle'},
-      {id:'overlay_pos',title:'Overlay position',desc:'Where the pill appears while dictating.',type:'select',options:['Bottom center','Bottom right','Top right','Top center']},
+      {id:'overlay_pos',title:'Overlay position',desc:'Where the pill appears while dictating.',type:'select',options:['Bottom center','Bottom right','Top right','Top center','Left center','Right center']},
     ]},
   ],
   dictation:[
@@ -1399,14 +1403,30 @@ const ALL_PERMS=[
   {name:'Accessibility',pane:'Privacy_Accessibility',desc:'Insert dictated text into the focused app; catch the hotkey; read participant names.'},
   {name:'Screen Recording',pane:'Privacy_ScreenCapture',desc:'Detect calls and capture shared screens (Meetings).'},
 ];
+const PERM_KEY={'Accessibility':'accessibility','Screen Recording':'screen_recording'};
 function openPermissions(){ openModal('Permissions', box=>{
-  box.append(el('div','msub','My Assistant only needs the permissions for the features you’ve enabled. Open a pane to grant it.'));
-  const list=el('div','mbody');
-  ALL_PERMS.forEach(p=>{ const row=el('div','mitem'), tile=el('div','mtile'), c=grow(); tile.innerHTML=PERM_ICON[p.name];
-    c.innerHTML=`<div class="nm">${p.name}</div><div class="ds">${p.desc}</div>`;
-    const b=el('button','abtn'); b.textContent='Open System Settings'; b.onclick=()=>openSettingsPane(p.pane);
-    row.append(tile,c,b); list.append(row); });
-  box.append(list); box.append(el('div','mnote','macOS also prompts automatically the first time an enabled feature uses a permission.'));
+  box.append(el('div','msub','My Assistant only needs the permissions for the features you’ve enabled. Granted ones are shown below — open a pane to allow any that are still missing.'));
+  const list=el('div','mbody'); box.append(list);
+  box.append(el('div','mnote','macOS also prompts automatically the first time an enabled feature uses a permission.'));
+  // status: object {accessibility, screen_recording} once known · 'checking' in the app before the first result · null in a browser (can't read TCC)
+  const render=(status)=>{
+    list.innerHTML='';
+    ALL_PERMS.forEach(p=>{
+      const row=el('div','mitem'), tile=el('div','mtile'), c=grow(); tile.innerHTML=PERM_ICON[p.name];
+      c.innerHTML=`<div class="nm">${p.name}</div><div class="ds">${p.desc}</div>`; row.append(tile,c);
+      const granted = (status && status!=='checking') ? !!status[PERM_KEY[p.name]] : (status==='checking'?undefined:null);
+      if(granted===true){ const s=el('div','permok'); s.innerHTML=IC_CHECK+'<span>Allowed</span>'; row.append(s); }
+      else if(granted===undefined){ row.append(el('div','permwait','Checking…')); }
+      else { const b=el('button','abtn'); b.textContent = granted===false ? 'Allow' : 'Open System Settings'; b.onclick=()=>openSettingsPane(p.pane); row.append(b); }
+      list.append(row);
+    });
+  };
+  render(inTauri()?'checking':null);
+  // Live status: poll while the modal is open so it flips to "Allowed" right after the user grants in System
+  // Settings (returning here re-focuses us; the interval catches it either way). Cleaned up on any close.
+  let timer=null;
+  const poll=async()=>{ try{ const s=await window.__TAURI__.core.invoke('perm_status'); render(s); }catch(e){ console.warn('perm_status:',e); render(null); } };
+  if(inTauri()){ poll(); timer=setInterval(poll,1500); _modalCleanup=()=>{ if(timer){ clearInterval(timer); timer=null; } }; }
 }); }
 
 /* Shortcut recorder — captures + persists a combo (global registration lands with the desktop app) */

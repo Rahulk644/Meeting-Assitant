@@ -11,4 +11,5 @@ commands.allow = [
     "set_tray_visible",
     "set_tray_recording",
     "set_stealth",
+    "perm_status",
 ]

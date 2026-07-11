@@ -161,24 +161,39 @@ fn make_overlay(app: &AppHandle, label: &str, win: &str, w: f64, h: f64, clickth
     }
 }
 
-// Place the pill centred, near the bottom of the primary screen.
+// Place the pill on the screen it currently lives on, at the Settings "Overlay position".
+// overlay_pos: 0 bottom-center · 1 bottom-right · 2 top-right · 3 top-center · 4 left-center · 5 right-center.
 fn position_pill(app: &AppHandle, w: f64, h: f64) {
     let Some(win) = app.get_webview_window("pill") else { return };
     let _ = win.set_size(LogicalSize::new(w, h));
-    if let Ok(Some(mon)) = win.primary_monitor() {
-        let sf = mon.scale_factor();
-        let sw = mon.size().width as f64 / sf;
-        let sh = mon.size().height as f64 / sf;
-        let (_, _, _, _, pos) = dict_prefs();  // Settings "Overlay position"
-        let m = 10.0;                           // screen-edge margin; top rows clear the menu bar
-        let (x, y) = match pos {
-            1 => (sw - w - m, sh - h - m),      // bottom-right
-            2 => (sw - w - m, m + 24.0),        // top-right
-            3 => ((sw - w) / 2.0, m + 24.0),    // top-center
-            _ => ((sw - w) / 2.0, sh - h - m),  // bottom-center (default) — hug the bottom rim, like Handy
-        };
-        let _ = win.set_position(LogicalPosition::new(x, y));
-    }
+    // Use the monitor the pill is ON (fall back to primary), and compute in that monitor's GLOBAL logical
+    // frame: origin (mx,my) + size (sw,sh). The old code used primary_monitor()+bare size, which assumes the
+    // pill sits on the primary at (0,0) — with an external display attached the right/left-edge positions
+    // then landed off the visible screen (the symmetric centre positions happened to stay visible, which is
+    // exactly why "centre works, right/left don't"). Clamping keeps the pill fully on-screen regardless.
+    let mon = win.current_monitor().ok().flatten()
+        .or_else(|| win.primary_monitor().ok().flatten());
+    let Some(mon) = mon else { return };
+    let sf = mon.scale_factor();
+    let mx = mon.position().x as f64 / sf;   // monitor top-left in the global logical space
+    let my = mon.position().y as f64 / sf;
+    let sw = mon.size().width as f64 / sf;
+    let sh = mon.size().height as f64 / sf;
+    let (_, _, _, _, pos) = dict_prefs();
+    let m = 12.0;                             // screen-edge margin
+    let top = 30.0;                           // top rows clear the menu bar / notch
+    let (mut x, mut y) = match pos {
+        1 => (sw - w - m, sh - h - m),        // bottom-right
+        2 => (sw - w - m, top),               // top-right
+        3 => ((sw - w) / 2.0, top),           // top-center
+        4 => (m, (sh - h) / 2.0),             // left-center
+        5 => (sw - w - m, (sh - h) / 2.0),    // right-center
+        _ => ((sw - w) / 2.0, sh - h - m),    // bottom-center (default) — hug the bottom rim, like Handy
+    };
+    x = x.clamp(m, (sw - w - m).max(m));      // never let the pill fall off this monitor
+    y = y.clamp(top, (sh - h - m).max(top));
+    let _ = win.set_position(LogicalPosition::new(mx + x, my + y));
+    eprintln!("dictation: pill pos={} mon=({:.0},{:.0} {:.0}x{:.0}) -> ({:.0},{:.0})", pos, mx, my, sw, sh, mx + x, my + y);
 }
 
 // Make the pill float over EVERY app — including the one you're typing in. A plain always-on-top window
@@ -387,7 +402,7 @@ static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 // the paste, the sound cues and the pill, so these rows only take effect if THIS process honors them —
 // they used to flow to the removed `meeting-tap --dictate` and silently no-op'd. clipboard: 0 = restore
 // the user's previous clipboard after paste ("Never save"), 1 = leave the dictated text on it (Save/Replace).
-// overlay_pos: 0 bottom-center · 1 bottom-right · 2 top-right · 3 top-center.
+// overlay_pos: 0 bottom-center · 1 bottom-right · 2 top-right · 3 top-center · 4 left-center · 5 right-center.
 struct DictPrefs { sound: bool, volume: f32, clipboard: u8, overlay: bool, overlay_pos: u8 }
 static DICT_PREFS: Mutex<DictPrefs> = Mutex::new(DictPrefs { sound: true, volume: 0.7, clipboard: 0, overlay: true, overlay_pos: 0 });
 fn dict_prefs() -> (bool, f32, u8, bool, u8) {
@@ -743,7 +758,7 @@ struct DictCfg {
     #[serde(default = "def_vol")] volume: u8,
     #[serde(default)] clipboard: String,      // "restore" | "save" | "replace"
     #[serde(default = "def_true")] overlay: bool,
-    #[serde(default)] overlay_pos: String,    // "bottom-center" | "bottom-right" | "top-right" | "top-center"
+    #[serde(default)] overlay_pos: String,    // bottom-center | bottom-right | top-right | top-center | left-center | right-center
     #[serde(default)] hotkey: Option<HotkeySpec>,
     #[serde(default)] cancel: Option<HotkeySpec>, // the "Cancel" key armed while recording (default Esc)
     #[serde(default)] prompt: bool,
@@ -761,7 +776,7 @@ fn set_dictation(app: AppHandle, cfg: DictCfg) {
         p.volume = (cfg.volume.min(100) as f32) / 100.0;
         p.clipboard = if cfg.clipboard == "restore" || cfg.clipboard.is_empty() { 0 } else { 1 };
         p.overlay = cfg.overlay;
-        p.overlay_pos = match cfg.overlay_pos.as_str() { "bottom-right" => 1, "top-right" => 2, "top-center" => 3, _ => 0 };
+        p.overlay_pos = match cfg.overlay_pos.as_str() { "bottom-right" => 1, "top-right" => 2, "top-center" => 3, "left-center" => 4, "right-center" => 5, _ => 0 };
     }
     // Cancel key (armed only while recording). Unmappable / missing → None → Esc.
     DICT_CANCEL_KEY.store(cfg.cancel.as_ref().map(|c| cancel_keycode(&c.key)).unwrap_or(53), Ordering::Relaxed);
@@ -794,6 +809,24 @@ fn dictation_stop() { dictation_stop_rec(); }
 fn set_tray_visible(app: AppHandle, on: bool) {
     let a = app.clone();
     let _ = app.run_on_main_thread(move || { if let Some(t) = a.tray_by_id("tray") { let _ = t.set_visible(on); } });
+}
+
+// Settings → Permissions: report whether the grants the enabled features need are ACTUALLY in place, so the
+// modal shows "Allowed" instead of a blind "Open System Settings". Accessibility is what the hotkey event-tap
+// and the ⌘V paste run under (this very process, so its own trust is the right thing to check); Screen
+// Recording is what the meeting capture needs (same app bundle → this process's preflight reflects the grant).
+// Both are checked NON-prompting — opening a System Settings pane is the explicit grant path.
+#[derive(serde::Serialize)]
+struct PermStatus { accessibility: bool, screen_recording: bool }
+#[tauri::command]
+fn perm_status() -> PermStatus {
+    #[cfg(target_os = "macos")]
+    { PermStatus {
+        accessibility: macos_accessibility_client::accessibility::application_is_trusted(),
+        screen_recording: core_graphics::access::ScreenCaptureAccess::default().preflight(),
+    } }
+    #[cfg(not(target_os = "macos"))]
+    { PermStatus { accessibility: true, screen_recording: true } }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -885,7 +918,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![set_stealth, set_tray_recording, set_dictation, dictation_stop, set_tray_visible])
+        .invoke_handler(tauri::generate_handler![set_stealth, set_tray_recording, set_dictation, dictation_stop, set_tray_visible, perm_status])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
