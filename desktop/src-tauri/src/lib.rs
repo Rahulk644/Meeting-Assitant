@@ -2,7 +2,7 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -363,10 +363,18 @@ fn write_wav16k(path: &str, samples16k: &[f32]) -> bool {
 }
 
 fn ingest(json: &str) {
-    let _ = Command::new("curl")
-        .args(["-s", "--max-time", "5", "-X", "POST", &format!("{}/ingest", SERVER), // bounded: never wedge a finish thread if node stalls
-               "-H", "Content-Type: application/json", "-d", json])
-        .stdout(Stdio::null()).stderr(Stdio::null()).status();
+    // Fire-and-forget on a detached thread. This spawns a BLOCKING `curl`, and emit_dstate() calls ingest from
+    // on_dict_hotkey and the Esc-cancel handler — both of which run on the MAIN (UI) thread. Blocking there
+    // froze the whole app for up to --max-time seconds and left the pill stuck on screen (Esc "hangs"). Never
+    // block the UI thread on a subprocess; the SSE broadcast is fire-and-forget and pill visibility is owned by
+    // dict_feedback (a direct window show/hide), so ordering here doesn't matter.
+    let json = json.to_string();
+    std::thread::spawn(move || {
+        let _ = Command::new("curl")
+            .args(["-s", "--max-time", "5", "-X", "POST", &format!("{}/ingest", SERVER),
+                   "-H", "Content-Type: application/json", "-d", &json])
+            .stdout(Stdio::null()).stderr(Stdio::null()).status();
+    });
 }
 fn emit_dstate(phase: &str) { ingest(&format!("{{\"type\":\"dictation-state\",\"phase\":\"{}\"}}", phase)); }
 
@@ -473,7 +481,7 @@ fn dictation_start() {
     g.started = Some(Instant::now());
     drop(g);
     play("Tink"); dict_feedback(true); emit_dstate("listening");
-    esc_arm(true); // Esc-to-cancel is live only while recording (a modifier-less global grab)
+    // Esc-to-cancel is watched inside the event tap (keycode 53) and gated on recording — no separate grab.
 }
 fn dictation_stop_rec() {
     let mut g = DICT.lock().unwrap();
@@ -481,7 +489,6 @@ fn dictation_stop_rec() {
     let ms = g.started.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
     g.started = None;
     drop(g);
-    esc_arm(false); // recording is ending → stop grabbing Esc
     play("Pop");   // immediate stop cue (encode + transcription run on the thread below)
     std::thread::spawn(move || dictation_finish(rec, ms));
 }
@@ -526,36 +533,25 @@ fn dictation_finish(mut rec: Recorder, ms: u64) {
 fn dictation_cancel() {
     let rec = { let mut g = DICT.lock().unwrap(); g.started = None; g.rec.take() };
     let Some(mut rec) = rec else { return; };
-    esc_arm(false);
     emit_dstate("idle");
     dict_feedback(false);
     std::thread::spawn(move || { rec.stop.store(true, Ordering::Relaxed); if let Some(h) = rec.handle.take() { let _ = h.join(); } });
 }
 
-// Esc-to-cancel is a modifier-less global grab, so we arm it ONLY while recording and disarm the instant
-// recording ends. Marshalled to the MAIN thread (run_on_main_thread): that's where the hotkey manager lives,
-// the calls stay ORDERED (a fast push-to-talk tap can't reorder arm/disarm and leave Esc grabbed forever),
-// and it's deferred past the current hotkey-handler invocation (no re-entrant register that could wedge the plugin).
-static DICT_ESC: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
-static DICT_CANCEL: Mutex<Option<tauri_plugin_global_shortcut::Code>> = Mutex::new(None); // the rebindable cancel key (None → Esc)
-fn esc_arm(arm: bool) {
-    let Some(app) = APP.get() else { return; };
-    let app = app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, Code, ShortcutState};
-        let gs = app.global_shortcut();
-        let mut g = DICT_ESC.lock().unwrap_or_else(|e| e.into_inner());
-        if arm {
-            if g.is_some() { return; }
-            let code = DICT_CANCEL.lock().unwrap_or_else(|e| e.into_inner()).unwrap_or(Code::Escape);
-            let sc = Shortcut::new(None, code);
-            if gs.on_shortcut(sc.clone(), |_a, _s, ev| { if ev.state() == ShortcutState::Pressed { dictation_cancel(); } }).is_ok() {
-                *g = Some(sc);
-            }
-        } else if let Some(sc) = g.take() {
-            let _ = gs.unregister(sc);
-        }
-    });
+// Cancel key (Esc by default) is watched INSIDE the event tap as a KeyDown — the way Handy does it — NOT via a
+// separate global-shortcut registration. Registering/unregistering a global shortcut from within a global
+// shortcut handler deadlocked the app: the plugin fires its handler inside its OWN main-thread CGEventTap
+// callback, and tauri's run_on_main_thread runs SYNCHRONOUSLY when already on the main thread, so the
+// "deferred" unregister re-entered the plugin's mutex and wedged the whole UI. One tap, no re-entrancy.
+// DICT_CANCEL_KEY is the macOS keycode to treat as cancel (53 = Esc); dictation_cancel() self-gates on recording.
+static DICT_CANCEL_KEY: AtomicI64 = AtomicI64::new(53);
+fn cancel_keycode(key: &str) -> i64 {
+    match key.trim().to_ascii_lowercase().as_str() {
+        "space" | "spacebar" => 49,
+        "enter" | "return"   => 36,
+        "tab"                => 48,
+        _ => 53, // Esc — the default and the fallback for anything we don't map
+    }
 }
 
 // ---- rebindable start/stop hotkey -----------------------------------------------------------------
@@ -682,7 +678,7 @@ fn start_modifier_tap() {
             CGEventTapLocation::Session,
             CGEventTapPlacement::HeadInsertEventTap,
             CGEventTapOptions::ListenOnly,
-            vec![CGEventType::FlagsChanged],
+            vec![CGEventType::FlagsChanged, CGEventType::KeyDown],
             |_proxy, etype, event| {
                 // Only modifier-change events carry a trigger. Ignore the TapDisabled* control events macOS
                 // delivers here — reading their flags would spoof a spurious press/release.
@@ -701,6 +697,13 @@ fn start_modifier_tap() {
                                 });
                             }
                         }
+                    }
+                } else if matches!(etype, CGEventType::KeyDown) {
+                    // Cancel key (Esc, keycode 53) → discard the recording, Handy-style. field 9 =
+                    // kCGKeyboardEventKeycode. dictation_cancel() no-ops when not recording, so this stays a
+                    // cheap atomic check on each keystroke; marshaled to main (async from this tap thread).
+                    if event.get_integer_value_field(9) == DICT_CANCEL_KEY.load(Ordering::Relaxed) {
+                        if let Some(app) = APP.get() { let _ = app.run_on_main_thread(dictation_cancel); }
                     }
                 }
                 None // listen-only: never modify or swallow the event
@@ -761,7 +764,7 @@ fn set_dictation(app: AppHandle, cfg: DictCfg) {
         p.overlay_pos = match cfg.overlay_pos.as_str() { "bottom-right" => 1, "top-right" => 2, "top-center" => 3, _ => 0 };
     }
     // Cancel key (armed only while recording). Unmappable / missing → None → Esc.
-    *DICT_CANCEL.lock().unwrap_or_else(|e| e.into_inner()) = cfg.cancel.as_ref().and_then(|c| key_to_code(&c.key));
+    DICT_CANCEL_KEY.store(cfg.cancel.as_ref().map(|c| cancel_keycode(&c.key)).unwrap_or(53), Ordering::Relaxed);
     // Trigger: a bare modifier (event tap) OR a Carbon combo — never both at once.
     let mm = cfg.hotkey.as_ref().map(|hk| modifier_mask(&hk.modifier)).unwrap_or(0);
     if cfg.enabled && mm != 0 {
