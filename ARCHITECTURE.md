@@ -8,10 +8,11 @@ changing capture, transcription, or packaging.
 ## The pipeline
 
 ```
- you (mic, AVAudioEngine) ─┐
- others (ScreenCaptureKit) ─┤─▶ stt/meeting-tap (Swift)
-                            │     • self-detects the call from the SCK window list (Screen Recording only)
-                            │     • energy gate → splits speech into WHOLE utterances (natural pauses)
+ you (mic, AVAudioEngine) ──────┐
+ others (Core Audio tap; SCK ───┤─▶ stt/meeting-tap (Swift)
+   only when recording video)   │     • self-detects the call from the Core Audio PROCESS list (no permission)
+                                │     • audio-only ⇒ "System Audio Recording Only"; Screen Recording = video
+                                │     • energy gate → splits speech into WHOLE utterances (natural pauses)
                             ▼
               transcribe-server (transcribe.cpp + Metal · large-v3-turbo)   ← on demand, unloaded when idle
                             │  POST /inference → {"text": …}
@@ -39,9 +40,14 @@ server relays captions over SSE; the same UI runs in a browser (dev) or the Taur
   which keeps it at *effective-2B* (~1 GB RAM) via Per-Layer-Embedding offload. A plain GGUF loads the
   full ~5 B params (~3 GB) and **hangs an 8 GB M1 Air**. OpenAI-compatible API, so one client also serves
   the BYO-key tier (Groq / OpenAI / Cerebras / custom).
-- **ScreenCaptureKit, not Core Audio process taps.** Taps need the macOS 14.2+ SDK; this toolchain ships
-  13.3. SCK is available there and also does app-scoped audio (isolates the meeting app from a background
-  YouTube tab) and window enumeration (call self-detection) — three needs, one API.
+- **Core Audio process taps for audio, ScreenCaptureKit only for video** (Fathom's model). The other
+  participants are captured with a **Core Audio process tap** scoped to the meeting app — the
+  "System Audio Recording Only" TCC category, **no Screen Recording**. Call self-detection reads the same
+  Core Audio **process list** (which app is doing audio I/O), so knowing you're in a call needs no permission
+  either. ScreenCaptureKit (→ "Screen & System Audio Recording") is used **only** when you record video.
+  Net: an audio-only meeting asks for **Microphone + System Audio Recording Only**; Screen Recording is
+  video-only. Taps need the macOS **14.2+ SDK** (so `meeting-tap` builds with `-target …14.4`; update Command
+  Line Tools if `xcrun --show-sdk-version` < 14).
 - **Everything on demand.** The transcription server and the LLM load when needed and unload after an idle
   timeout (transcription ~2 min after a call; LLM ~5 min), so nothing heavy sits resident between calls.
   This mirrors Handy's `model_unload_timeout`.
@@ -95,13 +101,18 @@ These were expensive to learn. Do not re-litigate them.
 
 Get these wrong and the double-click app silently fails or nags on every launch.
 
-- **Three separate TCC permissions:** Microphone, Screen Recording (`ScreenCapture`), Accessibility.
-  Granting one does not grant the others. Screen Recording covers SCK audio/video **and** window
-  enumeration; Accessibility is only for Zoom speaker names.
+- **Four TCC permissions, each asked only for the feature that needs it:** Microphone, **System Audio
+  Recording Only** (`AudioCapture` — Core Audio taps), Screen Recording (`ScreenCapture` — ScreenCaptureKit),
+  Accessibility. Granting one does not grant the others. An **audio-only meeting** needs Microphone (your
+  voice) + System Audio Recording Only (the others' voices via the tap) — **not** Screen Recording. Screen
+  Recording is asked for **only when recording video**. Call detection reads the Core Audio process list and
+  needs no permission. Accessibility is only for Zoom speaker names. (Dictation needs none of these — its
+  Carbon hotkey + ⌘V paste are permission-free.)
 - **Grants reach a direct child, not a grandchild.** A helper spawned *through node* (`app → node → helper`)
   is a grandchild; macOS attributes its permission check to node, not the app, so it's never trusted.
   Therefore `meeting-state` is spawned **directly by Rust** (`start_meeting_state`), and its NDJSON is
-  forwarded to the server via `curl`. `meeting-tap` (also a direct child) inherits Mic + Screen Recording.
+  forwarded to the server via `curl`. `meeting-tap` (also a direct child) inherits Mic + System Audio (+ Screen
+  Recording when recording video).
 - **Ad-hoc signing pins the grant to a bare cdhash — it dies on the next rebuild.** swiftc's linker output
   *and* Tauri's default bundle output are ad-hoc; ad-hoc code has no stable identity, so when you grant, TCC
   can only store a bare `cdhash H"…"` requirement (no identifier, no cert). The very next rebuild changes the
@@ -132,7 +143,7 @@ Get these wrong and the double-click app silently fails or nags on every launch.
 
 ## Call detection
 
-`meeting-tap` self-detects "in a call" from the SCK window list (Screen Recording only — no Accessibility),
+`meeting-tap` self-detects "in a call" from the Core Audio process list (no permission — not Screen Recording),
 POSTs `inMeeting` to the server, and gates capture on it. **Trap:** an idle native app can keep meeting-ish
 windows alive off-screen (e.g. Zoom retains a `zoom floating video window` when no call is running). Match
 the main `Zoom Meeting` window unconditionally (it exists only during a real call), but count the
@@ -307,7 +318,7 @@ locations — so it runs when moved off the repo:
 | Path | Role |
 |---|---|
 | `desktop/` | Tauri app — self-starts the stack; tray, screen-share stealth, close-to-tray; **in-process dictation** (global hotkey · cpal mic · Silero VAD · CGEvent paste · NSPanel pill) |
-| `stt/meeting-tap.swift` | SCK capture (audio + video) + call self-detection + utterance segmentation (dictation moved into `desktop/`) |
+| `stt/meeting-tap.swift` | Core Audio tap (audio, no Screen Recording) + SCK (video) + process-list call detection + utterance segmentation |
 | `stt/transcribe-server/` | our transcribe.cpp HTTP wrapper (source + pinned-commit `build.sh`) |
 | `stt/whisper/` | GGUF model (git-ignored; fetched by `setup.sh`) |
 | `meeting-state/meeting-state.swift` | Accessibility layer: speaker names, mute/share |

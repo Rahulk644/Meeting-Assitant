@@ -1,12 +1,13 @@
-// meeting-tap.swift (v3) — continuous meeting transcription from TWO sources.
-//   • System audio (ScreenCaptureKit), scoped to the meeting app  → the other participants.
+// meeting-tap.swift (v4) — continuous meeting transcription from TWO sources.
+//   • Other participants: a Core Audio process tap (audio-only, "System Audio Recording Only" — NO Screen
+//     Recording), scoped to the meeting app. ScreenCaptureKit is used instead only when recording video.
 //   • Microphone   (AVAudioEngine)                                → you.
 // Both → energy-VAD splits on natural pauses → WHOLE-utterance WAV → on-demand transcribe-server
 // (transcribe.cpp on the Metal GPU) → caption POSTed to the GUI. Feeding whole utterances (not fixed-length
 // chunks) is what makes it accurate — a mid-sentence cut severs context and the model hallucinates.
 //
-// Build:  swiftc -O -target arm64-apple-macos13.0 meeting-tap.swift -o meeting-tap \
-//           -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework AppKit \
+// Build:  swiftc -O -target arm64-apple-macos14.4 meeting-tap.swift -o meeting-tap \
+//           -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreAudio \
 //           -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist
 //
 // Run:    meeting-tap <guiPort=8787> <whisperURL> [--app auto|all|<id>] [--mic on|off] [--me <name>]
@@ -21,20 +22,21 @@
 //               (system 0.006, mic 0.02 — the mic is higher because a room is noisier than the feed).
 //   --min-conf 0.5   drop utterances below this mean word-confidence (kills noise hallucinations).
 //   --expressions    keep Whisper's *sigh* / (laughs) cues as [sigh] tags for a sentiment read.
-//   --gate on|off    on (default) captures ONLY while you're in a call (self-detected from the SCK window
-//                    list, releasing the mic otherwise); off = always capture (Google Meet — no native window).
+//   --gate on|off    on (default) captures ONLY while you're in a call (self-detected from the Core Audio
+//                    PROCESS list — no Screen Recording); off = always capture (Google Meet / manual record).
 //   NOTE: use HEADPHONES. On speakers, the mic re-hears the remote voices → duplicate/misattributed
 //         lines. Headphones give a clean split: mic = you, system audio = them.
 //
 // ponytail: the SEGMENTER is a simple energy threshold — it only decides utterance BOUNDARIES (speech vs
 // pause) and gates out sub-threshold silence/noise upstream; transcribe-server then does the anti-
-// hallucination (temperature=0, no fallback) on what reaches it. Core Audio process taps (Fathom's per-app
-// method) need the macOS 14.2+ SDK, which this toolchain (13.3) lacks — hence ScreenCaptureKit app-scoping.
+// hallucination (temperature=0, no fallback) on what reaches it. The audio-only path uses Core Audio process
+// taps (Fathom's per-app method, macOS 14.2+) so meetings never touch Screen Recording — that's video-only.
 
 import Foundation
 import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
+import CoreAudio       // Core Audio process taps (macOS 14.2+) — "System Audio Recording Only", no screen recording
 import AppKit          // NSFullUserName (the "(Me)" label). Dictation's hotkey + ⌘V paste live in the app
                        // process itself (see desktop/src-tauri) — this binary only records meeting audio.
 
@@ -204,6 +206,110 @@ final class Mic {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         err(">> mic capture stopped (mic released)")
+    }
+}
+
+// MARK: - system audio via a Core Audio process tap (macOS 14.2+) → segmenter.
+// Captures the meeting app's OUTPUT (the other participants) WITHOUT Screen Recording — this is the
+// "System Audio Recording Only" TCC category (Fathom's audio-only path). ScreenCaptureKit is used ONLY when
+// we also record video. Chain: tap the app's process → wrap in a PRIVATE aggregate device → read via an IO
+// block → resample to 16k mono → the shared Segmenter. Call detection (below) reads the same process list,
+// so an audio-only meeting needs NEITHER Screen Recording to hear others NOR to know you're in a call.
+
+let CA_SYS = AudioObjectID(kAudioObjectSystemObject)
+func caAddr(_ sel: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> AudioObjectPropertyAddress {
+    AudioObjectPropertyAddress(mSelector: sel, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+}
+func caProcessList() -> [AudioObjectID] {
+    var a = caAddr(kAudioHardwarePropertyProcessObjectList); var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(CA_SYS, &a, 0, nil, &size) == noErr, size > 0 else { return [] }
+    var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(CA_SYS, &a, 0, nil, &size, &ids) == noErr else { return [] }
+    return ids
+}
+func caString(_ obj: AudioObjectID, _ sel: AudioObjectPropertySelector) -> String? {
+    var a = caAddr(sel); var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size); var out: Unmanaged<CFString>?
+    guard AudioObjectGetPropertyData(obj, &a, 0, nil, &size, &out) == noErr, let u = out else { return nil }
+    return u.takeRetainedValue() as String
+}
+func caBool(_ obj: AudioObjectID, _ sel: AudioObjectPropertySelector) -> Bool {
+    var a = caAddr(sel); var size = UInt32(MemoryLayout<UInt32>.size); var v: UInt32 = 0
+    guard AudioObjectGetPropertyData(obj, &a, 0, nil, &size, &v) == noErr else { return false }
+    return v != 0
+}
+func caAOIDForPID(_ pid: pid_t) -> AudioObjectID? {
+    var a = caAddr(kAudioHardwarePropertyTranslatePIDToProcessObject)
+    var inPID = pid; var out = AudioObjectID(kAudioObjectUnknown); var size = UInt32(MemoryLayout<AudioObjectID>.size)
+    let st = AudioObjectGetPropertyData(CA_SYS, &a, UInt32(MemoryLayout<pid_t>.size), &inPID, &size, &out)
+    return (st == noErr && out != kAudioObjectUnknown) ? out : nil
+}
+func caDeviceInputFormat(_ dev: AudioObjectID) -> AudioStreamBasicDescription? {
+    var a = caAddr(kAudioDevicePropertyStreamFormat, kAudioObjectPropertyScopeInput)
+    var f = AudioStreamBasicDescription(); var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+    guard AudioObjectGetPropertyData(dev, &a, 0, nil, &size, &f) == noErr else { return nil }
+    return f
+}
+
+final class ProcessTap {
+    private var tapID = AudioObjectID(kAudioObjectUnknown)
+    private var aggID = AudioObjectID(kAudioObjectUnknown)
+    private var procID: AudioDeviceIOProcID?
+    private var conv: AVAudioConverter?
+    private var srcFmt: AVAudioFormat?
+    private let outFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: SR, channels: 1, interleaved: false)!
+    let seg: Segmenter
+    init(_ seg: Segmenter) { self.seg = seg }
+
+    // aoids: the process object IDs to capture (the meeting app). Empty = global (all output except ours).
+    func start(aoids: [AudioObjectID]) -> Bool {
+        let desc: CATapDescription = aoids.isEmpty
+            ? CATapDescription(monoGlobalTapButExcludeProcesses: caAOIDForPID(getpid()).map { [$0] } ?? [])
+            : CATapDescription(monoMixdownOfProcesses: aoids)
+        desc.name = "My Assistant meeting audio"; desc.isPrivate = true; desc.muteBehavior = .unmuted
+
+        var st = AudioHardwareCreateProcessTap(desc, &tapID)
+        guard st == noErr, tapID != kAudioObjectUnknown else { err("tap: create failed (\(st)) — grant 'System Audio Recording Only' to My Assistant"); return false }
+        guard let uid = caString(tapID, kAudioTapPropertyUID) else { err("tap: no UID"); stop(); return false }
+        let dict: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "My Assistant Tap",
+            kAudioAggregateDeviceUIDKey: "com.myassistant.tap.\(getpid())",
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: uid, kAudioSubTapDriftCompensationKey: true]],
+        ]
+        st = AudioHardwareCreateAggregateDevice(dict as CFDictionary, &aggID)
+        guard st == noErr, aggID != kAudioObjectUnknown else { err("tap: aggregate device failed (\(st))"); stop(); return false }
+        guard var asbd = caDeviceInputFormat(aggID), let src = AVAudioFormat(streamDescription: &asbd),
+              let c = AVAudioConverter(from: src, to: outFmt) else { err("tap: converter init failed"); stop(); return false }
+        srcFmt = src; conv = c
+        st = AudioDeviceCreateIOProcIDWithBlock(&procID, aggID, nil) { [weak self] _, inData, _, _, _ in
+            guard let self = self, let src = self.srcFmt, let conv = self.conv else { return }
+            let abl = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inData))
+            guard abl.count > 0, let mdata = abl[0].mData, abl[0].mDataByteSize > 0 else { return }
+            let bytes = Int(abl[0].mDataByteSize)
+            let frames = bytes / (MemoryLayout<Float>.size * Int(max(1, src.channelCount)))
+            guard frames > 0, let inBuf = AVAudioPCMBuffer(pcmFormat: src, frameCapacity: AVAudioFrameCount(frames)) else { return }
+            inBuf.frameLength = AVAudioFrameCount(frames)
+            if let dst = inBuf.floatChannelData { memcpy(dst[0], mdata, bytes) }
+            let cap = AVAudioFrameCount(Double(frames) * SR / src.sampleRate) + 1024
+            guard let ob = AVAudioPCMBuffer(pcmFormat: self.outFmt, frameCapacity: cap) else { return }
+            var e: NSError?; var fed = false
+            conv.convert(to: ob, error: &e) { _, s in if fed { s.pointee = .noDataNow; return nil }; fed = true; s.pointee = .haveData; return inBuf }
+            if let ch = ob.floatChannelData, ob.frameLength > 0 {
+                self.seg.feed(Array(UnsafeBufferPointer(start: ch[0], count: Int(ob.frameLength))))
+            }
+        }
+        guard st == noErr, procID != nil else { err("tap: IOProc create failed (\(st))"); stop(); return false }
+        st = AudioDeviceStart(aggID, procID)
+        guard st == noErr else { err("tap: device start failed (\(st))"); stop(); return false }
+        err(">> system-audio tap started (Core Audio — no screen recording) \(Int(src.sampleRate))Hz \(src.channelCount)ch")
+        return true
+    }
+    func stop() {
+        if let p = procID { AudioDeviceStop(aggID, p); AudioDeviceDestroyIOProcID(aggID, p); procID = nil }
+        if aggID != kAudioObjectUnknown { AudioHardwareDestroyAggregateDevice(aggID); aggID = kAudioObjectUnknown }
+        if tapID != kAudioObjectUnknown { AudioHardwareDestroyProcessTap(tapID); tapID = kAudioObjectUnknown }
+        conv = nil; srcFmt = nil
     }
 }
 
@@ -397,54 +503,58 @@ if LIST_APPS {
 // otherwise — so nothing is captured when you're not in a meeting. `--gate off` = always capture
 // (Google Meet, whose window we can't yet recognize).
 final class Capture {
-    var stream: SCStream?, sckOut: SCKOut?, videoOut: VideoOut?, rec: VideoRecorder?, mic: Mic?
+    var stream: SCStream?, sckOut: SCKOut?, videoOut: VideoOut?, rec: VideoRecorder?, mic: Mic?, tap: ProcessTap?
     var running = false, mode = "off", recFile = ""
-    func start(mode: String) {
+    // aoids: the meeting app's Core Audio process objects (for the audio-only tap). Empty = global.
+    func start(mode: String, aoids: [AudioObjectID]) {
         guard !running else { return }
         running = true; self.mode = mode
         let wantVideo = mode == "always" || mode == "share"
         err(">> in a call — starting capture (video: \(mode))")
         sysSeg.reset(); micSeg.reset()
         if MIC_ON { let m = Mic(micSeg); m.start(); mic = m }
+        // Two paths, each asking for the MINIMUM permission (Fathom's model):
+        //   audio-only → Core Audio tap  → "System Audio Recording Only"      (default; no Screen Recording)
+        //   video      → ScreenCaptureKit → "Screen & System Audio Recording"  (only when you record video)
+        if wantVideo { startSCK() } else { startTap(aoids) }
+    }
+    private func startTap(_ aoids: [AudioObjectID]) {
+        let t = ProcessTap(sysSeg)
+        if t.start(aoids: aoids) { self.tap = t; err(">> capture started (audio-only, Core Audio tap)") }
+        else { self.tap = nil }   // start() logged why; the mic still runs, and the next tick re-arms the tap
+    }
+    private func startSCK() {
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
             guard self.running else { return }                 // call ended during the async fetch
-            if let error = error { err("SCShareableContent error: \(error)"); return }
+            if let error = error { err("SCShareableContent error: \(error) — grant Screen Recording (video mode)"); return }
             guard let display = content?.displays.first else { err("no display"); return }
             let cfg = SCStreamConfiguration()
             cfg.capturesAudio = true
             cfg.excludesCurrentProcessAudio = false            // we play no audio; excluding wedges capture
             cfg.sampleRate = 16000; cfg.channelCount = 1
-            if wantVideo {
-                // Cap capture at 1080p tall (preserve aspect, even dims for H.264). A meeting recording
-                // doesn't need full retina, and fewer pixels = less capture bandwidth AND less encoder work
-                // on long calls — the main lever against lag. Downscale is done by SCK on the GPU (free).
-                let sc = min(1.0, 1080.0 / Double(display.height))
-                cfg.width  = Int(Double(display.width)  * sc) & ~1
-                cfg.height = Int(Double(display.height) * sc) & ~1
-                cfg.minimumFrameInterval = CMTime(value: 1, timescale: VIDEO_FPS)
-                cfg.pixelFormat = kCVPixelFormatType_32BGRA
-                cfg.queueDepth = 6
-            } else {
-                cfg.width = 2; cfg.height = 2
-                cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-            }
+            // Cap capture at 1080p tall (preserve aspect, even dims for H.264). A meeting recording doesn't
+            // need full retina, and fewer pixels = less capture bandwidth AND less encoder work on long calls.
+            let sc = min(1.0, 1080.0 / Double(display.height))
+            cfg.width  = Int(Double(display.width)  * sc) & ~1
+            cfg.height = Int(Double(display.height) * sc) & ~1
+            cfg.minimumFrameInterval = CMTime(value: 1, timescale: VIDEO_FPS)
+            cfg.pixelFormat = kCVPixelFormatType_32BGRA
+            cfg.queueDepth = 6
             let out = SCKOut(sysSeg)
             do {
                 let stream = SCStream(filter: makeFilter(display, content?.applications ?? []), configuration: cfg, delegate: out)
                 try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio"))
-                if wantVideo {
-                    let stamp = Int(Date().timeIntervalSince1970 * 1000)
-                    let file = "\(stamp).mp4"
-                    let r = VideoRecorder(dir: REC_DIR, name: file)
-                    r.record = (mode == "always") ? true : curSharing   // share mode: only while a screen is shared
-                    let vout = VideoOut(r)
-                    try stream.addStreamOutput(vout, type: .screen, sampleHandlerQueue: DispatchQueue(label: "video"))
-                    self.rec = r; self.videoOut = vout; self.recFile = file
-                    postRecording(file, stamp)                          // reserve cur.video on the server
-                }
+                let stamp = Int(Date().timeIntervalSince1970 * 1000)
+                let file = "\(stamp).mp4"
+                let r = VideoRecorder(dir: REC_DIR, name: file)
+                r.record = (self.mode == "always") ? true : curSharing   // share mode: only while a screen is shared
+                let vout = VideoOut(r)
+                try stream.addStreamOutput(vout, type: .screen, sampleHandlerQueue: DispatchQueue(label: "video"))
+                self.rec = r; self.videoOut = vout; self.recFile = file
+                postRecording(file, stamp)                          // reserve cur.video on the server
                 stream.startCapture { e in if let e = e { err("startCapture error: \(e)") } }
                 self.stream = stream; self.sckOut = out
-                err(">> capture started (audio\(wantVideo ? "+video" : ""))")
+                err(">> capture started (audio+video, ScreenCaptureKit)")
             } catch { err("SCStream setup failed: \(error)") }
         }
     }
@@ -454,6 +564,7 @@ final class Capture {
         running = false
         err(">> not in a call — stopping capture")
         mic?.stop(); mic = nil
+        tap?.stop(); tap = nil
         stream?.stopCapture { _ in }
         stream = nil; sckOut = nil; videoOut = nil
         rec?.finish { ok in err(ok ? ">> screen recording saved" : ">> no screen recording written") }
@@ -485,36 +596,33 @@ func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, langua
     if let m = o["modules"] as? [String: Any] { curModuleMeetings = (m["meetings"] as? Bool) ?? false }   // Meetings opt-in gate
     return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto", (o["autoDetect"] as? Bool) ?? true, (o["vocab"] as? String) ?? "")
 }
-// Self-detect "in a call" from the WINDOW LIST via ScreenCaptureKit — needs Screen Recording (which
-// capture needs anyway), NOT Accessibility. A native meeting app showing its in-call window = we're in a
-// meeting. This is what lets the PACKAGED app detect calls itself: the AX-based meeting-state can't run
-// as a grandchild-of-the-app under macOS TCC, but the capturer is a direct child so its grants work.
-// Returns the app key ("zoom"/"teams"/"call") or nil when not in a call.
-var detectErrLogged = false, screenDenied = false
-func detectMeetingApp(_ done: @escaping (String?) -> Void) {
-    SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
-        if let error = error {   // almost always: Screen Recording not granted to this app
-            let ns = error as NSError   // SCStreamError.userDeclined = -3801 → stop polling so we don't storm the prompt
-            if ns.code == -3801 || ns.localizedDescription.lowercased().contains("declined") { screenDenied = true }
-            if !detectErrLogged { err(">> can't read the window list — grant Screen Recording to My Assistant in System Settings, then relaunch. (\(error.localizedDescription))"); detectErrLogged = true }
-            done(nil); return
+// Self-detect "in a call" from the CORE AUDIO PROCESS LIST — needs NO permission (not Screen Recording,
+// not Accessibility): a native meeting app actively running audio I/O = we're in a call. Returns the app
+// key + the process objects to tap, or nil. This is the whole point of the audio-only model — we know
+// you're in a call AND capture the other participants without ever touching Screen Recording.
+func captureTarget() -> (key: String, aoids: [AudioObjectID])? {
+    // Resolve WHAT to tap from --app: `all` = global system audio; a bundle id = that app; `auto` = the
+    // running native meeting app. With --gate off we capture even without a detected call (Google Meet/manual).
+    func procs(_ match: (String) -> Bool) -> [(aoid: AudioObjectID, bundle: String, running: Bool)] {
+        caProcessList().compactMap { p in
+            guard let b = caString(p, kAudioProcessPropertyBundleID), match(b) else { return nil }
+            return (p, b, caBool(p, kAudioProcessPropertyIsRunning))
         }
-        var hit: String? = nil
-        for w in (content?.windows ?? []) {
-            guard let bid = w.owningApplication?.bundleIdentifier, NATIVE_MEETING.contains(bid) else { continue }
-            let t = (w.title ?? "").lowercased()
-            // Zoom keeps an OFF-SCREEN "zoom floating video window" alive even when idle (no call), so matching
-            // it unconditionally false-detected a call whenever Zoom was merely open. The real "Zoom Meeting"
-            // window exists ONLY during a call → match it unconditionally. The floating-video / share-statusbar
-            // windows (the screen-share case, where Zoom hides the main window) count ONLY while on screen —
-            // during a share they're visible; idle they sit off-screen.
-            let inCall = (bid == "us.zoom.xos")
-                ? (t.contains("zoom meeting")
-                   || (w.isOnScreen && (t.contains("floating video") || t.contains("share statusbar"))))
-                : (w.isOnScreen && t.contains("meeting"))
-            if inCall { hit = (bid == "us.zoom.xos") ? "zoom" : (bid.hasPrefix("com.microsoft.teams") ? "teams" : "call"); break }
+    }
+    switch APP_SEL {
+    case "all":
+        return ("call", [])
+    case "auto":
+        let active = procs { NATIVE_MEETING.contains($0) }.filter { $0.running }
+        if let f = active.first {
+            let key = f.bundle == "us.zoom.xos" ? "zoom" : (f.bundle.hasPrefix("com.microsoft.teams") ? "teams" : "call")
+            return (key, active.map { $0.aoid })
         }
-        done(hit)
+        return GATE ? nil : ("call", [])
+    default:
+        let hits = procs { $0 == APP_SEL }.filter { $0.running }
+        if !hits.isEmpty { return ("call", hits.map { $0.aoid }) }
+        return GATE ? nil : ("call", [])
     }
 }
 // Push inMeeting to the server so the UI flips live + shows the recording indicator.
@@ -534,20 +642,18 @@ func reportDetected(_ inCall: Bool, _ app: String) {
 // Decide capture: the manual override wins over auto-detection. start()/stop() are idempotent, so this
 // runs every tick and only acts on a change — 'paused'/'off' release the mic even mid-call; 'on' forces
 // capture even with no detected call (manual record).
-func gate(_ app: String?) {
-    let detected = app != nil
-    reportDetected(detected, app ?? "")
+func gate(_ target: (key: String, aoids: [AudioObjectID])?) {
+    let detected = target != nil
+    reportDetected(detected, target?.key ?? "")
     let capture = (curManual == "on") || (curManual == "auto" && curAutoDetect && detected)
-    capture ? cap.start(mode: curVideoMode) : cap.stop()
+    if capture { cap.start(mode: curVideoMode, aoids: target?.aoids ?? []) } else { cap.stop() }
 }
 func tick() {
     let cfg = fetchConfig()
     curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language; curManual = cfg.manual; curAutoDetect = cfg.autoDetect; curVocab = cfg.vocab
     cap.updateShare()
-    if !curModuleMeetings { if cap.running { cap.stop() }; return }   // Meetings module off → capture + poll nothing (no Screen-Recording prompt)
-    if !GATE { gate("call"); return }                        // --gate off: always capture (still honors manual)
-    if screenDenied { return }                               // Screen Recording refused — stop hammering it (recovers on grant + relaunch)
-    detectMeetingApp { app in DispatchQueue.main.async { gate(app) } }
+    if !curModuleMeetings { if cap.running { cap.stop() }; return }   // Meetings module off → capture nothing (no prompts)
+    gate(captureTarget())                                            // detect + capture, all from the audio process list
 }
 
 err(">> meeting-tap ready — gate:\(GATE ? "on (captures only during a call)" : "off (always captures)") gui:\(guiPort) whisper:\(whisperURL) app:\(APP_SEL) mic:\(MIC_ON) me:\(ME)")

@@ -27,8 +27,11 @@ LITERT="$(command -v litert-lm || echo "$HOME/.local/bin/litert-lm")"
   "$LITERT" import --from-huggingface-repo litert-community/gemma-4-E2B-it-litert-lm gemma-4-E2B-it.litertlm gemma4-e2b
 
 echo "3/3  Building native helpers (Swift)…"
-( cd "$ROOT/stt" && swiftc -O -target arm64-apple-macos13.0 meeting-tap.swift -o meeting-tap \
-    -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
+# macOS 14.4 target: meeting-tap uses Core Audio process taps (14.2+) so audio-only meetings capture the
+# other participants via "System Audio Recording Only" (no Screen Recording). Needs the 14.4+ SDK — update
+# Command Line Tools if `xcrun --show-sdk-version` prints < 14.
+( cd "$ROOT/stt" && swiftc -O -target arm64-apple-macos14.4 meeting-tap.swift -o meeting-tap \
+    -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreAudio \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist )
 ( cd "$ROOT/meeting-state" && swiftc -O meeting-state.swift -o meeting-state )
 # TCC keys Screen-Recording / Mic / Accessibility grants on a process's SIGNING IDENTIFIER + code
