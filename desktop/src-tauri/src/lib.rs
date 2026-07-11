@@ -706,6 +706,17 @@ pub fn run() {
                     std::thread::sleep(Duration::from_millis(400)); // let the HTTP route come fully up
                     let h2 = h.clone();
                     let _ = h.run_on_main_thread(move || {
+                        // Node is up now → (re)load the main window so it shows the UI. The window is created
+                        // at launch from tauri.conf.json (so it appears immediately and in the FOREGROUND),
+                        // but its first load raced node startup and failed, leaving it blank. Reload it here
+                        // and focus it — without this the window stayed blank forever ("quits but never
+                        // reopens"). Same reason the pill below is deferred until the server answers.
+                        if let Some(w) = h2.get_webview_window("main") {
+                            if let Ok(u) = format!("{}/", SERVER).parse() { let _ = w.navigate(u); }
+                            let _ = w.show();
+                            let _ = w.unminimize();
+                            let _ = w.set_focus();
+                        }
                         make_overlay(&h2, "pill", "pill", PILL_W, PILL_H, true); // click-through: never steals focus
                         position_pill(&h2, PILL_W, PILL_H);
                     });
@@ -744,24 +755,33 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            match event {
-                // macOS convention: the red X HIDES the main window (the app keeps running in the tray).
-                tauri::WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
+            // macOS convention: the red X HIDES the main window (the app keeps running in the tray).
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
                 }
-                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![set_stealth, set_tray_recording, set_dictation, dictation_stop, set_tray_visible])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                // Stop the in-process recorder on quit — signal its thread, which drops the cpal Stream and
-                // releases the mic. (It lives in DICT, not CHILDREN, so it wouldn't be caught below.)
-                if let Ok(mut g) = DICT.lock() { if let Some(rec) = g.rec.take() { rec.stop.store(true, Ordering::Relaxed); } }
-                kill_children(); // release the mic on quit (meeting capture + other sidecars)
+        .run(|app_handle, event| {
+            match event {
+                tauri::RunEvent::Exit => {
+                    // Stop the in-process recorder on quit — signal its thread, which drops the cpal Stream and
+                    // releases the mic. (It lives in DICT, not CHILDREN, so it wouldn't be caught below.)
+                    if let Ok(mut g) = DICT.lock() { if let Some(rec) = g.rec.take() { rec.stop.store(true, Ordering::Relaxed); } }
+                    kill_children(); // release the mic on quit (meeting capture + other sidecars)
+                }
+                // Clicking the Dock icon when no window is open re-shows the main window (macOS convention),
+                // so the app is never "running but unreachable" after the red-X hide.
+                tauri::RunEvent::Reopen { .. } => {
+                    if let Some(w) = app_handle.get_webview_window("main") {
+                        let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus();
+                    }
+                }
+                _ => {}
             }
         });
 }
