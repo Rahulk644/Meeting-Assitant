@@ -121,8 +121,8 @@ fn start_stack() {
                 .env("ASSISTANT_REPO", REPO)
                 .stdout(Stdio::null()).stderr(Stdio::null()).spawn());
         } else {
-            eprintln!("FATAL: `node` not found in /opt/homebrew/bin, /usr/local/bin, /usr/bin, or ~/.local/bin — \
-                       the local server can't start, so the app window will be blank. Install Node.js and relaunch.");
+            log::error!("`node` not found in /opt/homebrew/bin, /usr/local/bin, /usr/bin, or ~/.local/bin — \
+                        the local server can't start, so the app window will be blank. Install Node.js and relaunch.");
         }
     }
     if cfg!(debug_assertions) { return; } // dev: capture comes from ./run.sh
@@ -202,7 +202,7 @@ fn position_pill(app: &AppHandle, w: f64, h: f64) {
     x = x.clamp(m, (sw - w - m).max(m));      // never let the pill fall off this monitor
     y = y.clamp(top, (sh - h - m).max(top));
     let _ = win.set_position(LogicalPosition::new(mx + x, my + y));
-    eprintln!("dictation: pill pos={} mon=({:.0},{:.0} {:.0}x{:.0}) -> ({:.0},{:.0})", pos, mx, my, sw, sh, mx + x, my + y);
+    log::debug!("dictation: pill pos={} mon=({:.0},{:.0} {:.0}x{:.0}) -> ({:.0},{:.0})", pos, mx, my, sw, sh, mx + x, my + y);
 }
 
 // Make the pill float over EVERY app — including the one you're typing in. A plain always-on-top window
@@ -215,24 +215,22 @@ fn pill_float_over_all_apps(app: &AppHandle) {
     let Ok(ptr) = win.ns_window() else { return };
     let ns = ptr as *mut AnyObject;
     if ns.is_null() { return; }
+    // Make the pill a NON-ACTIVATING NSPanel (as Handy does via tauri-nspanel): a plain NSWindow can't render
+    // in another app's full-screen space at any level, and would steal focus. Idempotent — safe per show.
+    const NS_NONACTIVATING_PANEL: usize = 1 << 7;      // NSWindowStyleMaskNonactivatingPanel
+    const NS_SCREEN_SAVER_LEVEL: isize = 1000;         // above full-screen content
+    const NS_CAN_JOIN_ALL_SPACES: usize = 1 << 0;      // present on every space…
+    const NS_FULLSCREEN_AUXILIARY: usize = 1 << 8;     // …including other apps' full-screen spaces
     unsafe {
-        // A plain NSWindow CANNOT render inside ANOTHER app's full-screen space, at any window level — the
-        // pill vanished the moment you were in a full-screen app (Claude Code, etc.). The reliable fix, and
-        // exactly what Handy does via tauri-nspanel, is to make the pill a NON-ACTIVATING NSPanel: swap its
-        // Objective-C class to NSPanel and add the nonactivating style bit. Then a full-screen-capable
-        // collection behavior + a high level float it over full-screen apps too, and — being nonactivating —
-        // it never pulls focus off what you're dictating into. Idempotent → safe to re-apply on each show.
         if let Some(panel_cls) = AnyClass::get("NSPanel") {
             let _ = AnyObject::set_class(&*ns, panel_cls);
         }
         let mask: usize = msg_send![ns, styleMask];
-        let _: () = msg_send![ns, setStyleMask: mask | 128usize];   // + NSWindowStyleMaskNonactivatingPanel (1<<7)
-        // NSScreenSaverWindowLevel (1000) sits above full-screen content; canJoinAllSpaces(1) puts the panel
-        // on every space (incl. other apps' full-screen spaces); fullScreenAuxiliary(256) lets it render there.
-        let _: () = msg_send![ns, setLevel: 1000isize];
-        let _: () = msg_send![ns, setCollectionBehavior: 257usize];
-        // orderFrontRegardless brings it forward WITHOUT activating the app — also fixes the plain "pill
-        // never appears" case where macOS doesn't order a borderless non-focusable window onto the screen.
+        let _: () = msg_send![ns, setStyleMask: mask | NS_NONACTIVATING_PANEL];
+        let _: () = msg_send![ns, setLevel: NS_SCREEN_SAVER_LEVEL];
+        let _: () = msg_send![ns, setCollectionBehavior: NS_CAN_JOIN_ALL_SPACES | NS_FULLSCREEN_AUXILIARY];
+        // orderFrontRegardless: forward without activating the app (also orders the borderless, non-focusable
+        // window onto screen, which macOS otherwise skips).
         let _: () = msg_send![ns, orderFrontRegardless];
     }
 }
@@ -273,14 +271,9 @@ fn set_tray_recording(app: tauri::AppHandle, on: bool) {
 }
 
 // ---- in-app dictation (Handy's model) --------------------------------------------------------------
-// Runs entirely IN this app process (com.myassistant.desktop): the hotkey is a Carbon global shortcut
-// (needs NO macOS permission), the ⌘V paste is synthesized via CGEvent → the app's OWN Accessibility
-// grant, and — like Handy — the mic is recorded IN-PROCESS with cpal. The OLD design spawned
-// `meeting-tap --dictate` per keypress, which cost ~300ms of process-launch lag before the mic even
-// opened (why it "felt slower than Handy"). Recording in-process means the APP itself asks for the
-// Microphone grant the first time you dictate (Info.plist carries NSMicrophoneUsageDescription), then it
-// sticks under the app's own identity. Progress/results still POST to the server's /ingest, so the pill
-// overlay and Dictation view need no changes.
+// Runs in this app process so the paste inherits the app's own Accessibility grant: the hotkey is a Carbon
+// global shortcut (no permission needed), ⌘V is synthesized via CGEvent, and the mic is recorded in-process
+// with cpal (asking for the Microphone grant on first use). Results POST to the server's /ingest.
 use std::time::Instant;
 
 // A live recording. A cpal input Stream is `!Send`, so it can't sit in DICT (a static Mutex shared across
@@ -309,7 +302,7 @@ fn spawn_capture(stop: Arc<AtomicBool>, samples: Arc<Mutex<Vec<f32>>>, rate: Arc
         let ch = (cfg.channels() as usize).max(1); // guard: chunks(0) panics, and a panic out of cpal's C callback aborts
         let fmt = cfg.sample_format();
         let scfg: cpal::StreamConfig = cfg.into();
-        let err = |e| eprintln!("dictation cpal error: {e}");
+        let err = |e| log::error!("dictation cpal error: {e}");
         let s = samples.clone();
         // Keep the first channel of every frame → mono, matching whisper's expected input.
         let stream = match fmt {
@@ -346,18 +339,10 @@ fn resample_16k(samples: &[f32], rate: u32) -> Vec<f32> {
     out
 }
 
-// Silero VAD — the SAME neural voice-activity detector Handy uses. Keep ONLY the speech regions of the
-// 16 kHz clip, dropping silence / room-tone that Whisper otherwise turns into a fluent hallucinated loop
-// (the "completely garbled" recordings). Returns empty when there's no speech at all, so an accidental
-// hotkey press with nothing said inserts nothing. The model + onnxruntime are statically linked (via the
-// `ort` crate, exactly as Handy ships it); if init ever fails we fall back to the full clip rather than
-// silently drop audio.
-//
-// CACHED like Handy: Handy's SileroVad holds the ONNX session for the app's lifetime and calls reset()
-// between utterances (clearing only the LSTM hidden/cell state — NO model reload). We do the same: build
-// the detector on first use, keep it here, and reset() before each clip. That moves the ~one-time model
-// load off every dictation's "Transcribing" phase. The detector owns an `ort` Session (Send), so it lives
-// safely in a static Mutex even though each dictation finishes on its own short-lived thread.
+// Silero VAD: keep only the speech regions of the 16 kHz clip — silence/room-tone otherwise makes Whisper
+// hallucinate a fluent loop. Returns empty when there's no speech (an accidental hotkey press inserts
+// nothing); on init failure we keep the whole clip rather than drop audio. The detector (an `ort` Session,
+// Send) is built once and reset() between utterances, so the one-time model load stays off the transcribe path.
 static VAD: Mutex<Option<voice_activity_detector::VoiceActivityDetector>> = Mutex::new(None);
 fn vad_extract_speech(samples16k: &[f32]) -> Vec<f32> {
     use voice_activity_detector::{IteratorExt, VoiceActivityDetector};
@@ -387,11 +372,8 @@ fn write_wav16k(path: &str, samples16k: &[f32]) -> bool {
 }
 
 fn ingest(json: &str) {
-    // Fire-and-forget on a detached thread. This spawns a BLOCKING `curl`, and emit_dstate() calls ingest from
-    // on_dict_hotkey and the Esc-cancel handler — both of which run on the MAIN (UI) thread. Blocking there
-    // froze the whole app for up to --max-time seconds and left the pill stuck on screen (Esc "hangs"). Never
-    // block the UI thread on a subprocess; the SSE broadcast is fire-and-forget and pill visibility is owned by
-    // dict_feedback (a direct window show/hide), so ordering here doesn't matter.
+    // Detached: some callers run on the UI thread and must never block on curl (a blocking spawn here once
+    // froze the app and wedged the pill). Fire-and-forget — the SSE broadcast ordering doesn't matter.
     let json = json.to_string();
     std::thread::spawn(move || {
         let _ = Command::new("curl")
@@ -658,10 +640,10 @@ fn register_dict_hotkey(app: &AppHandle, spec: &HotkeySpec) -> bool {
             let mut cur = DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(prev) = cur.take() { if prev != sc { let _ = gs.unregister(prev); } }
             *cur = Some(sc);
-            eprintln!("dictation: hotkey registered ({:?} + {:?})", mods, code);
+            log::info!("dictation: hotkey registered ({:?} + {:?})", mods, code);
             true
         }
-        Err(e) => { eprintln!("dictation: hotkey registration FAILED ({:?} + {:?}): {e}", mods, code); false }
+        Err(e) => { log::error!("dictation: hotkey registration failed ({:?} + {:?}): {e}", mods, code); false }
     }
 }
 
@@ -747,7 +729,7 @@ fn start_modifier_tap() {
                     let rl = CFRunLoop::get_current();
                     unsafe { rl.add_source(&src, kCFRunLoopCommonModes); }
                     tap.enable();
-                    eprintln!("dictation: modifier event-tap running");
+                    log::info!("dictation: modifier event-tap running");
                     // Run the loop in short slices and re-enable after each: macOS disables an event tap under
                     // load (kCGEventTapDisabledByTimeout), and without re-enabling, the modifier trigger would
                     // silently die until relaunch. This mirrors Handy's handy-keys run loop; enable() is idempotent.
@@ -756,9 +738,9 @@ fn start_modifier_tap() {
                         tap.enable();
                     }
                 }
-                Err(_) => { eprintln!("dictation: modifier tap runloop-source failed"); DICT_TAP_UP.store(false, Ordering::SeqCst); }
+                Err(_) => { log::error!("dictation: modifier tap runloop-source failed"); DICT_TAP_UP.store(false, Ordering::SeqCst); }
             },
-            Err(_) => { eprintln!("dictation: modifier event-tap FAILED to create (grant Accessibility, then relaunch)"); DICT_TAP_UP.store(false, Ordering::SeqCst); }
+            Err(_) => { log::error!("dictation: modifier event-tap failed to create (grant Accessibility, then relaunch)"); DICT_TAP_UP.store(false, Ordering::SeqCst); }
         }
     });
 }
@@ -806,7 +788,7 @@ fn set_dictation(app: AppHandle, cfg: DictCfg) {
         // retire any Carbon hotkey so the old ⌃⇧D can't fire alongside the modifier
         if let Some(prev) = DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner()).take() { let _ = app.global_shortcut().unregister(prev); }
         start_modifier_tap(); // idempotent; also retries the tap now that Accessibility may have just been granted
-        eprintln!("dictation: modifier trigger set ({} = {:#x})", cfg.hotkey.as_ref().map(|h| h.modifier.as_str()).unwrap_or(""), mm);
+        log::info!("dictation: modifier trigger set ({} = {:#x})", cfg.hotkey.as_ref().map(|h| h.modifier.as_str()).unwrap_or(""), mm);
     } else {
         DICT_MOD_MASK.store(0, Ordering::Relaxed); // fall back to a Carbon combo
         if let Some(hk) = cfg.hotkey.as_ref() { register_dict_hotkey(&app, hk); }
@@ -851,9 +833,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())?;
-            }
+            // Always initialise logging: in a packaged build this is the only way logs reach disk (the
+            // app's stderr goes nowhere on a double-click launch). Writes to the OS log dir.
+            app.handle().plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())?;
 
             init_paths(app);   // resolve RES_BASE / DATA_DIR / MODELS_DIR before anything spawns
             start_stack();
