@@ -7,6 +7,8 @@ const fs = require("fs");
 const net = require("net");
 const path = require("path");
 const { spawn, execFile } = require("child_process");
+const { Gate } = require("./gate.js");
+const { injectMultipartFields } = require("./multipart.js");
 
 const PORT = process.env.PORT || 8787; // respect preview's assigned port; 8787 for manual runs
 const clients = new Set();
@@ -23,15 +25,9 @@ const FFMPEG = findBin("ffmpeg"); // for meeting thumbnails from the screen reco
 fs.mkdirSync(REC_DIR, { recursive: true });
 let cur = null; // the in-progress meeting being recorded to disk
 
-// ---- recording gate: auto-detection composed with a manual override ----------------------------
-// `detected` = the raw "in a call" that the capturers (meeting-tap / meeting-state) self-report.
-// `manual`   = the UI's override: null = follow auto-detection, 'on' = force record, 'paused' = hold
-//              (mic released, meeting kept open), 'off' = stopped. The two compose into the effective
-//              recording state, which drives the meeting lifecycle AND what the UI/tray show. A manual
-//              stop/pause auto-clears back to auto once the real call actually ends, so the NEXT call
-//              still records itself.
-let detected = false, manual = null, manualDetected = false, manualHard = false; // manualDetected = the call state when `manual` was set; manualHard = a genuine manual recording with no call to fall back to
-let autoDetect = true; // the "Detect meetings automatically" setting — off = only manual start records
+// Recording gate: composes auto-detection with the manual override (see gate.js). Drives the meeting
+// lifecycle and what the UI/tray show.
+const gate = new Gate(true);
 let unloadIdle = true; // "Unload model when idle" setting — off = keep whisper hot between calls
 let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
 // Dictation: only the bits the SERVER applies at transcription time live here — the spoken language and
@@ -65,39 +61,21 @@ try {
   const m = settingsBlob["set.modules"] && JSON.parse(settingsBlob["set.modules"]);
   if (m && typeof m === "object") { modules = { dictation: !!m.dictation, meetings: !!m.meetings, writing: !!m.writing }; dictationCfg.enabled = !!modules.dictation; }
 } catch {}
-function effectiveRecording() { return manual === "on" ? true : (manual === "paused" || manual === "off") ? false : (autoDetect && detected); }
+const effectiveRecording = () => gate.recording;
 function broadcastCall() { // push the composed call state to the UI (and lastState, for reconnects)
-  const rec = effectiveRecording();
-  broadcast({ type: "state", state: { inMeeting: rec || manual === "paused", paused: manual === "paused", startedAt: cur ? cur.startedAt : null } });
+  broadcast({ type: "state", state: { inMeeting: gate.recording || gate.paused, paused: gate.paused, startedAt: cur ? cur.startedAt : null } });
 }
 function recomputeLifecycle(action) {
-  const rec = effectiveRecording();
-  if (rec) { cancelFinalize(); ensureWhisper(); if (!cur) startMeeting(lastState); }
+  if (gate.recording) { cancelFinalize(); ensureWhisper(); if (!cur) startMeeting(lastState); }
   else if (cur) {
-    if (manual === "paused") cancelFinalize();     // paused — keep the meeting open, just stop capturing
-    else if (action === "stop") finalizeMeeting();  // manual stop — end it now
-    else scheduleFinalize();                        // auto call-end — debounced (a brief drop won't split it)
+    if (gate.paused) cancelFinalize();             // paused — keep the meeting open, just stop capturing
+    else if (action === "stop") finalizeMeeting(); // manual stop — end it now
+    else scheduleFinalize();                       // auto call-end — debounced so a brief drop won't split it
   }
 }
-function setDetected(d) {
-  if (d === detected) return;
-  detected = d;
-  // A call-relative override (pause/resume/stop) is scoped to the call state it was made in; once that
-  // changes — the call ends, or a new one is detected — hand control back to auto so the next call records
-  // itself. This MUST cover resume (manual==='on') too, or a resumed auto call never finalizes when it ends.
-  // A genuine manual recording (manualHard: started with no call to fall back to) is exempt — it persists
-  // until the user stops it, so a stray detection doesn't hijack it.
-  if (manual !== null && !manualHard && detected !== manualDetected) manual = null;
-  recomputeLifecycle(); broadcastCall();
-}
+function setDetected(d) { if (gate.setDetected(d)) { recomputeLifecycle(); broadcastCall(); } }
 function setManual(action) {
-  if (action === "start")       { manual = "on";     manualHard = !(autoDetect && detected); } // hard only when there's no auto call under it
-  else if (action === "resume") { manual = "on";     manualHard = false; }                     // resume is always call-relative
-  else if (action === "pause")  { manual = "paused"; manualHard = false; }
-  else if (action === "stop")   { manual = "off";    manualHard = false; }
-  else if (action === "auto")   { manual = null;     manualHard = false; }
-  else return false;
-  manualDetected = detected; // remember the call state at the moment of the override
+  if (!gate.setManual(action)) return false;
   recomputeLifecycle(action); broadcastCall();
   return true;
 }
@@ -368,6 +346,10 @@ function readBodyBuffer(req) { // binary-safe (multipart WAV must not be stringi
 async function waitPort(host, port, ms) { const t = Date.now() + ms; while (Date.now() < t) { if (await portOpen(host, port)) return true; await new Promise(r => setTimeout(r, 300)); } return false; }
 
 http.createServer((req, res) => {
+  // Loopback-only: this server holds transcripts, notes, and your API key. Reject any non-localhost Host —
+  // defence-in-depth against LAN peers and DNS-rebinding, on top of the 127.0.0.1 bind below.
+  const host = (req.headers.host || "").split(":")[0];
+  if (host && host !== "127.0.0.1" && host !== "localhost") { res.writeHead(403); return res.end(); }
   if (req.url === "/" || req.url === "/index.html") {
     // no-store: the WebView (WKWebView) otherwise heuristically caches the UI and serves a stale copy after
     // an edit — so "the code is updated but the app behaves like the old version". Always fetch fresh.
@@ -411,14 +393,14 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/state" && req.method === "GET") { // meeting-tap polls this to gate capture + video mode + manual override
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ ...lastState, manual: manual || "auto", dictation: dictationCfg, modules, dictStop: dictStopSeq }));
+    return res.end(JSON.stringify({ ...lastState, manual: gate.manual || "auto", dictation: dictationCfg, modules, dictStop: dictStopSeq }));
   }
   if (req.url === "/api/meeting/control" && req.method === "POST") { // UI start/pause/resume/stop (composes with auto-detect)
     readBody(req).then(b => {
       let action = ""; try { action = String(JSON.parse(b).action || "").toLowerCase(); } catch {}
       const ok = setManual(action);
       res.writeHead(ok ? 200 : 400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ manual: manual || "auto", inMeeting: effectiveRecording() || manual === "paused", paused: manual === "paused" }));
+      res.end(JSON.stringify({ manual: gate.manual || "auto", inMeeting: gate.recording || gate.paused, paused: gate.paused }));
     });
     return;
   }
@@ -456,7 +438,7 @@ http.createServer((req, res) => {
         if (typeof j.videoMode === "string") broadcast({ type: "state", state: { videoMode: j.videoMode } });
         if (typeof j.translate === "boolean") broadcast({ type: "state", state: { translate: j.translate } });
         if (typeof j.language === "string") broadcast({ type: "state", state: { language: j.language } });
-        if (typeof j.autoDetect === "boolean") { autoDetect = j.autoDetect; broadcast({ type: "state", state: { autoDetect } }); recomputeLifecycle(); broadcastCall(); } // off → ignore self-detection (manual only)
+        if (typeof j.autoDetect === "boolean") { gate.setAutoDetect(j.autoDetect); broadcast({ type: "state", state: { autoDetect: j.autoDetect } }); recomputeLifecycle(); broadcastCall(); } // off → ignore self-detection (manual only)
         if (typeof j.unloadIdle === "boolean") unloadIdle = j.unloadIdle; // off → keep whisper hot
         if (typeof j.vocab === "string") { vocabPrompt = j.vocab.slice(0, 800); broadcast({ type: "state", state: { vocab: vocabPrompt } }); } // custom vocabulary → meeting-tap
         if (j.dictation && typeof j.dictation === "object") { dictationCfg = { ...dictationCfg, ...j.dictation }; broadcast({ type: "state", state: { dictation: dictationCfg } }); } // Handy-style dictation config → meeting-tap
@@ -481,29 +463,14 @@ http.createServer((req, res) => {
         // A/B-verified on a real clip: language=auto MIS-detects short Hinglish ("mera naam Rahul hai") as
         // Tamil ("மேர் நாம்…") — that IS the bug; language=en yields clean "My name is Rahul." Handy pins en
         // too. Honor an explicit Settings language; default (or "auto") → en for reliable English output.
-        let reqBody = buf;
-        const bm = /boundary=(?:"([^"]+)"|([^";,\s]+))/i.exec(ct);
-        if (bm) {
-          const b = bm[1] || bm[2];
-          // Match Handy's ACTUAL RUNTIME (from its debug log), not just its settings file. Handy's
-          // settings say translate_to_english=true, but its log shows every run is `task=Transcribe,
-          // language=en` — the Translate task only engages for a NON-English source; with the language
-          // pinned to en it always Transcribes. We were forcing translate=true (the Translate task),
-          // which is lower-quality for English/Hinglish audio — the reason our text read worse than
-          // Handy's. So: language=en + translate=false (Transcribe), byte-for-byte what Handy runs.
-          const lang = (dictationCfg.language && dictationCfg.language !== "auto") ? dictationCfg.language : "en";
-          // Match Handy's runtime: language=en + Transcribe task (translate=false). We deliberately do NOT
-          // enable Whisper's temperature fallback — without VAD it hallucinates fluent garbage on any silence
-          // in the clip (A/B-tested: fallback gave ZERO accuracy gain on clean speech but risks the repetition
-          // loop on quiet audio), so dictation uses the same anti-hallucination greedy decode as meetings.
-          const fields =
-            `--${b}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${lang}\r\n` +
-            `--${b}\r\nContent-Disposition: form-data; name="translate"\r\n\r\nfalse\r\n` +
-            (vocabPrompt ? `--${b}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nVocabulary: ${vocabPrompt}\r\n` : "") +
-            `--${b}--\r\n`;
-          const cut = buf.lastIndexOf(Buffer.from(`--${b}--`));
-          reqBody = Buffer.concat([cut >= 0 ? buf.subarray(0, cut) : buf, Buffer.from(fields)]);
-        }
+        // Pin the language (auto-detect mis-scripts short Hinglish clips as e.g. Tamil) and force the
+        // Transcribe task, not Translate — matches Handy's runtime and gives cleaner English/Hinglish output.
+        const lang = (dictationCfg.language && dictationCfg.language !== "auto") ? dictationCfg.language : "en";
+        const reqBody = injectMultipartFields(buf, ct, {
+          language: lang,
+          translate: "false",
+          prompt: vocabPrompt ? `Vocabulary: ${vocabPrompt}` : "",
+        });
         const r = await fetch(`http://127.0.0.1:${WHISPER_PORT}/inference`, { method: "POST", headers: { "Content-Type": ct }, body: reqBody });
         const body = await r.text();
         if (!r.ok) throw new Error(`${r.status} ${body.slice(0, 160)}`);
@@ -627,7 +594,7 @@ http.createServer((req, res) => {
   }
   res.writeHead(404);
   res.end();
-}).listen(PORT, () => {
+}).listen(PORT, "127.0.0.1", () => {
   console.log(`\n  Live transcript → http://localhost:${PORT}\n`);
   finalizeOrphans(); // meetings a prior (killed) server left open aren't live — close them
   // No hard-coded "inMeeting" — meeting-state (names) + meeting-tap (self-detect) drive "live", only in a real call.
