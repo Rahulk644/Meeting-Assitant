@@ -244,8 +244,6 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .rng{display:flex;align-items:center;gap:13px} .rng .v{font-size:12.5px;color:var(--ink-2);min-width:26px;font-variant-numeric:tabular-nums}
   .keys{display:flex;gap:4px} .keycap{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:23px;padding:0 8px;
         background:var(--surface-2);border:1px solid var(--line);border-bottom-width:2px;border-radius:var(--r-sm);font-size:11.5px;font-weight:600;color:var(--ink)}
-  .pathtext{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--ink-2);
-        max-width:290px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sc-row{display:flex;align-items:center;gap:12px}
   .notset{font-size:12.5px;color:var(--ink-3)}
   .abtn{padding:6px 12px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--line);color:var(--ink);
@@ -716,13 +714,9 @@ $('#themeToggle').onclick=()=>setTheme(effTheme(themePref())==='dark'?'light':'d
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{ if(themePref()==='system') setTheme('system') });
 updateThemeIcon();
 
-/* ---------- durable settings (server-backed) ----------
-   WKWebView does NOT persist localStorage for the http://localhost origin Tauri loads (storage is bound to the
-   tauri:// protocol, not an external URL) — so every setting was lost on relaunch, resetting all feature
-   modules to off and leaving dictation/meetings dead. Fix: mirror setting writes to the server
-   (DATA_DIR/settings.json) at the write sites (store.set / theme / route) and rehydrate on boot. We mirror at
-   the call sites rather than overriding localStorage.setItem — Safari/WKWebView rejects reassigning Storage
-   methods, which throws under "use strict" and would kill the whole script. */
+/* Durable settings: WKWebView doesn't persist localStorage for this http origin (storage is bound to the
+   tauri:// protocol), so we mirror every write to the server (data/settings.json) and rehydrate on boot.
+   Mirroring happens at the call sites — reassigning Storage.setItem throws in WKWebView under strict mode. */
 let __pending={}, __mtimer=null;
 function mirror(k,v){ __pending[k]=(v==null?null:String(v)); if(!__mtimer) __mtimer=setTimeout(()=>{ const p=__pending; __pending={}; __mtimer=null; fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({set:p})}).catch(()=>{}); },250); }
 async function hydrateSettings(){ let kv=null; try{ kv=await (await fetch('/api/settings')).json(); }catch{} if(kv&&typeof kv==='object') for(const k in kv){ if(kv[k]!=null) try{ localStorage.setItem(k,kv[k]); }catch{} } }
@@ -927,11 +921,11 @@ const PANEL_ICONS={
   experimental:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3h5M10.5 3v5.2L5 16.6A2 2 0 0 0 6.8 20h10.4a2 2 0 0 0 1.8-3.4L13.5 8.2V3"/><line x1="8" y1="15" x2="16" y2="15"/></svg>',
 };
 const DEFAULTS={
-  mic:'Auto (Default)', app_lang:'English', app_updates:'Always', show_tray:true, overlay_enabled:true, overlay_pos:'Bottom center', start_login:false, start_hidden:false, stealth:false,
+  show_tray:true, overlay_enabled:true, overlay_pos:'Bottom center', start_login:false, start_hidden:false, stealth:false,
   dict_enabled:true, dict_lang:'Auto-detect', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, volume:70, push_to_talk:false, sc_start:'⌃⇧D', sc_cancel:'Esc',
   wa_selection:true, wa_noneditable:true, wa_translate_lang:'English', wa_open:'⌃+Space', wa_close:'Esc',
-  mtg_source:'Local', live_indicator:true, auto_detect:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, notes_path:'/Users/rahul/Documents/My Assistant/Meetings', mtg_shortcut:'Not set',
-  unload_model:true, engine:'Whisper large-v3-turbo', log_dir:'~/Library/Logs/My Assistant', whats_new:true,
+  mtg_source:'Local', live_indicator:true, auto_detect:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, mtg_shortcut:'Not set',
+  unload_model:true, whats_new:true,
   copilot:false, browser_meet:false, agents_exp:false,
 };
 const SCHEMA={
@@ -948,10 +942,7 @@ const SCHEMA={
       {id:'stealth',title:'Invisible to screen-share',desc:'Hide this window from screen recordings and shared screens.',type:'toggle'},
     ]},
     {label:'SYSTEM', rows:[
-      {id:'mic',title:'Microphone',desc:'The input device used for capture.',type:'select',options:['Auto (Default)','MacBook Pro Microphone','External Microphone','AirPods Pro']},
-      {id:'app_lang',title:'Application language',desc:'',type:'select',options:['English','हिन्दी','Español','Deutsch','Français','日本語']},
       {id:'permissions',title:'Permissions',desc:'Microphone, screen recording, and accessibility access.',type:'button',btn:'Configure'},
-      {id:'app_updates',title:'App updates',desc:'When to install new versions.',type:'select',options:['Always','On launch','Manually']},
       {id:'version',title:'Version',desc:"You’re on the latest version — 0.1.0",type:'button',btn:'Check for updates'},
     ]},
     {label:'MENU BAR & OVERLAY', rows:[
@@ -1007,7 +998,6 @@ const SCHEMA={
     ]},
     {label:'STORAGE', rows:[
       {id:'audio_storage',title:'Audio storage',desc:'Maximum on-device storage for meeting recordings.',type:'slider'},
-      {id:'notes_path',title:'Meeting notes export',desc:'',type:'path'},
       {id:'templates',title:'Meeting note templates',desc:'Create and edit the templates notes are generated with.',type:'button',btn:'Edit templates'},
     ]},
     {label:'AI MODEL', rows:[{id:'mtg_model',title:'Model',desc:'Runs on the Apple GPU; loads on demand and unloads when idle.',type:'aimodel'}]},
@@ -1016,10 +1006,8 @@ const SCHEMA={
   advanced:[
     {label:'MODEL', rows:[
       {id:'unload_model',title:'Unload model when idle',desc:'Free memory between calls; reloads on demand.',type:'toggle'},
-      {id:'engine',title:'Transcription engine',desc:'',type:'select',options:['Whisper large-v3-turbo','Whisper medium','Parakeet','Qwen3-ASR']},
     ]},
     {label:'DIAGNOSTICS', rows:[
-      {id:'log_dir',title:'Log directory',desc:'',type:'path'},
       {id:'whats_new',title:'Show what’s new on update',desc:'Open release notes after an update.',type:'toggle'},
     ]},
     {label:'CREATOR', rows:[{id:'support_creator',title:'Support the creator',desc:'My Assistant is independent and runs entirely on-device.',type:'button',btn:'Open'}]},
@@ -1206,12 +1194,6 @@ function settingRow(row){
     c.append(w); return r;
   }
 
-  if(row.type==='path'){
-    const w=document.createElement('div'); w.className='sc-row';
-    const p=document.createElement('span'); p.className='pathtext'; p.textContent=store.get(id,DEFAULTS[id]||''); p.title=p.textContent;
-    const chg=document.createElement('div'); chg.className='abtn'; chg.textContent='Change';
-    chg.onclick=()=>toast('A folder picker arrives with the desktop app.'); w.append(p,chg); c.append(w); return r;
-  }
   return r;
 }
 // The one row that maps to a REAL, working model config (post-call summary + ask). Provider select
