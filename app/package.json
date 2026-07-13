@@ -1,0 +1,11 @@
+{
+  "name": "my-assistant-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local relay + UI server for My Assistant: streams live transcripts, serves the app, proxies on-device STT/LLM. No dependencies.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}
