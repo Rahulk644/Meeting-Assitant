@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server-tests:
+    name: Server tests (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run tests
+        working-directory: app
+        run: npm test
+
+  desktop-check:
+    name: Desktop compile check (cargo)
+    runs-on: macos-latest # links Core Audio / CoreGraphics / AppKit — macOS only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: cargo check
+        working-directory: desktop/src-tauri
+        run: cargo check
