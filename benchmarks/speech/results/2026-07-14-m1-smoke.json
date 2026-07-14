@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "status": "engineering-smoke-not-release-gate",
+  "date": "2026-07-14",
+  "host": {
+    "platform": "macOS 26.5",
+    "machine": "Apple M1 arm64",
+    "memoryBytes": 8589934592,
+    "transcribeCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5"
+  },
+  "corpus": {
+    "dataset": "Trelis/CoSHE-500",
+    "revision": "3da116bac98bfe5349f9b454d95a17a43483e1e8",
+    "parquetSha256": "b5201501cde4134b2bcb70151f2b97aa0daf8b0c117b9e6c1dc494c4c230c926",
+    "license": "CC-BY-NC-4.0",
+    "use": "evaluation-only; never training",
+    "referenceStyle": "natural mixed Devanagari and Latin",
+    "selection": {
+      "seed": 42,
+      "count": 24,
+      "totalRows": 500,
+      "audioSeconds": 614.0401
+    }
+  },
+  "measurement": {
+    "warmupRunsPerModel": 1,
+    "wer": "NFC case-folded word error rate preserving Indic combining marks; no transliteration",
+    "memory": "peak resident set size of transcribe-server",
+    "reportsWithTranscripts": "private benchmark cache only"
+  },
+  "results": [
+    {
+      "id": "whisper-turbo-q8",
+      "modelBytes": 886381824,
+      "modelSha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448",
+      "decodeLanguage": "auto",
+      "scoreComparable": true,
+      "scriptSafeWer": 0.599197,
+      "speedup": 8.49,
+      "inferenceSeconds": 72.3239,
+      "loadedRssMiB": 964.2,
+      "peakRssMiB": 1038.0,
+      "truncatedSamples": 0,
+      "emptySamples": 0,
+      "degenerateSamples": 1,
+      "degenerateReasons": {"repetition-loop": 1}
+    },
+    {
+      "id": "whisper-turbo-q8-hi",
+      "modelBytes": 886381824,
+      "modelSha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448",
+      "decodeLanguage": "hi",
+      "scoreComparable": true,
+      "scriptSafeWer": 0.752294,
+      "speedup": 6.61,
+      "inferenceSeconds": 92.8543,
+      "loadedRssMiB": 962.2,
+      "peakRssMiB": 962.2,
+      "truncatedSamples": 0,
+      "emptySamples": 0,
+      "degenerateSamples": 10,
+      "degenerateReasons": {"repetition-loop": 10}
+    },
+    {
+      "id": "apex-hinglish-q8",
+      "modelBytes": 874188075,
+      "modelSha256": "bef6d9d571e9e7bd3cd2ebba8b2d5c9cc4731e210d6750ae6a9c621a87e60d4c",
+      "decodeLanguage": "en",
+      "scoreComparable": false,
+      "rawNonComparableWer": 0.544725,
+      "speedup": 9.41,
+      "inferenceSeconds": 65.2503,
+      "loadedRssMiB": 938.4,
+      "peakRssMiB": 938.4,
+      "truncatedSamples": 0,
+      "emptySamples": 0,
+      "degenerateSamples": 1,
+      "degenerateReasons": {"non-finite-token": 1},
+      "note": "Roman output was compared with mixed-script references; accuracy is intentionally not ranked."
+    },
+    {
+      "id": "qwen3-asr-base-q6",
+      "modelBytes": 690417824,
+      "modelSha256": "3b051f108f03c0c91bbe1a3b2c1ee15e3ed51e4caec2a48751b01f2a21441cc3",
+      "decodeLanguage": "auto",
+      "scoreComparable": true,
+      "scriptSafeWer": 0.308486,
+      "speedup": 8.77,
+      "inferenceSeconds": 70.0299,
+      "loadedRssMiB": 1186.7,
+      "peakRssMiB": 1186.7,
+      "truncatedSamples": 8,
+      "emptySamples": 0,
+      "degenerateSamples": 0
+    },
+    {
+      "id": "srota-hinglish-q6",
+      "modelBytes": 690417824,
+      "modelSha256": "b0e6b1b81bfb2e278431eae81d8ec3fb4fbb7cae26c801f10bd31ec80cd03ac5",
+      "decodeLanguage": "auto",
+      "scoreComparable": true,
+      "scriptSafeWer": 0.467317,
+      "speedup": 10.47,
+      "inferenceSeconds": 58.6388,
+      "loadedRssMiB": 1200.3,
+      "peakRssMiB": 1216.9,
+      "truncatedSamples": 5,
+      "emptySamples": 0,
+      "degenerateSamples": 0
+    },
+    {
+      "id": "srota-hinglish-bf16-control",
+      "modelBytes": 1571490016,
+      "modelSha256": "2658bcc4251631e6a64a842af6d02814de572248f424ff207bacb6311e66aa16",
+      "decodeLanguage": "auto",
+      "scoreComparable": true,
+      "scriptSafeWer": 0.46961,
+      "speedup": 7.01,
+      "inferenceSeconds": 87.5862,
+      "loadedRssMiB": 2406.6,
+      "peakRssMiB": 2406.6,
+      "truncatedSamples": 6,
+      "emptySamples": 0,
+      "degenerateSamples": 0,
+      "note": "Diagnostic control only; near-identical accuracy confirms Q6 conversion did not cause the Srota regression."
+    }
+  ],
+  "decision": {
+    "currentDefault": "whisper-turbo-q8",
+    "bestComparableCandidate": "qwen3-asr-base-q6",
+    "candidatePromotion": "blocked",
+    "blockers": [
+      "Qwen Base truncated 8 of 24 clips at the current output-token limit.",
+      "The 24-clip smoke set is too small for a release-quality claim.",
+      "No controlled cafe, traffic, wind, fan, echo, overlap, or silence matrix has run yet."
+    ],
+    "rejectedAsDefault": ["srota-hinglish-q6"],
+    "styleMatchedEvaluationRequired": ["apex-hinglish-q8"],
+    "deferredForDiskSafety": ["trelis-hinglish-q8"]
+  },
+  "coldStartNote": "The first-ever Metal run took about 12.9 seconds while pipelines compiled; subsequent warm starts measured about 0.5 to 1.4 seconds."
+}

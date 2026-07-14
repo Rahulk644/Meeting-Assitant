@@ -29,6 +29,10 @@ desktop/web-dist/
 # Official standalone Node runtime staged for portable macOS bundles.
 desktop/runtime/
 
+# Python benchmark tooling
+__pycache__/
+*.py[cod]
+
 # Runtime logs / scratch
 *.log
 /tmp/mt-*.log

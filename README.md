@@ -188,6 +188,19 @@ ASSISTANT_RELEASE_CHANNEL=preview ./run.sh
 
 The release channel is server-owned; query parameters and saved settings cannot promote capabilities.
 
+Evaluate pinned local speech candidates through the production native runtime:
+
+```bash
+./script/benchmark_speech.sh test
+./script/benchmark_speech.sh prepare-models whisper-turbo-q8 qwen3-asr-base-q6
+./script/benchmark_speech.sh prepare-data
+./script/benchmark_speech.sh run whisper-turbo-q8,qwen3-asr-base-q6
+```
+
+The data, models, and transcript-bearing reports remain in a private cache. See
+[`docs/SPEECH_MODEL_BENCHMARK.md`](docs/SPEECH_MODEL_BENCHMARK.md) for the current Hinglish decision and
+[`benchmarks/speech/README.md`](benchmarks/speech/README.md) for the complete reproducibility contract.
+
 Run `./run.sh` from a Terminal that has the **Screen-Recording + Accessibility** grants — dev builds are
 ad-hoc-signed (grants don't persist across rebuilds), so dev rides on Terminal's stable grant; the
 packaged `.app` gets its own. Flags pass through (`--app all`, `--mic off`, `--me "Name"`, `--gate off`,
@@ -202,6 +215,7 @@ packaged `.app` gets its own. Flags pass through (`--app all`, `--mic off`, `--m
 | `stt/meeting-tap.swift` | Core Audio tap (audio, no Screen Recording) + ScreenCaptureKit (video) + process-list call detection + utterance segmentation |
 | `stt/transcribe-server/` | our HTTP wrapper around [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) (source + `build.sh`, pinned commit) |
 | `stt/whisper/` | GGUF transcription model (git-ignored; fetched by `setup.sh`) |
+| `benchmarks/speech/` | pinned speech-model catalog, private-cache harness, and aggregate non-transcript evidence |
 | `desktop/src-tauri/src/local_server.rs` | shipped Rust SSE/API server, meeting store, model lifecycle, summaries, Keychain and authenticated local routes |
 | `app/server.js` | developer-only browser harness; not included in the packaged app |
 | `app/index.html` | the UI — nav, live transcript, Library + detail (player), settings; light/dark |

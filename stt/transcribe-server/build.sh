@@ -43,8 +43,9 @@ CM
 grep -q "add_subdirectory(server)" "$SRC/examples/CMakeLists.txt" || echo "add_subdirectory(server)" >> "$SRC/examples/CMakeLists.txt"
 
 echo "Building transcribe-server (Metal) — first build compiles ggml, ~2–4 min …"
-cmake -S "$SRC" -B "$SRC/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
+cmake -S "$SRC" -B "$SRC/build" -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_EXAMPLES=ON >/dev/null
 cmake --build "$SRC/build" --target transcribe-server -j >/dev/null
 cp "$SRC/build/bin/transcribe-server" "$ROOT/transcribe-server"
 codesign --force --sign - "$ROOT/transcribe-server" 2>/dev/null || true  # stable ad-hoc sig so TCC grants stick
+"$ROOT/transcribe-server" --selftest
 echo "✓ transcribe-server → $ROOT/transcribe-server"

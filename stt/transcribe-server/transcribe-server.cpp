@@ -43,13 +43,49 @@ static bool parse_wav16(const std::string &b, std::vector<float> &out) {
 
 static std::string json_escape(const std::string &s) {
     std::string o;
-    for (char c : s) {
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c >= 0x80) {
+            size_t width = 0;
+            if (c >= 0xC2 && c <= 0xDF) width = 2;
+            else if (c >= 0xE0 && c <= 0xEF) width = 3;
+            else if (c >= 0xF0 && c <= 0xF4) width = 4;
+            bool valid = width != 0 && i + width <= s.size();
+            for (size_t j = 1; valid && j < width; ++j) {
+                const unsigned char continuation = static_cast<unsigned char>(s[i + j]);
+                valid = continuation >= 0x80 && continuation <= 0xBF;
+            }
+            if (valid && width == 3) {
+                const unsigned char second = static_cast<unsigned char>(s[i + 1]);
+                valid = !((c == 0xE0 && second < 0xA0) || (c == 0xED && second > 0x9F));
+            } else if (valid && width == 4) {
+                const unsigned char second = static_cast<unsigned char>(s[i + 1]);
+                valid = !((c == 0xF0 && second < 0x90) || (c == 0xF4 && second > 0x8F));
+            }
+            if (valid) {
+                o.append(s, i, width);
+                i += width;
+            } else {
+                o += "\xEF\xBF\xBD";
+                ++i;
+            }
+            continue;
+        }
         if (c == '"' || c == '\\') { o += '\\'; o += c; }
         else if (c == '\n' || c == '\r' || c == '\t') o += ' ';
-        else if ((unsigned char)c < 0x20) { /* drop */ }
+        else if (c < 0x20) { /* drop */ }
         else o += c;
+        ++i;
     }
     return o;
+}
+
+static bool selftest_json_escape() {
+    const std::string valid = "है \"ready\"";
+    if (json_escape(valid) != "है \\\"ready\\\"") return false;
+    std::string invalid = "partial";
+    invalid.push_back(static_cast<char>(0xE0));
+    return json_escape(invalid) == "partial\xEF\xBF\xBD";
 }
 
 static struct transcribe_model   *g_model = nullptr;
@@ -74,6 +110,14 @@ static void start_parent_watchdog() {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--selftest") == 0) {
+        if (!selftest_json_escape()) {
+            fprintf(stderr, "transcribe-server self-test failed\n");
+            return 1;
+        }
+        fprintf(stderr, "transcribe-server self-test passed\n");
+        return 0;
+    }
     start_parent_watchdog();
     const char *token_env = getenv("ASSISTANT_STT_TOKEN");
     std::string model_path, host = "127.0.0.1", token = token_env ? token_env : "";
@@ -145,14 +189,19 @@ int main(int argc, char **argv) {
             rp.family = &wx.ext;
 
         std::string text;
-        if (transcribe_run(g_ctx, pcm.data(), (int)pcm.size(), &rp) == TRANSCRIBE_OK) {
+        const transcribe_status run_status = transcribe_run(g_ctx, pcm.data(), (int)pcm.size(), &rp);
+        const bool truncated = run_status == TRANSCRIBE_ERR_OUTPUT_TRUNCATED;
+        if (run_status == TRANSCRIBE_OK || truncated) {
             const char *t = transcribe_full_text(g_ctx);
             if (t) text = t;
+        } else {
+            fprintf(stderr, "transcribe-server: inference failed: %s\n", transcribe_status_string(run_status));
         }
         // trim leading space Whisper often prefixes
         size_t b = text.find_first_not_of(' ');
         if (b == std::string::npos) text.clear(); else text = text.substr(b);
-        res.set_content("{\"text\":\"" + json_escape(text) + "\"}", "application/json");
+        res.set_content("{\"text\":\"" + json_escape(text) + "\",\"truncated\":" +
+                        (truncated ? "true" : "false") + "}", "application/json");
     });
 
     fprintf(stderr, "transcribe-server ready on %s:%d (model held hot)\n", host.c_str(), port);

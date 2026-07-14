@@ -17,6 +17,8 @@ versions will use semantic versioning once the first public beta tag is cut.
 - Conservative browser and communication-app call detection using active per-app audio plus meeting-window
   evidence; universal manual recording remains available for any platform.
 - Native first-frame meeting thumbnails and installed-app icon/platform-tile fallbacks.
+- Reproducible, revision- and hash-pinned Hinglish speech benchmark with private-cache data boundaries and
+  aggregate OSS evidence.
 
 ### Changed
 
@@ -38,6 +40,8 @@ versions will use semantic versioning once the first public beta tag is cut.
 - Existing speech models can be migrated into the current Application Support location.
 - A loopback-port conflict now exits cleanly before creating a window or helper instead of leaving an
   unreachable background process.
+- Native transcription now preserves valid partial output when a model reaches its token limit, reports the
+  truncation, and guarantees valid UTF-8 JSON for byte-limited Hindi text.
 
 ### Security
 

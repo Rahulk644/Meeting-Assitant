@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "id": "whisper-turbo-q8",
+      "label": "Current Whisper Large v3 Turbo Q8",
+      "tier": "baseline",
+      "status": "runnable",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "auto"
+      },
+      "license": "MIT",
+      "localPaths": [
+        "~/Library/Application Support/My Assistant/models/whisper-large-v3-turbo-Q8_0.gguf"
+      ],
+      "source": {
+        "repo": "handy-computer/whisper-large-v3-turbo-gguf",
+        "revision": "d222c9f621c1128299248f2ded4d8a1820519780",
+        "file": "whisper-large-v3-turbo-Q8_0.gguf",
+        "size": 886381824,
+        "sha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448"
+      }
+    },
+    {
+      "id": "whisper-turbo-q8-hi",
+      "label": "Current Whisper Large v3 Turbo Q8 (Hindi forced)",
+      "tier": "control",
+      "status": "runnable",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "hi"
+      },
+      "license": "MIT",
+      "localPaths": [
+        "~/Library/Application Support/My Assistant/models/whisper-large-v3-turbo-Q8_0.gguf"
+      ],
+      "source": {
+        "repo": "handy-computer/whisper-large-v3-turbo-gguf",
+        "revision": "d222c9f621c1128299248f2ded4d8a1820519780",
+        "file": "whisper-large-v3-turbo-Q8_0.gguf",
+        "size": 886381824,
+        "sha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448"
+      }
+    },
+    {
+      "id": "apex-hinglish-q8",
+      "label": "Apex Hinglish Q8",
+      "tier": "fast-roman",
+      "status": "runnable",
+      "format": "whisper-bin",
+      "outputStyle": "roman",
+      "decode": {
+        "language": "en"
+      },
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "Marquestra/Whisper-Hindi2Hinglish-Apex-GGML",
+        "revision": "d1de3ff618856e5675c47d3158ca820506fb4d9e",
+        "file": "ggml-apex-hinglish-q8_0.bin",
+        "size": 874188075,
+        "sha256": "bef6d9d571e9e7bd3cd2ebba8b2d5c9cc4731e210d6750ae6a9c621a87e60d4c"
+      }
+    },
+    {
+      "id": "qwen3-asr-base-q6",
+      "label": "Qwen3-ASR 0.6B Base Q6",
+      "tier": "control",
+      "status": "runnable",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "auto"
+      },
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
+        "revision": "e4e16599b900eb0cb36e524514756bb92eb092b7",
+        "file": "Qwen3-ASR-0.6B-Q6_K.gguf",
+        "size": 690417824,
+        "sha256": "3b051f108f03c0c91bbe1a3b2c1ee15e3ed51e4caec2a48751b01f2a21441cc3"
+      }
+    },
+    {
+      "id": "srota-hinglish-q6",
+      "label": "Srota Qwen3-ASR 0.6B Hinglish Q6",
+      "tier": "balanced-mixed",
+      "status": "runnable-local",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "auto"
+      },
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "moorlee/qwen3-asr-0.6b-hinglish",
+        "revision": "188ae2b61f932feb998e3b3c7a868e927a467031",
+        "file": "model.safetensors",
+        "size": 1564926456,
+        "sha256": "87dfcb5780623483746dddf5121ec0f324e7bf40b1938628b0102d868eb330a0"
+      },
+      "artifact": {
+        "file": "srota-hinglish-Q6_K.gguf",
+        "size": 690417824,
+        "sha256": "b0e6b1b81bfb2e278431eae81d8ec3fb4fbb7cae26c801f10bd31ec80cd03ac5",
+        "converterCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5",
+        "quant": "Q6_K"
+      },
+      "conversion": {
+        "family": "qwen3_asr",
+        "quant": "Q6_K",
+        "minimumFreeBytes": 6000000000
+      }
+    },
+    {
+      "id": "trelis-hinglish-q8",
+      "label": "Trelis Whisper Hinglish Preview Q8",
+      "tier": "max-mixed",
+      "status": "conversion-required",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "hi"
+      },
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "Trelis/whisper-hinglish-preview",
+        "revision": "eab1188fd2d0e91f2584229b32b3bfe1901c896c",
+        "files": [
+          {
+            "file": "model-00001-of-00002.safetensors",
+            "size": 4993454000,
+            "sha256": "084aa9aadbf48503a73cee2d5a2960bb272428e33fc96fcb7cc09cad53fcdfe4"
+          },
+          {
+            "file": "model-00002-of-00002.safetensors",
+            "size": 1180663192,
+            "sha256": "c0d42c5d57befad7b259b42a9061bf8c157c8a65b2c444a68cfddf15bd4ba5c2"
+          }
+        ]
+      },
+      "conversion": {
+        "family": "whisper",
+        "quant": "Q8_0",
+        "minimumFreeBytes": 12000000000
+      }
+    }
+  ],
+  "enhancements": [
+    {
+      "id": "deepfilternet3-coreml-int8",
+      "label": "DeepFilterNet3 CoreML INT8",
+      "status": "integration-required",
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "aufklarer/DeepFilterNet3-CoreML",
+        "revision": "937bad9811f1ffc1a06ea0d676461b080b2bdc93",
+        "weightFile": "DeepFilterNet3.mlmodelc/weights/weight.bin",
+        "weightSize": 2181056,
+        "weightSha256": "6b6adf3f78972bd1caed73e9e9e4eabd65590dcc9a86e41ae00e22b7c63a0018"
+      }
+    }
+  ]
+}

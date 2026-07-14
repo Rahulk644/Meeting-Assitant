@@ -62,13 +62,16 @@ second always-on server process is shipped.
 A ~130-line HTTP wrapper (`stt/transcribe-server/transcribe-server.cpp`, using single-header cpp-httplib)
 around transcribe.cpp's C API. It loads a GGUF once, holds it hot, and serves `POST /inference`
 **byte-compatible with whisper.cpp's `whisper-server`** — multipart `file` + `language` + `translate` +
-`prompt` (custom-vocabulary bias → the whisper run-ext's `initial_prompt`), returns `{"text": …}`. Because
+`prompt` (custom-vocabulary bias → the whisper run-ext's `initial_prompt`), returns `{"text": …}` and may
+add `"truncated": true` when the engine returns valid partial text at its output limit. The response path
+validates UTF-8 before JSON escaping, so a byte-limited Indic transcript cannot corrupt the protocol. Because
 the interface matches, the capturer and Rust server are engine-agnostic; swapping engines is a spawn-path
 change, not a client change.
 
 - **Build:** `stt/transcribe-server/build.sh` fetches transcribe.cpp at a **pinned commit**
   (`PINNED_COMMIT`), drops our `.cpp` + `httplib.h` in as a CMake example target, builds with Metal, and
-  re-signs the binary (see Traps → signing). `setup.sh` runs it and downloads the GGUF. First build
+  re-signs the binary (see Traps → signing). The build runs a protocol self-test covering Hindi, JSON
+  metacharacters, and malformed UTF-8. `setup.sh` runs it and downloads the GGUF. First build
   compiles ggml (~2–4 min); the clone is cached under `.transcribe.cpp/` (git-ignored).
 - **Lifecycle:** the in-process Rust server spawns it only when audio reaches transcription and kills it
   after the user-configurable idle timeout (10 minutes by default). It binds only to loopback and requires

@@ -39,6 +39,7 @@ The initial curated local catalog is deliberately small:
 | System — Fast and light | Apple SpeechAnalyzer / SpeechTranscriber | OS-managed on-device engine for supported locales on macOS 26+ | first new adapter; benchmark-gated Automatic candidate |
 | Global — Balanced | Whisper Large v3 Turbo, quantized | multilingual default, good speed/accuracy | current baseline |
 | Global — Most accurate | Whisper Large v3, quantized | difficult accents/audio on higher-spec Macs | benchmark before release |
+| Hinglish — Candidate | Qwen3-ASR 0.6B Base, Q6 | natural Hindi-English code-switching | smoke-test leader; blocked on truncation and full/noisy evaluation |
 | Europe — Fast | NVIDIA Parakeet TDT 0.6B v3, int8 | fast transcription across its 25 European languages | next local adapter |
 | Live multilingual | NVIDIA Nemotron 3.5 ASR Streaming 0.6B | low-latency research track | do not ship on Mac until a supported, measured runtime exists |
 
@@ -52,6 +53,13 @@ Parakeet is not the global default: its official v3 card covers 25 European lang
 Nemotron 3.5 card reports training across 40 language-locales, but its supported production integration is
 NVIDIA hardware on Linux. Whisper remains the safe worldwide default on Apple Silicon until our own
 multilingual benchmark proves a replacement.
+
+The first pinned Hinglish smoke benchmark is in
+[`docs/SPEECH_MODEL_BENCHMARK.md`](docs/SPEECH_MODEL_BENCHMARK.md). Qwen3-ASR Base Q6 materially beat the
+current Whisper baseline on the mixed-script sample, but hit the runtime output limit on 8 of 24 clips.
+Srota Q6 was faster but less accurate; a BF16 control ruled out our quantization as the cause. Apex cannot be
+ranked until a style-matched Roman reference set exists. These are engineering findings, not enough evidence
+to change the shipped default or expand the product catalog.
 
 The first cloud speech adapters should be **Groq** (not xAI Grok) for hosted Whisper Large v3 Turbo/Large
 v3 and **OpenAI** for its transcription and diarization models. Add a realtime-specialist provider only

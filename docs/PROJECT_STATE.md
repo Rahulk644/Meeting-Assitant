@@ -24,7 +24,8 @@ chronological work log.
 
 The exact visibility contract is [`PRODUCT_RELEASE_MATRIX.md`](../PRODUCT_RELEASE_MATRIX.md). Product and
 provider sequencing lives in [`PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md). Competitive decisions live in
-[`COMPETITIVE_INTELLIGENCE.md`](COMPETITIVE_INTELLIGENCE.md).
+[`COMPETITIVE_INTELLIGENCE.md`](COMPETITIVE_INTELLIGENCE.md). Speech-model evidence and the current Hinglish
+decision live in [`SPEECH_MODEL_BENCHMARK.md`](SPEECH_MODEL_BENCHMARK.md).
 
 ## Current architecture
 
@@ -63,17 +64,22 @@ macOS Keychain.
   depend on summary generation.
 - App-started helpers receive the parent PID and must exit when the parent disappears.
 - Whisper unload is user-configurable and defaults to 10 idle minutes.
+- Native transcription keeps valid partial text when a model reaches its output limit, reports truncation,
+  and guarantees valid UTF-8 JSON.
 - API keys never belong in JSON, SQLite, logs, process arguments, temporary files, or WebView state.
 
 ## Release status
 
-The current verified artifact is
+The last fully verified artifact is
 `desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,593,923 bytes), SHA-256
 `ce7672606efe71cad8e5ddc6650aab037ae2b10c973fce6cb82eb771f9e63e52`. The app is 28,320 KiB. With the
 window closed, the app and both meeting helpers measured about 39.9 MiB aggregate physical footprint; RSS,
 which includes mapped/shared WebKit pages, was 113,216 KiB. Rust tests are 15/15 and Node product tests are
 25/25. The DMG layout, deep signature, nested helper signatures, restored-stale-cache launch, quarantined-copy
 behavior, loopback auth, forged Host, and occupied-port behavior were verified.
+
+**Do not distribute that artifact as the current build.** It predates the native partial-transcript and UTF-8
+fixes now in source. Rebuild the app and DMG, then repeat the release audit before sharing it.
 
 Rebuild and remeasure after any native/helper change; do not send an older artifact merely because it exists.
 The beta has no Apple Developer ID, so current macOS recipients must attempt launch and use **Privacy &
@@ -91,7 +97,9 @@ background updates cannot be made trustworthy until a separate updater signing-k
    platform/version acceptance matrix for every advertised native/browser/chat adapter.
 5. Generate a dependency SBOM and complete third-party notice packaging.
 6. Add signed update manifests only after an offline update-key and rollback design is documented and tested.
-7. Add and benchmark macOS 26 SpeechAnalyzer as the first new system Speech adapter, retain Whisper fallback,
+7. Fix Qwen output truncation, then complete the full Hinglish/noise benchmark. Qwen3-ASR Base Q6 is the
+   current smoke-test leader but is not release-ready. Keep Whisper as default until the gate passes.
+8. Add and benchmark macOS 26 SpeechAnalyzer as the first system Speech adapter, retain Whisper fallback,
    then evaluate Parakeet/Nemotron and separate Speech providers from Intelligence providers in the UI.
 
 ## Resume protocol
