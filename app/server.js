@@ -11,6 +11,7 @@ const { spawn, execFile } = require("child_process");
 const { Gate } = require("./gate.js");
 const { injectMultipartFields } = require("./multipart.js");
 const { releasePayload } = require("./release.js");
+const { DEFAULT_MODEL_ID, SPEECH_MODELS, speechModel } = require("./speech-models.js");
 const {
   applyCorrection,
   canGenerateNotes,
@@ -311,14 +312,9 @@ const WHISPER_PORT = +(process.env.WHISPER_PORT || 8091);
 // and ~2x the speed of whisper-server on Apple Silicon, and cleaner output (proper punctuation, no dropped
 // onsets). Falls back to whisper.cpp's whisper-server if transcribe-server isn't built on this machine.
 const TS_BIN = path.join(__dirname, "..", "stt", "transcribe-server", "transcribe-server");
-// Model files aren't bundled in the .app (845 MB). Packaged builds use the canonical Application Support
-// directory supplied via ASSISTANT_MODELS_DIR; development can additionally reuse the repository model via
-// ASSISTANT_REPO. First hit wins.
-const GGUF_NAME = "whisper-large-v3-turbo-Q8_0.gguf";   // transcribe.cpp (primary engine)
-const GGUF_SIZE = 886381824;
-const GGUF_SHA256 = "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448";
-const GGML_NAME = "ggml-large-v3-turbo-q8_0.bin";       // whisper.cpp (fallback)
-const GGUF_URL = "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/" + GGUF_NAME;
+// Model files aren't bundled in the app. The shipped Rust service owns the authoritative lifecycle; this
+// developer harness mirrors it so ./run.sh can exercise the same model-library UI and runtime routing.
+const LEGACY_GGML_NAME = "ggml-large-v3-turbo-q8_0.bin";
 const MODELS_DIR = process.env.ASSISTANT_MODELS_DIR || path.join(__dirname, "..", "stt", "whisper");
 function modelDirs() {
   const d = [MODELS_DIR];
@@ -327,44 +323,58 @@ function modelDirs() {
   return [...new Set(d)];
 }
 function findModel(name) { for (const d of modelDirs()) { const p = path.join(d, name); if (fs.existsSync(p)) return p; } return null; }
-function modelPresent() { return !!(findModel(GGUF_NAME) || findModel(GGML_NAME)); }
-
-// First-run model download (Handy's way — the UI ASKS the user before this runs; nothing downloads silently).
-// Streams the GGUF into the canonical models dir with progress over SSE; atomic via a .part file so a failed
-// or cancelled download never leaves a half-written model behind.
-let modelDownloading = false;
-async function startModelDownload() {
-  if (modelDownloading) return;
-  if (modelPresent()) { broadcast({ type: "model-progress", pct: 100, done: true }); return; }
-  modelDownloading = true;
-  broadcast({ type: "model-progress", pct: 0 });
-  const dir = MODELS_DIR; fs.mkdirSync(dir, { recursive: true });
-  const dest = path.join(dir, GGUF_NAME), tmp = dest + ".part";
+let activeSpeechModelId = speechModel(settingsBlob["set.speechModel"]) ? settingsBlob["set.speechModel"] : DEFAULT_MODEL_ID;
+let modelDownload = null;
+function activeSpeechModel() { return speechModel(activeSpeechModelId) || speechModel(DEFAULT_MODEL_ID); }
+function modelPath(spec) { return findModel(spec.filename) || (spec.id === DEFAULT_MODEL_ID ? findModel(LEGACY_GGML_NAME) : null); }
+function modelPresent() { return !!modelPath(activeSpeechModel()); }
+function partialBytes(spec) { try { return Math.min(fs.statSync(path.join(MODELS_DIR, spec.filename + ".part")).size, spec.sizeBytes); } catch { return 0; } }
+function speechModelStatus() {
+  const active = activeSpeechModel();
+  return {
+    present: !!modelPath(active), downloading: !!modelDownload, downloadingModelId: modelDownload?.id || null,
+    activeModelId: active.id, activeModelName: active.name,
+    models: SPEECH_MODELS.map(spec => ({ ...spec, url: undefined, sha256: undefined, filename: undefined,
+      downloaded: !!modelPath(spec), active: spec.id === active.id, downloading: modelDownload?.id === spec.id, partialBytes: partialBytes(spec) })),
+  };
+}
+function selectSpeechModel(spec) {
+  if (!modelPath(spec)) throw new Error("download this model first");
+  if (gate.recording || gate.paused) throw new Error("stop the meeting before switching speech models");
+  if (whisperIdle) { clearTimeout(whisperIdle); whisperIdle = null; }
+  if (whisperProc) { whisperProc.kill(); whisperProc = null; }
+  activeSpeechModelId = spec.id; settingsBlob["set.speechModel"] = spec.id; saveSettings();
+  if (!spec.supportsTranslation) broadcast({ type: "state", state: { translate: false } });
+}
+async function hashFile(file) {
+  const hash = crypto.createHash("sha256");
+  await new Promise((resolve, reject) => { const input = fs.createReadStream(file); input.on("data", c => hash.update(c)); input.on("end", resolve); input.on("error", reject); });
+  return hash.digest("hex");
+}
+async function startModelDownload(spec, selectAfter = false) {
+  if (modelDownload) throw new Error("another model is downloading");
+  if (modelPath(spec)) { if (selectAfter) selectSpeechModel(spec); return; }
+  fs.mkdirSync(MODELS_DIR, { recursive: true, mode: 0o700 });
+  const dest = path.join(MODELS_DIR, spec.filename), tmp = dest + ".part", controller = new AbortController();
+  modelDownload = { id: spec.id, controller }; broadcast({ type: "model-progress", modelId: spec.id, pct: 0, bytes: partialBytes(spec), total: spec.sizeBytes });
   try {
-    const r = await fetch(GGUF_URL);
-    if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
-    const total = +(r.headers.get("content-length") || 0);
-    let got = 0, lastPct = -1;
-    const out = fs.createWriteStream(tmp, { mode: 0o600 });
-    const hash = crypto.createHash("sha256");
+    let existing = partialBytes(spec); if (existing >= spec.sizeBytes) existing = 0;
+    const r = await fetch(spec.url, { headers: existing ? { Range: `bytes=${existing}-` } : {}, signal: controller.signal });
+    if ((!r.ok && r.status !== 206) || !r.body) throw new Error("HTTP " + r.status);
+    const append = existing > 0 && r.status === 206; if (!append) existing = 0;
+    let got = existing, lastPct = -1; const out = fs.createWriteStream(tmp, { flags: append ? "a" : "w", mode: 0o600 });
     const stream = require("stream").Readable.fromWeb(r.body);
-    stream.on("data", (c) => {
-      hash.update(c);
-      got += c.length;
-      const pct = total ? Math.floor((got / total) * 100) : 0;
-      if (pct !== lastPct) { lastPct = pct; broadcast({ type: "model-progress", pct }); }
-    });
+    stream.on("data", c => { got += c.length; const pct = Math.min(99, Math.floor(got * 100 / spec.sizeBytes)); if (pct !== lastPct) { lastPct = pct; broadcast({ type: "model-progress", modelId: spec.id, pct, bytes: got, total: spec.sizeBytes }); } });
     await new Promise((resolve, reject) => { stream.pipe(out); out.on("finish", resolve); out.on("error", reject); stream.on("error", reject); });
-    const digest = hash.digest("hex");
-    if (got !== GGUF_SIZE || digest !== GGUF_SHA256) throw new Error("downloaded model failed size/SHA-256 verification");
-    fs.renameSync(tmp, dest);
-    broadcast({ type: "model-progress", pct: 100, done: true });
-    console.error("model: downloaded", GGUF_NAME);
+    const size = fs.statSync(tmp).size, digest = await hashFile(tmp);
+    if (size !== spec.sizeBytes || digest !== spec.sha256) { try { fs.unlinkSync(tmp); } catch {} throw new Error("downloaded model failed size/SHA-256 verification"); }
+    fs.chmodSync(tmp, 0o600); fs.renameSync(tmp, dest);
+    const selected = selectAfter && !gate.recording && !gate.paused; if (selected) selectSpeechModel(spec);
+    broadcast({ type: "model-progress", modelId: spec.id, pct: 100, bytes: spec.sizeBytes, total: spec.sizeBytes, done: true, selected });
   } catch (e) {
-    try { fs.unlinkSync(tmp); } catch {}
-    broadcast({ type: "model-progress", error: String(e.message || e) });
-    console.error("model: download failed:", e.message || e);
-  } finally { modelDownloading = false; }
+    const cancelled = e.name === "AbortError"; broadcast({ type: "model-progress", modelId: spec.id, error: cancelled ? "download cancelled" : String(e.message || e), cancelled });
+    if (!cancelled) console.error("model: download failed:", e.message || e);
+  } finally { modelDownload = null; }
 }
 let whisperProc = null, whisperIdle = null; // the STT-server child WE started (null if not ours)
 async function ensureWhisper() {
@@ -372,7 +382,7 @@ async function ensureWhisper() {
   if (whisperProc) return;                                        // ours, already up
   if (await portOpen("127.0.0.1", WHISPER_PORT)) return;          // someone else's (dev) — leave it
   let bin, args;
-  const tsModel = findModel(GGUF_NAME), ggml = findModel(GGML_NAME);
+  const spec = activeSpeechModel(), tsModel = modelPath(spec), ggml = spec.id === DEFAULT_MODEL_ID ? findModel(LEGACY_GGML_NAME) : null;
   if (fs.existsSync(TS_BIN) && tsModel) {                          // primary: transcribe.cpp
     bin = TS_BIN;
     args = ["-m", tsModel, "--host", "127.0.0.1", "--port", String(WHISPER_PORT)];
@@ -391,7 +401,7 @@ function unloadWhisperSoon() { // only unloads the one WE started
   const idleMs = whisperIdleMinutes * 60 * 1000;
   whisperIdle = setTimeout(() => { if (whisperProc) { whisperProc.kill(); whisperProc = null; console.error("whisper-server: unloaded (idle)"); } }, idleMs);
 }
-const killKids = () => { msShutdown = true; if (llmProc) llmProc.kill(); if (msProc) msProc.kill(); if (whisperProc) whisperProc.kill(); };
+const killKids = () => { msShutdown = true; if (modelDownload) modelDownload.controller.abort(); if (llmProc) llmProc.kill(); if (msProc) msProc.kill(); if (whisperProc) whisperProc.kill(); };
 ["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => { killKids(); process.exit(0); }));
 process.on("exit", killKids);
 
@@ -638,7 +648,7 @@ http.createServer((req, res) => {
       try {
         const j = JSON.parse(b);
         if (typeof j.videoMode === "string") broadcast({ type: "state", state: { videoMode: j.videoMode } });
-        if (typeof j.translate === "boolean") broadcast({ type: "state", state: { translate: j.translate } });
+        if (typeof j.translate === "boolean") broadcast({ type: "state", state: { translate: !!j.translate && !!activeSpeechModel().supportsTranslation && !!RELEASE.capabilities.translation } });
         if (typeof j.language === "string") broadcast({ type: "state", state: { language: j.language } });
         if (typeof j.autoDetect === "boolean") { gate.setAutoDetect(j.autoDetect); broadcast({ type: "state", state: { autoDetect: j.autoDetect } }); recomputeLifecycle(); broadcastCall(); } // off → ignore self-detection (manual only)
         if (typeof j.unloadIdle === "boolean") unloadIdle = j.unloadIdle; // off → keep whisper hot
@@ -669,7 +679,8 @@ http.createServer((req, res) => {
         if (!await waitPort("127.0.0.1", WHISPER_PORT, 15000)) throw new Error("transcription engine did not start");
         // Preserve Automatic language detection. Forcing the English token turns Hindi/Hinglish into a
         // phonetic English guess and measured far worse than Automatic on the pinned mixed-speech corpus.
-        const lang = dictationCfg.language || "auto";
+        const spec = activeSpeechModel(), requested = dictationCfg.language || "auto";
+        const lang = spec.fixedLanguage || (spec.supportedLanguages.includes(requested) ? requested : (spec.supportsLanguageDetection ? "auto" : (spec.supportedLanguages[0] || "en")));
         const reqBody = injectMultipartFields(buf, ct, {
           language: lang,
           translate: "false",
@@ -696,10 +707,33 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/model/status" && req.method === "GET") { // first-run: is the on-device model here yet?
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ present: modelPresent(), downloading: modelDownloading }));
+    return res.end(JSON.stringify(speechModelStatus()));
   }
-  if (req.url === "/api/model/download" && req.method === "POST") { // user tapped "Download" → fetch it (progress via SSE)
-    startModelDownload(); res.writeHead(202); return res.end();
+  if (req.url === "/api/model/download" && req.method === "POST") {
+    readBody(req).then(body => {
+      let input = {}; try { input = JSON.parse(body || "{}"); } catch {}
+      const spec = speechModel(input.id || activeSpeechModelId); if (!spec) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end('{"error":"unknown speech model"}'); }
+      startModelDownload(spec, !!input.select).catch(error => broadcast({ type: "model-progress", modelId: spec.id, error: String(error.message || error) }));
+      res.writeHead(202, { "Content-Type": "application/json" }); return res.end(JSON.stringify(speechModelStatus()));
+    }); return;
+  }
+  if (req.url === "/api/model/select" && req.method === "POST") {
+    readBody(req).then(body => { try { const spec = speechModel(JSON.parse(body || "{}").id); if (!spec) throw new Error("unknown speech model"); selectSpeechModel(spec); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(speechModelStatus())); }
+      catch (error) { res.writeHead(409, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(error.message || error) })); } }); return;
+  }
+  if (req.url === "/api/model/delete" && req.method === "POST") {
+    readBody(req).then(body => { try { const spec = speechModel(JSON.parse(body || "{}").id); if (!spec) throw new Error("unknown speech model"); if (modelDownload?.id === spec.id) throw new Error("cancel the download before deleting it");
+        if (spec.id === activeSpeechModelId && (gate.recording || gate.paused)) throw new Error("stop the meeting before removing the active speech model");
+        if (spec.id === activeSpeechModelId && whisperProc) { whisperProc.kill(); whisperProc = null; }
+        for (const file of [path.join(MODELS_DIR, spec.filename), path.join(MODELS_DIR, spec.filename + ".part")]) { try { fs.unlinkSync(file); } catch {} }
+        if (spec.id === activeSpeechModelId) { const fallback = SPEECH_MODELS.find(candidate => modelPath(candidate)) || speechModel(DEFAULT_MODEL_ID); activeSpeechModelId = fallback.id; settingsBlob["set.speechModel"] = fallback.id; saveSettings(); }
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(speechModelStatus()));
+      } catch (error) { res.writeHead(409, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(error.message || error) })); } }); return;
+  }
+  if (req.url === "/api/model/cancel" && req.method === "POST") {
+    readBody(req).then(body => { let id = ""; try { id = JSON.parse(body || "{}").id || ""; } catch {}
+      if (modelDownload?.id === id) { modelDownload.controller.abort(); res.writeHead(202, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ cancelling: true, id })); }
+      res.writeHead(409, { "Content-Type": "application/json" }); return res.end('{"error":"that model is not downloading"}'); }); return;
   }
   if (req.url === "/api/open-settings" && req.method === "POST") { // deep-link a macOS Privacy pane (permission checklist)
     readBody(req).then(b => {

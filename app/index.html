@@ -436,6 +436,8 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .mscrim[hidden]{display:none!important}
   .mcardm{width:440px;max-width:100%;max-height:calc(100vh - 80px);display:flex;flex-direction:column;background:var(--surface);
     border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.35);padding:19px 20px 20px;animation:maRise .18s ease}
+  .mcardm.model-library{width:720px}
+  .mcardm.model-library #mContent{min-height:0;flex:1;display:flex;flex-direction:column}
   .mhead{display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
   .mtitle{font-size:15.5px;font-weight:680;color:var(--ink)}
   .mx{width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--ink-3);border:none;background:none}
@@ -465,6 +467,26 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .mgrant.ok{color:#12805c;background:color-mix(in srgb,#12805c 12%,transparent)}
   .mgrant.no{color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line)}
   .mnote{font-size:11.5px;color:var(--ink-3);margin-top:8px;text-align:center;flex-shrink:0}
+  .model-list{min-height:150px;flex:1 1 340px;overflow:auto;margin-top:16px;padding-right:4px;display:flex;flex-direction:column;gap:9px}
+  .model-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:13px;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+  .model-card.active{border-color:color-mix(in srgb,var(--accent) 42%,var(--line));background:color-mix(in srgb,var(--accent-soft) 58%,var(--surface))}
+  .model-main{min-width:0}.model-titleline{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .model-name{font-size:13.5px;font-weight:670;color:var(--ink)}
+  .model-badge{font-size:9.5px;line-height:1;font-weight:720;letter-spacing:.035em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft);padding:4px 6px;border-radius:999px}
+  .model-meta{font-size:11.5px;color:var(--ink-3);margin-top:3px}.model-best{font-size:12px;color:var(--ink-2);margin-top:8px}.model-best b{color:var(--ink);font-weight:620}
+  .model-desc{font-size:11.5px;line-height:1.45;color:var(--ink-3);margin-top:3px}
+  .model-abilities{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.model-ability{font-size:10.5px;color:var(--ink-2);padding:3px 7px;border:1px solid var(--line);border-radius:999px;background:var(--surface)}
+  .model-actions{min-width:122px;display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:7px}
+  .model-actions .abtn{white-space:nowrap;text-align:center}.model-actions .abtn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .model-actions .abtn.danger{color:var(--ink-3);background:transparent;border-color:transparent;font-size:11.5px}.model-actions .abtn.danger:hover{color:var(--live);background:color-mix(in srgb,var(--live) 8%,transparent)}
+  .model-progress{height:6px;border-radius:999px;overflow:hidden;background:var(--line)}.model-progress>i{display:block;height:100%;border-radius:inherit;background:var(--accent);transition:width .2s ease}
+  .model-progress-label{font-size:10.5px;color:var(--ink-3);text-align:center}
+  .model-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:11px;font-size:11px;color:var(--ink-3)}
+  .model-settings{margin-top:13px;padding:12px 14px;border:1px solid var(--line);border-radius:11px;background:var(--surface);flex-shrink:0}
+  .model-settings-title{font-size:12px;font-weight:670;color:var(--ink);margin-bottom:8px}.model-setting-row{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:7px 0;border-top:1px solid var(--line)}
+  .model-setting-row:first-of-type{border-top:none}.model-setting-copy{min-width:0}.model-setting-name{font-size:11.5px;font-weight:600;color:var(--ink)}.model-setting-desc{font-size:10.5px;color:var(--ink-3);margin-top:1px}
+  .model-setting-row .selp{max-width:235px}.model-setting-value{font-size:11.5px;color:var(--ink-2);text-align:right}
+  @media (max-width:700px){.model-card{grid-template-columns:1fr}.model-actions{min-width:0;flex-direction:row;justify-content:flex-end}.model-actions .model-progress-wrap{flex:1}.model-foot{align-items:flex-start;flex-direction:column}}
   .permok{display:inline-flex;align-items:center;gap:5px;flex-shrink:0;font-size:12.5px;font-weight:600;color:var(--ok);
           padding:5px 11px;border-radius:999px;background:color-mix(in srgb, var(--ok) 13%, transparent)}
   .permok svg{width:14px;height:14px}
@@ -891,20 +913,39 @@ paintWa();
 /* ---------- dictation (Handy-style; recording + paste run in the desktop app process) ---------- */
 const DICT_PUSH=new Set(['dict_lang','punctuation']);   // selects the SERVER applies (language, punctuation)
 const DICT_SYNC=new Set(['clipboard','overlay_pos']);   // selects the app process applies (clipboard, pill position)
-const DICT_LANG={'Auto-detect':'auto','English':'en','हिन्दी':'hi','Español':'es','Deutsch':'de','Français':'fr'};
+const LEGACY_DICT_LANG={'Auto-detect':'auto','English':'en','हिन्दी':'hi','Español':'es','Deutsch':'de','Français':'fr'};
+let speechLanguageNames=null;
+function speechLanguageLabel(code){
+  if(code==='auto')return 'Auto-detect';
+  try{ speechLanguageNames=speechLanguageNames||new Intl.DisplayNames([navigator.language||'en'],{type:'language'}); return speechLanguageNames.of(code)||code; }
+  catch{return ({en:'English',hi:'Hindi',es:'Spanish',de:'German',fr:'French',zh:'Chinese',yue:'Cantonese'}[code]||code);}
+}
+function dictLanguageIntent(){ const raw=String(store.get('dict_lang',DEFAULTS.dict_lang)||'auto'); return LEGACY_DICT_LANG[raw]||raw; }
+function activeSpeechModelInfo(){ return (speechModelStatus?.models||[]).find(m=>m.id===speechModelStatus.activeModelId)||null; }
+function speechLanguageChoices(model=activeSpeechModelInfo()){
+  if(!model)return ['auto','en','hi','es','de','fr'].map(code=>({code,label:speechLanguageLabel(code)}));
+  if(model.fixedLanguage){ const label=model.outputStyle==='Roman Hinglish'?'Roman Hinglish (Hindi + English)':speechLanguageLabel(model.fixedLanguage); return [{code:model.fixedLanguage,label,fixed:true}]; }
+  const codes=[]; if(model.supportsLanguageDetection)codes.push('auto');
+  for(const code of model.supportedLanguages||[]){ if(!codes.includes(code))codes.push(code); }
+  return codes.map(code=>({code,label:speechLanguageLabel(code)}));
+}
+function effectiveSpeechLanguage(intent,model=activeSpeechModelInfo()){
+  const choices=speechLanguageChoices(model); if(model?.fixedLanguage)return choices[0];
+  return choices.find(c=>c.code===intent)||choices.find(c=>c.code==='auto')||choices[0];
+}
 // The server applies only language + punctuation at transcription time; everything else the app process owns
 // (see syncDictation). Keep this tiny and honest.
 function pushDictation(){
   const punc=store.get('punctuation',DEFAULTS.punctuation);
   cfg({dictation:{
     enabled: moduleOn('dictation'),
-    language: DICT_LANG[store.get('dict_lang',DEFAULTS.dict_lang)]||'auto',
+    language: dictLanguageIntent(),
     punctuation: /^auto/i.test(punc)?'auto':'off',
   }});
   paintDictHints();
 }
 function paintDictHints(){
-  const t=$('#dictLangTag'); if(t) t.textContent=String(store.get('dict_lang',DEFAULTS.dict_lang)).replace('Auto-detect','Auto');
+  const t=$('#dictLangTag'); if(t) t.textContent=effectiveSpeechLanguage(dictLanguageIntent()).label.replace('Auto-detect','Auto');
   const trig=store.get('sc_start',DEFAULTS.sc_start);
   document.querySelectorAll('#dictHint,#dictHintLead').forEach(k=>{ k.textContent=triggerLabel(trig); });
 }
@@ -971,7 +1012,7 @@ const PANEL_ICONS={
 };
 const DEFAULTS={
   show_tray:true, overlay_enabled:true, overlay_pos:'Bottom center', start_login:false, start_hidden:false, stealth:false,
-  dict_enabled:true, dict_lang:'Auto-detect', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, volume:70, push_to_talk:false, sc_start:'mod:command_right', sc_cancel:'Esc',
+  dict_enabled:true, dict_lang:'auto', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, volume:70, push_to_talk:false, sc_start:'mod:command_right', sc_cancel:'Esc',
   wa_selection:true, wa_noneditable:true, wa_translate_lang:'English', wa_open:'⌃+Space', wa_close:'Esc',
   mtg_source:'Local', live_indicator:true, auto_detect:true, browser_meet:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, mtg_shortcut:'Not set',
   unload_model:true, whisper_idle_minutes:10, whats_new:true,
@@ -1004,6 +1045,7 @@ const SCHEMA={
     {label:'CONFIGURATION', rows:[
       {id:'dict_enabled',title:'Enable dictation',desc:'Speak anywhere on your Mac — tap the shortcut to start, tap again to insert. All on-device.',type:'toggle'},
       {id:'push_to_talk',title:'Push-to-talk',desc:'On: hold the shortcut to dictate, release to insert. Off: tap to start, tap again to insert.',type:'toggle'},
+      {id:'speech_models',title:'Speech model',desc:'Choose what transcribes dictation and meetings on this Mac.',type:'button',btn:'Choose'},
       {id:'dict_lang',title:'Language',desc:'Spoken language. Auto-detect handles mixed speech per utterance.',type:'select',options:['Auto-detect','English','हिन्दी','Español','Deutsch','Français']},
       {id:'punctuation',title:'Punctuation',desc:'Automatic keeps the punctuation the model adds; Off inserts plain text.',type:'select',options:['Automatic','Off']},
       {id:'clipboard',title:'Clipboard behaviour',desc:'What happens to your clipboard after the text is pasted.',type:'select',options:['Never save','Save after dictation','Replace clipboard']},
@@ -1091,6 +1133,7 @@ function renderSettings(){
   const dictOff = (curPanel==='dictation' && !moduleOn('dictation'));
   for(const sec of (SCHEMA[curPanel]||[])){
     let rows = sec.rows.filter(r=>hasCap(RELEASE.settingCapabilities[r.id]));
+    if(!activeSpeechModelInfo()?.supportsTranslation) rows=rows.filter(r=>r.id!=='translate_en');
     if(dictOff) rows=rows.filter(r=>r.id==='dict_enabled');
     if(!rows.length) continue; // nothing visible in this section → skip its header too
     const l=document.createElement('div'); l.className='sec-l'; l.textContent=sec.label; body.append(l);
@@ -1150,6 +1193,13 @@ function srowShell(row){
 }
 function settingRow(row){
   const {r,l,c}=srowShell(row), id=row.id;
+  const activeModel=activeSpeechModelInfo();
+  if((id==='dict_lang'||id==='trans_lang')&&activeModel?.fixedLanguage){
+    const desc=l.querySelector('.sd');
+    if(desc)desc.textContent=activeModel.outputStyle==='Roman Hinglish'
+      ? 'Fixed to Roman Hinglish by the active speech model.'
+      : 'Fixed to '+speechLanguageLabel(activeModel.fixedLanguage)+' by the active speech model.';
+  }
 
   if(id==='appearance'){
     const cur=themePref(); const seg=document.createElement('div'); seg.className='segm';
@@ -1194,9 +1244,14 @@ function settingRow(row){
 
   if(row.type==='select'||row.type==='segmented'){
     const w=WIRED[id];
-    const opts=row.options||[];
-    const cur = w ? (w.from[store.get(w.key,w.def)]||opts[0]) : store.get(id, DEFAULTS[id]!=null?DEFAULTS[id]:opts[0]);
-    const pick=(label)=>{ if(w){ const code=w.to[label]; store.set(w.key,code); w.apply(code); } else { store.set(id,label); if(DICT_PUSH.has(id)) pushDictation(); if(DICT_SYNC.has(id)) syncDictation(false); } };
+    const speechLanguage=id==='dict_lang'||id==='trans_lang', choices=speechLanguage?speechLanguageChoices():null;
+    const opts=speechLanguage?choices.map(x=>x.label):(row.options||[]);
+    const intent=id==='dict_lang'?dictLanguageIntent():(id==='trans_lang'?store.get('language','auto'):null);
+    const cur=speechLanguage?effectiveSpeechLanguage(intent).label:(w ? (w.from[store.get(w.key,w.def)]||opts[0]) : store.get(id, DEFAULTS[id]!=null?DEFAULTS[id]:opts[0]));
+    const pick=(label)=>{ if(speechLanguage){ const code=(choices.find(x=>x.label===label)||choices[0]).code;
+        if(id==='dict_lang'){ store.set('dict_lang',code); pushDictation(); paintDictHints(); }
+        else{ store.set('language',code); setLanguage(code); }
+      } else if(w){ const code=w.to[label]; store.set(w.key,code); w.apply(code); } else { store.set(id,label); if(DICT_PUSH.has(id)) pushDictation(); if(DICT_SYNC.has(id)) syncDictation(false); } };
     if(row.type==='segmented'){
       const seg=document.createElement('div'); seg.className='segm';
       opts.forEach(o=>{ const b=document.createElement('button'); b.className=(o===cur?'on':''); b.textContent=o;
@@ -1205,6 +1260,7 @@ function settingRow(row){
     } else {
       const sel=document.createElement('select'); sel.className='selp';
       opts.forEach(o=>sel.add(new Option(o,o,false,o===cur)));
+      if(speechLanguage&&activeModel?.fixedLanguage)sel.disabled=true;
       sel.onchange=()=>pick(sel.value); c.append(sel);
     }
     return r;
@@ -1232,7 +1288,8 @@ function settingRow(row){
   }
 
   if(row.type==='button'){
-    const b=document.createElement('button'); b.type='button'; b.className='abtn'; b.textContent=row.btn||'Configure';
+    const b=document.createElement('button'); b.type='button'; b.className='abtn'; b.dataset.setting=id;
+    b.textContent=id==='speech_models'?(speechModelStatus?.activeModelName||row.btn||'Choose'):(row.btn||'Configure');
     b.onclick=()=>settingAction(id); c.append(b); return r;
   }
 
@@ -1275,8 +1332,8 @@ function subRow(title,desc,ctl){ const {r,c}=srowShell({title,desc}); c.append(c
 function el(tag,cls,text){ const e=document.createElement(tag); if(cls)e.className=cls; if(text!=null)e.textContent=text; return e; }
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>{t.hidden=true},2400); }
 let _modalCleanup=null, _modalReturnFocus=null; // cleanup + focus restoration on every close path
-function closeModal(){ if(_modalCleanup){ _modalCleanup(); _modalCleanup=null; } $('#mScrim').hidden=true; $('#mContent').innerHTML=''; const back=_modalReturnFocus; _modalReturnFocus=null; if(back&&back.isConnected)setTimeout(()=>back.focus(),0); }
-function openModal(title,build){ if(_modalCleanup){ _modalCleanup(); _modalCleanup=null; } _modalReturnFocus=document.activeElement; $('#mTitle').textContent=title; const box=$('#mContent'); box.innerHTML=''; build(box); $('#mScrim').hidden=false; setTimeout(()=>{ const first=box.querySelector('input,textarea,select,button,[tabindex]:not([tabindex="-1"])'); (first||$('#mClose')).focus(); },0); } // run any prior modal's teardown before replacing content
+function closeModal(){ if(_modalCleanup){ _modalCleanup(); _modalCleanup=null; } $('#mScrim').hidden=true; $('#mContent').innerHTML=''; $('#mCard').className='mcardm'; const back=_modalReturnFocus; _modalReturnFocus=null; if(back&&back.isConnected)setTimeout(()=>back.focus(),0); }
+function openModal(title,build){ if(_modalCleanup){ _modalCleanup(); _modalCleanup=null; } _modalReturnFocus=document.activeElement; $('#mCard').className='mcardm'; $('#mTitle').textContent=title; const box=$('#mContent'); box.innerHTML=''; build(box); $('#mScrim').hidden=false; setTimeout(()=>{ const first=box.querySelector('input,textarea,select,button,[tabindex]:not([tabindex="-1"])'); (first||$('#mClose')).focus(); },0); } // run any prior modal's teardown before replacing content
 $('#mClose').onclick=closeModal;
 $('#mScrim').onclick=(e)=>{ if(e.target===$('#mScrim')) closeModal(); };
 document.addEventListener('keydown',e=>{ if(e.key==='Escape' && !$('#mScrim').hidden && !$('#mScrim').dataset.recording) closeModal(); });
@@ -1286,6 +1343,7 @@ const IC_SCREEN='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" str
 const IC_AXS='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="1.6" fill="currentColor" stroke="none"/><path d="M7.5 10.5l3 1v3l-1.5 4M16.5 10.5l-3 1v3l1.5 4M10.5 12.5h3"/><circle cx="12" cy="12" r="9.5"/></svg>';
 
 function settingAction(id){
+  if(id==='speech_models') return openSpeechModels(false);
   if(id==='custom_vocab') return openVocab();
   if(id==='templates') return openTemplates();
   if(id==='wa_modes') return openModes();
@@ -1949,45 +2007,128 @@ async function boot(){
   if(inTauri() && store.get('stealth',false)) setStealth(true);
   setVideoMode(store.get('videoMode','off'));
   setLanguage(store.get('language','auto'));
-  // Turbo is transcription-only. A stale saved translation toggle must not silently request a task the
-  // installed model cannot perform; the release contract re-enables this only with a qualified model.
+  // Translation is capability-gated again after the model catalog loads; the Rust server also fails closed
+  // so a stale preference can never request translation from Parakeet, Nemotron, or an English specialist.
   setTranslate(hasCap('translation') && store.get('translate',false));
   cfg({autoDetect:store.get('auto_detect',true), browserMeet:store.get('browser_meet',true), unloadIdle:store.get('unload_model',true), whisperIdleMinutes:store.get('whisper_idle_minutes',10), vocab:vocabPrompt()});
   pushDictation(); initDictation();
   cfg({modules:modules()}); paintNav(); syncDictation(false);
   modelGate();
 }
-/* ---------- first-run: on-device speech model (Handy-style — we ASK before downloading) ---------- */
-async function modelGate(){
-  let s; try{ s=await (await fetch('/api/model/status')).json(); }catch{ return; }
-  if(!s || s.present) return;      // model already here (or server not ready yet) → no prompt
-  openModal('Set up speech model', box=>{
-    box.innerHTML=`
-      <div class="msub" style="padding:2px 20px 10px">My Assistant transcribes entirely on your Mac. Download the speech model once (about 845 MB) to start dictating and taking meeting notes — nothing leaves your device.</div>
-      <div id="mdlProg" style="display:none;padding:6px 20px 2px">
-        <div style="height:8px;border-radius:6px;background:rgba(130,130,140,.25);overflow:hidden"><div id="mdlBar" style="height:100%;width:0;background:var(--win);transition:width .25s"></div></div>
-        <div id="mdlPct" class="mnote" style="margin-top:8px">Starting…</div>
-      </div>
-      <div id="mdlBtns" style="display:flex;gap:10px;justify-content:flex-end;padding:8px 20px 2px">
-        <button class="obtn" id="mdlLater">Later</button>
-        <button class="obtn solid" id="mdlGet">Download (845 MB)</button>
-      </div>
-      <div class="mnote" style="padding:6px 20px 14px">Cloud speech transcription is not available in this beta. This local model is required for dictation and meeting transcripts.</div>`;
-    box.querySelector('#mdlLater').onclick=()=>closeModal();
-    box.querySelector('#mdlGet').onclick=()=>{
-      box.querySelector('#mdlBtns').style.display='none';
-      box.querySelector('#mdlProg').style.display='block';
-      fetch('/api/model/download',{method:'POST'}).catch(()=>{});   // progress arrives over SSE (onModelProgress)
-    };
+/* ---------- on-device speech models: one curated library, explicit downloads, safe switching ---------- */
+let speechModelStatus=null, speechModelProgress={}, speechModelsOpen=false, speechModelBusy='';
+function fmtModelSize(bytes){ const gb=Number(bytes||0)/1073741824; return gb>=1?gb.toFixed(gb>=10?0:1)+' GB':Math.round(Number(bytes||0)/1048576)+' MB'; }
+function updateSpeechModelSettingLabel(){ const b=document.querySelector('[data-setting="speech_models"]'); if(b&&speechModelStatus?.activeModelName)b.textContent=speechModelStatus.activeModelName; }
+async function fetchSpeechModels(){ const r=await fetch('/api/model/status'); if(!r.ok)throw new Error('Could not load speech models'); speechModelStatus=await r.json(); updateSpeechModelSettingLabel(); return speechModelStatus; }
+async function speechModelRequest(route,id,extra={}){
+  speechModelBusy=id;
+  try{
+    const r=await fetch('/api/model/'+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,...extra})});
+    let body={}; try{ body=await r.json(); }catch{}
+    if(!r.ok)throw new Error(body.error||'That model action failed');
+    if(body.models)speechModelStatus=body;
+    else await fetchSpeechModels();
+    applySpeechModelRuntimeSettings(); renderSpeechModels(); updateSpeechModelSettingLabel(); return true;
+  }catch(e){ toast(String(e.message||e)); return false; }
+  finally{ speechModelBusy=''; renderSpeechModels(); }
+}
+function modelButton(label,kind,action,disabled=false){ const b=el('button','abtn'+(kind?' '+kind:''),label); b.type='button'; b.disabled=disabled; b.onclick=action; return b; }
+function applySpeechModelRuntimeSettings(){
+  const model=activeSpeechModelInfo(); if(!model)return;
+  setLanguage(effectiveSpeechLanguage(store.get('language','auto'),model).code);
+  setTranslate(hasCap('translation')&&!!model.supportsTranslation&&store.get('translate',false));
+  pushDictation();
+  if($('#v-settings')?.classList.contains('on'))renderSettings();
+}
+function modelSettingRow(title,desc,control){
+  const row=el('div','model-setting-row'), copy=el('div','model-setting-copy'); copy.append(el('div','model-setting-name',title),el('div','model-setting-desc',desc)); row.append(copy,control); return row;
+}
+function modelLanguageSelect(kind,model){
+  const choices=speechLanguageChoices(model), intent=kind==='dictation'?dictLanguageIntent():store.get('language','auto'), effective=effectiveSpeechLanguage(intent,model);
+  const select=el('select','selp'); choices.forEach(choice=>select.add(new Option(choice.label,choice.code,false,choice.code===effective.code))); select.disabled=!!model.fixedLanguage;
+  select.onchange=()=>{ if(kind==='dictation'){store.set('dict_lang',select.value);pushDictation();paintDictHints();}else{store.set('language',select.value);setLanguage(select.value);} };
+  return select;
+}
+function renderSpeechModelSettings(){
+  if(!speechModelsOpen)return;
+  const box=$('#speechModelSettings'), model=activeSpeechModelInfo(); if(!box||!model)return; box.innerHTML='';
+  box.append(el('div','model-settings-title','Settings for '+model.name));
+  box.append(modelSettingRow('Dictation language',model.fixedLanguage?'Set by this model.':'Auto-detect or choose a language.',modelLanguageSelect('dictation',model)));
+  box.append(modelSettingRow('Meeting language',model.fixedLanguage?'Set by this model.':'Used for live and saved meeting transcripts.',modelLanguageSelect('meeting',model)));
+  if(model.supportsTranslation&&hasCap('translation')){
+    const toggle=el('button','tgl'+(store.get('translate',false)?' on':'')); toggle.type='button'; toggle.setAttribute('aria-label','Translate meeting transcripts to English');
+    toggle.onclick=()=>{ const on=!toggle.classList.contains('on'); toggle.classList.toggle('on',on); store.set('translate',on); setTranslate(on); };
+    box.append(modelSettingRow('Translate meetings to English','Uses this Whisper model’s translation task.',toggle));
+  }else box.append(modelSettingRow('Transcript output','This model controls its output format.',el('div','model-setting-value',model.outputStyle)));
+  box.append(modelSettingRow('Audio handling','Calibrated automatically for this model.',el('div','model-setting-value',model.audioProfile)));
+}
+function renderSpeechModels(){
+  if(!speechModelsOpen)return;
+  const list=$('#speechModelList'); if(!list||!speechModelStatus)return;
+  list.innerHTML='';
+  const anotherDownloading=!!speechModelStatus.downloading;
+  for(const model of speechModelStatus.models||[]){
+    const progress=speechModelProgress[model.id]||{}, isDownloading=model.downloading||speechModelStatus.downloadingModelId===model.id;
+    const pct=Math.max(0,Math.min(100,Number(progress.pct ?? (model.partialBytes?Math.floor(model.partialBytes*100/model.sizeBytes):0))));
+    const card=el('div','model-card'+(model.active&&model.downloaded?' active':''));
+    const main=el('div','model-main'), title=el('div','model-titleline'); title.append(el('span','model-name',model.name));
+    if(model.badge)title.append(el('span','model-badge',model.badge));
+    if(model.active&&model.downloaded)title.append(el('span','model-badge','In use'));
+    main.append(title,el('div','model-meta',model.family+' · '+fmtModelSize(model.sizeBytes)+' · '+model.license));
+    const best=el('div','model-best'); best.innerHTML='<b>Best for:</b> '+esc(model.bestFor); main.append(best,el('div','model-desc',model.description));
+    const abilities=el('div','model-abilities'), labels=[...(model.abilities||[])]; if(model.supportsTranslation&&!labels.includes('Translate to English'))labels.push('Translate to English'); labels.forEach(a=>abilities.append(el('span','model-ability',a))); main.append(abilities);
+    const actions=el('div','model-actions');
+    if(isDownloading){
+      const wrap=el('div','model-progress-wrap'), bar=el('div','model-progress'), fill=el('i'); fill.style.width=pct+'%'; bar.append(fill);
+      const got=Number(progress.bytes||model.partialBytes||0); wrap.append(bar,el('div','model-progress-label',(pct||0)+'% · '+fmtModelSize(got)+' / '+fmtModelSize(model.sizeBytes))); actions.append(wrap);
+      actions.append(modelButton('Cancel','',()=>speechModelRequest('cancel',model.id),speechModelBusy===model.id));
+    }else if(model.downloaded){
+      if(model.active)actions.append(modelButton('Current model','',()=>{},true));
+      else actions.append(modelButton('Use','primary',()=>speechModelRequest('select',model.id),!!speechModelBusy));
+      actions.append(modelButton('Remove','danger',()=>{ if(confirm('Remove '+model.name+' from this Mac?'))speechModelRequest('delete',model.id); },!!speechModelBusy));
+    }else{
+      const resume=Number(model.partialBytes||0)>0;
+      actions.append(modelButton((resume?'Resume':'Download')+' & use','primary',()=>speechModelRequest('download',model.id,{select:true}),!!speechModelBusy||anotherDownloading));
+      if(resume)actions.append(el('div','model-progress-label',fmtModelSize(model.partialBytes)+' saved'));
+    }
+    card.append(main,actions); list.append(card);
+  }
+  renderSpeechModelSettings();
+}
+async function refreshSpeechModels(){ try{ await fetchSpeechModels(); renderSpeechModels(); }catch(e){ if(speechModelsOpen)toast(String(e.message||e)); } }
+async function openSpeechModels(firstRun=false){
+  try{ await fetchSpeechModels(); }catch(e){ toast(String(e.message||e)); return; }
+  openModal(firstRun?'Choose a speech model':'Speech models',box=>{
+    $('#mCard').classList.add('model-library'); speechModelsOpen=true;
+    box.append(el('div','msub',firstRun?'Choose one model to start. You can download or switch models anytime in Dictation settings.':'Download only what you need, then switch anytime. Larger models generally use more memory and take longer.'));
+    const list=el('div','model-list'); list.id='speechModelList'; box.append(list);
+    const settings=el('div','model-settings'); settings.id='speechModelSettings'; box.append(settings);
+    const foot=el('div','model-foot'); foot.append(el('span','', 'Model changes apply to dictation and meeting transcripts.'),el('span','', 'Downloads are verified before use.')); box.append(foot);
+    const poll=setInterval(()=>{ if(speechModelStatus?.downloading)refreshSpeechModels(); },1500);
+    _modalCleanup=()=>{ clearInterval(poll); speechModelsOpen=false; };
+    renderSpeechModels();
   });
 }
+async function modelGate(){
+  try{ await fetchSpeechModels(); }catch{ return; }
+  applySpeechModelRuntimeSettings();
+  if(!speechModelStatus?.present) openSpeechModels(true);
+}
 function onModelProgress(m){
-  const bar=$('#mdlBar'), pct=$('#mdlPct'), btns=$('#mdlBtns'), prog=$('#mdlProg');
-  if(m.error){ if(pct) pct.textContent='Download failed — check your connection and try again.';
-    if(btns) btns.style.display='flex'; if(prog) prog.style.display='none'; toast('Model download failed'); return; }
-  if(bar) bar.style.width=(m.pct||0)+'%';
-  if(pct) pct.textContent=m.done?'Finishing…':((m.pct||0)+'% of ~845 MB');
-  if(m.done){ toast('Speech model ready — you’re all set.'); closeModal(); }
+  if(!m?.modelId)return;
+  speechModelProgress[m.modelId]=m;
+  if(speechModelStatus){
+    speechModelStatus.downloading=!m.done&&!m.error;
+    speechModelStatus.downloadingModelId=speechModelStatus.downloading?m.modelId:null;
+    const model=(speechModelStatus.models||[]).find(x=>x.id===m.modelId);
+    if(model){ model.downloading=speechModelStatus.downloading; if(Number.isFinite(Number(m.bytes)))model.partialBytes=Number(m.bytes); }
+  }
+  renderSpeechModels();
+  if(m.done||m.error){
+    if(m.done)toast(m.selected?'Model downloaded and selected.':'Model downloaded.');
+    else if(!m.cancelled)toast('Model download failed. You can resume it.');
+    setTimeout(async()=>{ delete speechModelProgress[m.modelId]; await refreshSpeechModels(); applySpeechModelRuntimeSettings(); },450);
+  }
 }
 boot().catch(e=>console.error('boot failed:',e)).finally(()=>document.documentElement.classList.remove('release-pending'));
 // Onboarding removed — open straight to the app; each feature asks for its one permission the first time it's used.

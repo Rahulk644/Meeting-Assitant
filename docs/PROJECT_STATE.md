@@ -19,6 +19,8 @@ chronological work log.
   additionally require meeting-window evidence. Calls are captured without a bot, transcribed locally,
   stored on-device, and summarized with a configured local or cloud model. Manual capture works universally.
 - **Writing Assistant and Agents:** design-preview only. They are not production promises.
+- **Local speech models:** shipped as an explicit model library shared by dictation and meetings. Downloads
+  are separate from the app and the active model controls languages, translation, output, and preprocessing.
 - **Cloud speech, calendar sync, updates, accounts, teams, sharing, and billing:**
   not shipped.
 
@@ -35,7 +37,7 @@ AppKit/Tauri shell
   ├─ authenticated Rust loopback service at 127.0.0.1:8790
   ├─ meeting-tap (Swift): real-call detection, system audio, mic, optional video
   ├─ meeting-state (Swift): Accessibility-derived speaker/mute/share evidence
-  └─ transcribe-server (C++): on-demand transcribe.cpp/Whisper model
+  └─ transcribe-server (C++): on-demand transcribe.cpp/selected local speech model
 ```
 
 The packaged app contains no Node runtime. `app/server.js` is a developer-only behavioural harness. Speech
@@ -66,12 +68,14 @@ macOS Keychain.
 - Whisper unload is user-configurable and defaults to 10 idle minutes.
 - Automatic speech language is preserved end-to-end; the app must never rewrite `auto` to English. Roman,
   natural mixed script, ordinary English, and English translation are separate model/evaluation tracks.
-- Audio preprocessing is a provider policy, not a global invariant. The shared Rust contract and pinned
-  model catalog expose `vad-compact`, `vad-gate`, and `resample-only`; shipped Turbo uses compact speech,
-  while Apex/Qwen candidates preserve the clip and use VAD only as a silence gate. Installed-model routing
-  is still required before a picker can ship.
-- Translation fails closed in production while Turbo is the only installed speech model. Turbo transcribes
-  but is not trained for translation; a separate qualified model and routing lifecycle are required.
+- Audio preprocessing is a model policy, not a global toggle. Whisper uses compact speech/noise protection;
+  Parakeet, Nemotron, and the Oriserve fine-tunes use a speech gate that preserves specialist-model input.
+- Model downloads are explicit, revision-pinned, exact-size and SHA-256 verified, resumable, cancellable,
+  private (owner-only), atomically installed, removable, and never bundled into the DMG.
+- Language intent is preserved across switches and resolved against the active model at inference time.
+  English-only and Roman-Hinglish models cannot receive an incompatible decoder language.
+- Translation is visible only for Whisper Medium multilingual and Large v3. Turbo, English-only models,
+  Parakeet, Nemotron, and Oriserve fail closed in both the UI and Rust service.
 - Native transcription keeps valid partial text when a model reaches its output limit, reports truncation,
   and guarantees valid UTF-8 JSON.
 - API keys never belong in JSON, SQLite, logs, process arguments, temporary files, or WebView state.
@@ -79,15 +83,15 @@ macOS Keychain.
 ## Release status
 
 The current automated-verified artifact is
-`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,562,559 bytes), SHA-256
-`52fa95778894d1d2ff1e17bb1281e7b416c030ea00cab7e4dee9c02efb3181d1`. The mounted app is 28,200 KiB.
-With the window hidden, the app and both meeting helpers measured about 38.2 MiB aggregate physical footprint
-and 116,704 KiB aggregate RSS; no speech or LLM process was resident. Verification is 25/25 Node product
-tests, 20/20 Rust tests, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, and passing
-transcribe-server, meeting-tap, and meeting-state self-tests. The read-only mounted DMG passed deep/nested
-signature checks, carries the production capability payload with Translation blocked, contains no
-model/benchmark/transcript/source artifact, launched successfully, kept unauthenticated loopback access at
-401, and rejected a forged Host at 403.
+`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,585,852 bytes), SHA-256
+`a6260f8929faa0fedd28ef5ac45c1dbd68c15e708ce8de5b8774f7952cdc4533`. The app bundle is 28,260 KiB.
+After a short post-launch idle, the app and both meeting helpers measured 39 MiB aggregate physical footprint
+and 44,208 KiB aggregate RSS; no speech or LLM process was resident. Verification is 27/27 Node product tests,
+23/23 Rust tests, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, and passing transcribe-server,
+meeting-tap, and meeting-state self-tests. All 12 revision-pinned model endpoints returned the exact catalog
+content length. The DMG passed checksum and deep signature verification, carries the production model-picker
+and capability-gated Translation payload, contains no model/benchmark/transcript/source artifact, launched
+successfully, kept unauthenticated loopback access at 401, and rejected a forged Host at 403.
 
 This is suitable for a small explicitly informed beta group, subject to the documented **Privacy & Security
 → Open Anyway** installation flow. The physical Right-Command matrix and real two-person meeting matrix below
@@ -109,14 +113,11 @@ background updates cannot be made trustworthy until a separate updater signing-k
    platform/version acceptance matrix for every advertised native/browser/chat adapter.
 5. Generate a dependency SBOM and complete third-party notice packaging.
 6. Add signed update manifests only after an offline update-key and rollback design is documented and tested.
-7. Complete the speech promotion gate. Whisper completed three deterministic 500-clip CoSHE runs with zero
-   truncations. Qwen HiACC completed two stronger-accuracy runs but produced 13 partial outputs each; it is
-   retained only as an optional research/catalog entry and is not a recommendation, automatic choice, or
-   promotion candidate. The blind 500-clip Roman pack, field-capture workflow, exact per-model policies, and
-   resumable runner are implemented. Human Roman review, actual field-recorded noise, long-form fixtures, and
-   installed-model lifecycle/routing remain. Keep Whisper as default until all acceptance gates pass.
-8. Add and benchmark macOS 26 SpeechAnalyzer as the first system Speech adapter, retain Whisper fallback,
-   then evaluate Parakeet/Nemotron and separate Speech providers from Intelligence providers in the UI.
+7. Complete quality evidence without blocking user choice: real café/wind/traffic recordings, long-form
+   fixtures, a physical model switch matrix, and representative RAM/latency/thermal measurements. Keep
+   Whisper Large v3 Turbo as the recommended default; never market proxy WER as human Hinglish accuracy.
+8. Add and benchmark macOS 26 SpeechAnalyzer as an optional system Speech adapter, retain the local catalog
+   fallback, and separate future cloud Speech providers from meeting-note Intelligence providers.
 
 ## Resume protocol
 

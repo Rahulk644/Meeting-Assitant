@@ -11,7 +11,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
@@ -29,14 +29,6 @@ const ADDRESS: &str = "127.0.0.1:8790";
 const ORIGIN: &str = "http://127.0.0.1:8790";
 const STT_PORT: u16 = 8091;
 const LLM_PORT: u16 = 9379;
-const MODEL_NAME: &str = "whisper-large-v3-turbo-Q8_0.gguf";
-const MODEL_URL: &str = "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/whisper-large-v3-turbo-Q8_0.gguf";
-const MODEL_SHA256: &str = "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448";
-const MODEL_SIZE: u64 = 886_381_824;
-// Audio policy belongs to the installed model record. Keep it beside the pinned model artifact so a future
-// model picker cannot accidentally inherit Whisper's destructive pause compaction as a global default.
-pub(crate) const MODEL_PREPROCESSING_POLICY: crate::speech_audio::SpeechPreprocessingPolicy =
-    crate::speech_audio::SpeechPreprocessingPolicy::VadCompact;
 const KEYCHAIN_SERVICE: &str = "com.myassistant.desktop.ai-provider";
 const MAX_JSON_BODY: usize = 1_000_000;
 const MAX_AUDIO_BODY: usize = 64 * 1024 * 1024;
@@ -82,8 +74,10 @@ struct State {
     unload_idle: bool,
     whisper_idle_minutes: f64,
     vocab: String,
-    model_downloading: bool,
-    model_verified: bool,
+    speech_model_id: String,
+    model_downloading: Option<String>,
+    model_download_cancel: bool,
+    verified_models: HashSet<String>,
     stt_child: Option<Child>,
     stt_last_used: Option<Instant>,
     llm_child: Option<Child>,
@@ -375,6 +369,12 @@ pub fn start(
             );
         }
     }
+    let speech_model_id = settings
+        .get("set.speechModel")
+        .filter(|id| crate::speech_models::speech_model(id).is_some())
+        .cloned()
+        .unwrap_or_else(|| crate::speech_models::DEFAULT_MODEL_ID.to_string());
+    settings.insert("set.speechModel".into(), speech_model_id.clone());
     let modules = setting_json(&settings, "modules")
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or(Modules {
@@ -398,8 +398,10 @@ pub fn start(
         unload_idle: true,
         whisper_idle_minutes: 10.0,
         vocab: String::new(),
-        model_downloading: false,
-        model_verified: false,
+        speech_model_id,
+        model_downloading: None,
+        model_download_cancel: false,
+        verified_models: HashSet::new(),
         stt_child: None,
         stt_last_used: None,
         llm_child: None,
@@ -693,18 +695,11 @@ fn handle(mut request: Request, shared: Arc<Shared>) {
                 .dict_stop += 1;
             respond(request, 204, "text/plain", Vec::new(), vec![])
         }
-        (Method::Get, "/api/model/status") => {
-            let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-            json_response(
-                request,
-                200,
-                json!({"present": model_path(&shared.cfg).is_some(), "downloading": state.model_downloading}),
-            )
-        }
-        (Method::Post, "/api/model/download") => {
-            start_model_download(shared);
-            respond(request, 202, "text/plain", Vec::new(), vec![])
-        }
+        (Method::Get, "/api/model/status") => json_response(request, 200, model_status(&shared)),
+        (Method::Post, "/api/model/download") => model_download(request, shared),
+        (Method::Post, "/api/model/select") => model_select(request, shared),
+        (Method::Post, "/api/model/delete") => model_delete(request, shared),
+        (Method::Post, "/api/model/cancel") => model_cancel(request, shared),
         (Method::Post, "/api/open-settings") => open_settings(request),
         (Method::Get, "/api/meetings") => meetings_list(request, &shared),
         _ => dynamic_route(request, shared, path),
@@ -1358,8 +1353,11 @@ fn config_post(mut request: Request, shared: Arc<Shared>) {
             }
         }
         if let Some(requested) = body.get("translate").and_then(Value::as_bool) {
-            let value =
-                Value::Bool(requested && release_capability(&shared.cfg.release, "translation"));
+            let value = Value::Bool(
+                requested
+                    && release_capability(&shared.cfg.release, "translation")
+                    && active_speech_model(&state).supports_translation,
+            );
             state.last_state.insert("translate".into(), value.clone());
             broadcasts.push(("translate", value));
         }
@@ -1437,8 +1435,9 @@ fn transcribe_proxy(mut request: Request, shared: Arc<Shared>) {
             return json_response(request, 503, json!({"error":error}));
         }
         state.stt_last_used = Some(Instant::now());
+        let model = active_speech_model(&state);
         (
-            dictation_decode_language(&state.dictation.language),
+            model_decode_language(model, &state.dictation.language),
             state.dictation.punctuation.clone(),
             state.vocab.clone(),
         )
@@ -1489,6 +1488,60 @@ fn dictation_decode_language(configured: &str) -> String {
     }
 }
 
+fn active_speech_model(state: &State) -> &'static crate::speech_models::SpeechModelSpec {
+    crate::speech_models::speech_model(&state.speech_model_id)
+        .unwrap_or_else(crate::speech_models::default_speech_model)
+}
+
+fn model_decode_language(
+    model: &crate::speech_models::SpeechModelSpec,
+    configured: &str,
+) -> String {
+    if let Some(language) = model.fixed_language {
+        return language.to_string();
+    }
+    let requested = dictation_decode_language(configured);
+    if requested == "auto" {
+        return if model.supports_language_detection {
+            requested
+        } else {
+            model
+                .supported_languages
+                .first()
+                .copied()
+                .unwrap_or("en")
+                .to_string()
+        };
+    }
+    if model
+        .supported_languages
+        .iter()
+        .any(|language| *language == requested)
+    {
+        requested
+    } else if model.supports_language_detection {
+        "auto".into()
+    } else {
+        model
+            .supported_languages
+            .first()
+            .copied()
+            .unwrap_or("en")
+            .to_string()
+    }
+}
+
+pub(crate) fn active_speech_preprocessing_policy() -> crate::speech_audio::SpeechPreprocessingPolicy
+{
+    SHARED
+        .get()
+        .map(|shared| {
+            let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+            active_speech_model(&state).preprocessing
+        })
+        .unwrap_or_else(|| crate::speech_models::default_speech_model().preprocessing)
+}
+
 fn inject_multipart_fields(
     mut body: Vec<u8>,
     content_type: &str,
@@ -1522,10 +1575,11 @@ fn ensure_stt(cfg: &Config, state: &mut State) -> Result<(), String> {
         }
         state.stt_child = None;
     }
-    let model = model_path(cfg).ok_or_else(|| "speech model is not installed".to_string())?;
-    if !state.model_verified {
-        verify_model(&model)?;
-        state.model_verified = true;
+    let spec = active_speech_model(state);
+    let model = model_path(cfg, spec).ok_or_else(|| format!("{} is not downloaded", spec.name))?;
+    if !state.verified_models.contains(spec.id) {
+        verify_model(&model, spec)?;
+        state.verified_models.insert(spec.id.to_string());
     }
     if !cfg.transcribe_bin.is_file() {
         return Err("bundled transcription engine is missing".into());
@@ -1624,11 +1678,11 @@ fn port_open(port: u16) -> bool {
     .is_ok()
 }
 
-fn model_path(cfg: &Config) -> Option<PathBuf> {
-    let path = cfg.models_dir.join(MODEL_NAME);
+fn model_path(cfg: &Config, model: &crate::speech_models::SpeechModelSpec) -> Option<PathBuf> {
+    let path = cfg.models_dir.join(model.filename);
     if fs::metadata(&path)
         .ok()
-        .map(|m| m.is_file() && m.len() == MODEL_SIZE)
+        .map(|m| m.is_file() && m.len() == model.size)
         .unwrap_or(false)
     {
         Some(path)
@@ -1642,7 +1696,8 @@ fn model_path(cfg: &Config) -> Option<PathBuf> {
 // a regular copy is the portable fallback. The existing ensure_stt path verifies the pinned SHA-256 before
 // the model is ever loaded, so startup only needs the exact expected size and remains fast.
 fn migrate_legacy_model(models_dir: &Path, legacy_dirs: &[String]) -> Result<bool, String> {
-    migrate_legacy_file(models_dir, legacy_dirs, MODEL_NAME, MODEL_SIZE)
+    let model = crate::speech_models::default_speech_model();
+    migrate_legacy_file(models_dir, legacy_dirs, model.filename, model.size)
 }
 
 fn migrate_legacy_file(
@@ -1698,86 +1753,414 @@ fn migrate_legacy_file(
     Ok(false)
 }
 
-fn start_model_download(shared: Arc<Shared>) {
+fn stop_stt(state: &mut State) {
+    if let Some(mut child) = state.stt_child.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    state.stt_last_used = None;
+}
+
+fn model_status(shared: &Shared) -> Value {
+    let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    let active_id = active_speech_model(&state).id;
+    let models: Vec<Value> = crate::speech_models::SPEECH_MODELS
+        .iter()
+        .map(|model| {
+            let downloaded = model_path(&shared.cfg, model).is_some();
+            let partial_bytes = fs::metadata(
+                shared
+                    .cfg
+                    .models_dir
+                    .join(format!("{}.part", model.filename)),
+            )
+            .map(|meta| meta.len().min(model.size))
+            .unwrap_or(0);
+            json!({
+                "id": model.id,
+                "name": model.name,
+                "family": model.family,
+                "sizeBytes": model.size,
+                "bestFor": model.best_for,
+                "description": model.description,
+                "abilities": model.abilities,
+                "badge": model.badge,
+                "license": model.license,
+                "sourceUrl": model.source_url,
+                "supportedLanguages": model.supported_languages,
+                "supportsLanguageDetection": model.supports_language_detection,
+                "supportsTranslation": model.supports_translation,
+                "fixedLanguage": model.fixed_language,
+                "outputStyle": model.output_style,
+                "audioProfile": model.audio_profile,
+                "downloaded": downloaded,
+                "active": active_id == model.id,
+                "downloading": state.model_downloading.as_deref() == Some(model.id),
+                "partialBytes": partial_bytes,
+            })
+        })
+        .collect();
+    let active = crate::speech_models::speech_model(active_id)
+        .unwrap_or_else(crate::speech_models::default_speech_model);
+    json!({
+        "present": model_path(&shared.cfg, active).is_some(),
+        "downloading": state.model_downloading.is_some(),
+        "downloadingModelId": state.model_downloading.clone(),
+        "activeModelId": active_id,
+        "activeModelName": active.name,
+        "models": models,
+    })
+}
+
+fn model_request(mut request: Request) -> Result<(Request, Value), (Request, String)> {
+    match read_json(&mut request) {
+        Ok(body) => Ok((request, body)),
+        Err(error) => Err((request, error)),
+    }
+}
+
+fn requested_speech_model(
+    body: &Value,
+) -> Result<&'static crate::speech_models::SpeechModelSpec, String> {
+    let id = body
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "model id is required".to_string())?;
+    crate::speech_models::speech_model(id).ok_or_else(|| "unknown speech model".to_string())
+}
+
+fn sync_runtime_for_model(
+    shared: &Shared,
+    state: &mut State,
+    model: &crate::speech_models::SpeechModelSpec,
+) {
+    let language_intent = setting_json(&state.settings, "language")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "auto".into());
+    let language = model_decode_language(model, &language_intent);
+    let language_changed =
+        state.last_state.get("language").and_then(Value::as_str) != Some(language.as_str());
+    state
+        .last_state
+        .insert("language".into(), Value::String(language.clone()));
+    if language_changed {
+        broadcast(
+            shared,
+            &json!({"type":"state","state":{"language":language}}),
+        );
+    }
+    let requested = setting_json(&state.settings, "translate")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let effective = requested
+        && model.supports_translation
+        && release_capability(&shared.cfg.release, "translation");
+    let changed = state.last_state.get("translate").and_then(Value::as_bool) != Some(effective);
+    state
+        .last_state
+        .insert("translate".into(), Value::Bool(effective));
+    if changed {
+        broadcast(
+            shared,
+            &json!({"type":"state","state":{"translate":effective}}),
+        );
+    }
+}
+
+fn model_download(request: Request, shared: Arc<Shared>) {
+    let (request, body) = match model_request(request) {
+        Ok(value) => value,
+        Err((request, error)) => return json_response(request, 400, json!({"error":error})),
+    };
+    let model = match requested_speech_model(&body) {
+        Ok(model) => model,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let select_after_download = body.get("select").and_then(Value::as_bool).unwrap_or(false);
     {
         let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.model_downloading || model_path(&shared.cfg).is_some() {
-            return;
+        if let Some(current) = state.model_downloading.as_deref() {
+            return json_response(
+                request,
+                409,
+                json!({"error":format!("another model is downloading: {current}")}),
+            );
         }
-        state.model_downloading = true;
+        if select_after_download
+            && model_path(&shared.cfg, model).is_some()
+            && (state.gate.recording() || state.gate.paused())
+        {
+            return json_response(
+                request,
+                409,
+                json!({"error":"stop the meeting before switching speech models"}),
+            );
+        }
+        if model_path(&shared.cfg, model).is_some() {
+            if select_after_download {
+                stop_stt(&mut state);
+                state.speech_model_id = model.id.to_string();
+                state
+                    .settings
+                    .insert("set.speechModel".into(), model.id.into());
+                let _ = save_settings(&shared.cfg, &state.settings);
+                sync_runtime_for_model(&shared, &mut state, model);
+            }
+            return json_response(request, 200, model_status_unlocked(&shared, &state));
+        }
+        state.model_downloading = Some(model.id.to_string());
+        state.model_download_cancel = false;
     }
-    broadcast(&shared, &json!({"type":"model-progress","pct":0}));
-    thread::spawn(move || {
-        let dest = shared.cfg.models_dir.join(MODEL_NAME);
-        let tmp = shared.cfg.models_dir.join(format!("{MODEL_NAME}.part"));
+    broadcast(
+        &shared,
+        &json!({"type":"model-progress","modelId":model.id,"pct":0,"bytes":0,"total":model.size}),
+    );
+    let worker = shared.clone();
+    thread::spawn(move || run_model_download(worker, model, select_after_download));
+    json_response(request, 202, model_status(&shared));
+}
+
+fn model_status_unlocked(shared: &Shared, state: &State) -> Value {
+    let active = active_speech_model(state);
+    json!({
+        "present": model_path(&shared.cfg, active).is_some(),
+        "downloading": state.model_downloading.is_some(),
+        "activeModelId": active.id,
+        "activeModelName": active.name,
+    })
+}
+
+fn run_model_download(
+    shared: Arc<Shared>,
+    model: &'static crate::speech_models::SpeechModelSpec,
+    select_after_download: bool,
+) {
+    let dest = shared.cfg.models_dir.join(model.filename);
+    let tmp = shared
+        .cfg
+        .models_dir
+        .join(format!("{}.part", model.filename));
+    if fs::metadata(&tmp).map(|meta| meta.len()).unwrap_or(0) > model.size {
+        let _ = fs::remove_file(&tmp);
+    }
+    if dest.exists() {
+        let _ = fs::remove_file(&dest);
+    }
+
+    let mut cancelled = false;
+    let existing_complete = fs::metadata(&tmp).map(|meta| meta.len()).ok() == Some(model.size);
+    let result = if existing_complete {
+        verify_model(&tmp, model)
+    } else {
         let mut child = Command::new("/usr/bin/curl")
             .args([
                 "--fail",
                 "--location",
                 "--silent",
                 "--show-error",
-                MODEL_URL,
+                "--continue-at",
+                "-",
+                model.url,
                 "--output",
                 tmp.to_string_lossy().as_ref(),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
-        let result = match child.as_mut() {
+        match child.as_mut() {
             Ok(child) => loop {
+                let should_cancel = shared.stopping.load(Ordering::Relaxed) || {
+                    let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                    state.model_download_cancel
+                        && state.model_downloading.as_deref() == Some(model.id)
+                };
+                if should_cancel {
+                    cancelled = true;
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err("download cancelled".into());
+                }
                 match child.try_wait() {
                     Ok(Some(status)) => {
                         break if status.success() {
-                            verify_model(&tmp)
+                            verify_model(&tmp, model)
                         } else {
                             Err("model download failed".into())
-                        }
+                        };
                     }
                     Ok(None) => {
-                        let got = fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
-                        let pct = ((got.saturating_mul(100) / MODEL_SIZE).min(99)) as u64;
-                        broadcast(&shared, &json!({"type":"model-progress","pct":pct}));
-                        thread::sleep(Duration::from_millis(500));
+                        let got = fs::metadata(&tmp)
+                            .map(|meta| meta.len())
+                            .unwrap_or(0)
+                            .min(model.size);
+                        let pct = ((got.saturating_mul(100) / model.size).min(99)) as u64;
+                        broadcast(
+                            &shared,
+                            &json!({"type":"model-progress","modelId":model.id,"pct":pct,"bytes":got,"total":model.size}),
+                        );
+                        thread::sleep(Duration::from_millis(400));
                     }
-                    Err(e) => break Err(e.to_string()),
+                    Err(error) => break Err(error.to_string()),
                 }
             },
-            Err(e) => Err(e.to_string()),
-        };
-        match result.and_then(|_| {
-            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
-                .map_err(|e| e.to_string())?;
-            fs::rename(&tmp, &dest).map_err(|e| e.to_string())
-        }) {
-            Ok(()) => {
-                shared
-                    .state
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .model_verified = true;
-                broadcast(
-                    &shared,
-                    &json!({"type":"model-progress","pct":100,"done":true}),
-                );
-            }
-            Err(error) => {
-                let _ = fs::remove_file(&tmp);
-                broadcast(&shared, &json!({"type":"model-progress","error":error}));
-            }
+            Err(error) => Err(error.to_string()),
         }
-        shared
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .model_downloading = false;
-    });
+    };
+
+    match result.and_then(|_| {
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
+            .map_err(|error| error.to_string())?;
+        fs::rename(&tmp, &dest).map_err(|error| error.to_string())
+    }) {
+        Ok(()) => {
+            let mut selected = false;
+            {
+                let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                state.verified_models.insert(model.id.to_string());
+                if select_after_download && !state.gate.recording() && !state.gate.paused() {
+                    stop_stt(&mut state);
+                    state.speech_model_id = model.id.to_string();
+                    state
+                        .settings
+                        .insert("set.speechModel".into(), model.id.into());
+                    let _ = save_settings(&shared.cfg, &state.settings);
+                    sync_runtime_for_model(&shared, &mut state, model);
+                    selected = true;
+                }
+            }
+            broadcast(
+                &shared,
+                &json!({"type":"model-progress","modelId":model.id,"pct":100,"bytes":model.size,"total":model.size,"done":true,"selected":selected}),
+            );
+        }
+        Err(error) => {
+            if fs::metadata(&tmp).map(|meta| meta.len()).unwrap_or(0) >= model.size {
+                let _ = fs::remove_file(&tmp);
+            }
+            broadcast(
+                &shared,
+                &json!({"type":"model-progress","modelId":model.id,"error":error,"cancelled":cancelled}),
+            );
+        }
+    }
+    let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    if state.model_downloading.as_deref() == Some(model.id) {
+        state.model_downloading = None;
+        state.model_download_cancel = false;
+    }
 }
 
-fn verify_model(path: &Path) -> Result<(), String> {
+fn model_select(request: Request, shared: Arc<Shared>) {
+    let (request, body) = match model_request(request) {
+        Ok(value) => value,
+        Err((request, error)) => return json_response(request, 400, json!({"error":error})),
+    };
+    let model = match requested_speech_model(&body) {
+        Ok(model) => model,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let Some(path) = model_path(&shared.cfg, model) else {
+        return json_response(request, 409, json!({"error":"download this model first"}));
+    };
+    let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    if state.gate.recording() || state.gate.paused() {
+        return json_response(
+            request,
+            409,
+            json!({"error":"stop the meeting before switching speech models"}),
+        );
+    }
+    if !state.verified_models.contains(model.id) {
+        if let Err(error) = verify_model(&path, model) {
+            return json_response(request, 422, json!({"error":error}));
+        }
+        state.verified_models.insert(model.id.to_string());
+    }
+    stop_stt(&mut state);
+    state.speech_model_id = model.id.to_string();
+    state
+        .settings
+        .insert("set.speechModel".into(), model.id.into());
+    let _ = save_settings(&shared.cfg, &state.settings);
+    sync_runtime_for_model(&shared, &mut state, model);
+    json_response(request, 200, model_status_unlocked(&shared, &state));
+}
+
+fn model_delete(request: Request, shared: Arc<Shared>) {
+    let (request, body) = match model_request(request) {
+        Ok(value) => value,
+        Err((request, error)) => return json_response(request, 400, json!({"error":error})),
+    };
+    let model = match requested_speech_model(&body) {
+        Ok(model) => model,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    if state.model_downloading.as_deref() == Some(model.id) {
+        return json_response(
+            request,
+            409,
+            json!({"error":"cancel the download before deleting it"}),
+        );
+    }
+    if state.speech_model_id == model.id && (state.gate.recording() || state.gate.paused()) {
+        return json_response(
+            request,
+            409,
+            json!({"error":"stop the meeting before removing the active speech model"}),
+        );
+    }
+    if state.speech_model_id == model.id {
+        stop_stt(&mut state);
+    }
+    let _ = fs::remove_file(shared.cfg.models_dir.join(model.filename));
+    let _ = fs::remove_file(
+        shared
+            .cfg
+            .models_dir
+            .join(format!("{}.part", model.filename)),
+    );
+    state.verified_models.remove(model.id);
+    if state.speech_model_id == model.id {
+        state.speech_model_id = crate::speech_models::SPEECH_MODELS
+            .iter()
+            .find(|candidate| model_path(&shared.cfg, candidate).is_some())
+            .unwrap_or_else(|| crate::speech_models::default_speech_model())
+            .id
+            .to_string();
+        let selected = state.speech_model_id.clone();
+        state.settings.insert("set.speechModel".into(), selected);
+        let _ = save_settings(&shared.cfg, &state.settings);
+        let selected_model = active_speech_model(&state);
+        sync_runtime_for_model(&shared, &mut state, selected_model);
+    }
+    json_response(request, 200, model_status_unlocked(&shared, &state));
+}
+
+fn model_cancel(request: Request, shared: Arc<Shared>) {
+    let (request, body) = match model_request(request) {
+        Ok(value) => value,
+        Err((request, error)) => return json_response(request, 400, json!({"error":error})),
+    };
+    let requested = body.get("id").and_then(Value::as_str).unwrap_or("");
+    let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    if state.model_downloading.as_deref() == Some(requested) {
+        state.model_download_cancel = true;
+        return json_response(request, 202, json!({"cancelling":true,"id":requested}));
+    }
+    json_response(
+        request,
+        409,
+        json!({"error":"that model is not downloading"}),
+    )
+}
+
+fn verify_model(path: &Path, model: &crate::speech_models::SpeechModelSpec) -> Result<(), String> {
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
-    if meta.len() != MODEL_SIZE {
+    if meta.len() != model.size {
         return Err(format!(
-            "speech model size mismatch: expected {MODEL_SIZE}, got {}",
+            "speech model size mismatch: expected {}, got {}",
+            model.size,
             meta.len()
         ));
     }
@@ -1790,7 +2173,7 @@ fn verify_model(path: &Path) -> Result<(), String> {
         .next()
         .unwrap_or("")
         .to_string();
-    if !output.status.success() || digest != MODEL_SHA256 {
+    if !output.status.success() || digest != model.sha256 {
         return Err("speech model checksum mismatch".into());
     }
     Ok(())
@@ -2969,6 +3352,19 @@ mod tests {
         assert_eq!(dictation_decode_language("auto"), "auto");
         assert_eq!(dictation_decode_language("hi"), "hi");
         assert_eq!(dictation_decode_language(""), "auto");
+    }
+    #[test]
+    fn model_language_capabilities_are_applied_without_overwriting_user_intent() {
+        let whisper = crate::speech_models::speech_model("whisper-large-v3-turbo").unwrap();
+        let nemotron =
+            crate::speech_models::speech_model("nemotron-3.5-asr-streaming-0.6b").unwrap();
+        let english =
+            crate::speech_models::speech_model("nemotron-speech-streaming-en-0.6b").unwrap();
+        let hinglish = crate::speech_models::speech_model("oriserve-hinglish-apex").unwrap();
+        assert_eq!(model_decode_language(whisper, "hi"), "hi");
+        assert_eq!(model_decode_language(nemotron, "ta"), "auto");
+        assert_eq!(model_decode_language(english, "hi"), "en");
+        assert_eq!(model_decode_language(hinglish, "auto"), "en");
     }
     #[test]
     fn disabled_translation_capability_fails_closed() {

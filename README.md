@@ -2,7 +2,7 @@
 
 A private, **on-device** assistant for calls and text. The complete UI preserves the product vision;
 **Dictation is the primary ready feature and Meetings ships as a beta.** Meetings provides real-time transcription
-of *you and the other participants* across dedicated meeting apps and supported browser/chat calls, with best-effort speaker names. Whisper runs on the Apple GPU — **no bot joins
+of *you and the other participants* across dedicated meeting apps and supported browser/chat calls, with best-effort speaker names. The selected speech model runs locally on the Apple GPU — **no bot joins
 the call, no audio leaves your machine, no meeting-app captions toggle.**
 
 **Status:** the Meetings module works end-to-end and ships as a **double-click desktop app**
@@ -11,8 +11,10 @@ the call, no audio leaves your machine, no meeting-app captions toggle.**
 - **detects Zoom, Teams, Webex, FaceTime, Google Meet, Slack huddles, Discord, and other supported calls**
   and transcribes *you and the other participants*, with **live speaker names**, capturing **only while
   you're in a call** — or **start / pause / stop by hand**. Manual recording works with any platform;
-- **auto-detects the spoken language and transcribes it as spoken**; English translation is deliberately
-  hidden until a separately qualified translation model has its own install and routing lifecycle;
+- **lets each user choose a local speech model** for their Mac, including Whisper speed/quality tiers,
+  Parakeet and both Nemotron English/multilingual options, plus Oriserve Apex/Prime for Roman Hinglish;
+- **adapts language and output controls to the active model**; English translation appears only for the
+  translation-capable Whisper Medium multilingual and Large v3 options;
 - **saves every call on-device** into a browsable history with **post-call summaries, action items, and
   "ask this meeting"**;
 - can **screen-record** the call (whole call, or only while a screen is shared) and shows it in the
@@ -38,7 +40,7 @@ The long-term product, provider, model, monetization, and quality decisions live
  audio (Core Audio tap)    ┘      │ dedicated apps: Core Audio; browser/chat: audio + meeting-window evidence
                                   │ energy-VAD splits speech into per-utterance WAVs
                                   ▼
-                    transcribe-server (transcribe.cpp + Metal GPU · large-v3-turbo)
+                    transcribe-server (transcribe.cpp + Metal GPU · selected local speech model)
                     on demand — started when a call begins, unloads after a user-set idle timeout (10 min default)
                                   │ transcript  (POST /ingest)
                                   ▼
@@ -51,8 +53,9 @@ The long-term product, provider, model, monetization, and quality decisions live
   doing audio I/O — **no permission**), then captures the meeting app's audio with a **Core Audio process
   tap** (the *System Audio Recording Only* permission) **and** your mic, splitting each into utterances.
   ScreenCaptureKit is used **only** when you record video.
-- **Transcribe** — `transcribe-server` (started on demand) transcribes each whole utterance on the GPU,
-  preserving automatic language detection. The shipped Turbo model is transcription-only.
+- **Transcribe** — `transcribe-server` (started on demand) transcribes each whole utterance on the GPU.
+  Language, translation availability, output style, and audio preprocessing resolve from the active model;
+  a user preference is preserved when switching through an incompatible model.
 - **Names** — only after Core Audio confirms a real call, `meeting-state` wakes and reads Zoom's
   Accessibility tree for the active speaker (and mute/share); the Rust server stamps each remote line with
   who's speaking. Merely leaving Zoom open does no Accessibility scanning and cannot start a meeting.
@@ -61,14 +64,18 @@ The long-term product, provider, model, monetization, and quality decisions live
 
 ## Transcription
 
-**Settings → Meetings** exposes automatic or explicitly pinned transcription language:
+**Settings → Dictation → Speech model** opens the local model library. Every download is user-initiated,
+revision-pinned, size- and SHA-256-verified, resumable, cancellable, removable, and stored outside the app.
+The active model is shared by dictation and meetings.
+
+Dictation and Meetings expose automatic or explicitly pinned transcription language:
 
 - **Transcription language** *(detection)* — **`Auto-detect` by default**, so mixed Hindi + English is
   recognized per utterance. Pin a language only if detection ever slips.
 
-Translation is a distinct decoder task, not a language preference. It fails closed in production because
-Whisper Turbo is not trained for translation; a qualified Medium/Large or cloud Speech provider is required
-before that control can ship.
+Translation is a distinct decoder task, not a language preference. It appears only when Whisper Medium
+multilingual or Large v3 is active. Turbo, English-only Whisper, Parakeet, Nemotron, and the Roman-Hinglish
+fine-tunes fail closed even if an old saved translation preference exists.
 
 **Settings → Advanced** controls model residency: leave **Unload model when idle** on and choose the
 timeout (immediately, 2/5/10/15/30/60 minutes). The default is **10 minutes** for fast back-to-back use.
@@ -79,9 +86,9 @@ Quality comes first from **transcribing whole utterances** — the capturer wait
 sends the engine the *entire* sentence, never a fixed-length slice. (Chopping mid-sentence was what made it
 hallucinate — the model needs the surrounding words for context.)
 
-The engine is **[transcribe.cpp](https://github.com/handy-computer/transcribe.cpp)** running
-`large-v3-turbo` (q8) on Metal — the same engine [Handy](https://handy.computer) ships. On identical
-audio and model it's **~2× faster and ~half the RAM** of whisper.cpp, with cleaner output (proper
+The engine is **[transcribe.cpp](https://github.com/handy-computer/transcribe.cpp)** on Metal — the same
+engine family [Handy](https://handy.computer) uses. On identical audio and model it measured **~2× faster
+and ~half the RAM** of whisper.cpp in this project, with cleaner output (proper
 punctuation, no dropped word-onsets). It runs behind `transcribe-server`, a tiny HTTP wrapper that holds
 the model hot; the build is `stt/transcribe-server/build.sh` (pinned commit, Metal). whisper.cpp is kept
 as an automatic fallback if that isn't built. Capture (mic, system audio, video) runs **only while you're
@@ -165,8 +172,9 @@ first use**, with a recovery link. The app starts everything itself (no terminal
 > set as `bundle.macOS.signingIdentity`) so macOS TCC grants **survive rebuilds** — no re-prompt every
 > launch, and no manual `codesign` step. The `.app` bundles the web app + native helpers and reads writable
 > state (saved meetings, the model) from `~/Library/Application Support/My Assistant/`, so it runs off the
-> repo. The **845 MB speech model is not bundled** — on a machine without it the app **asks** on first launch
-> and downloads it (Handy's way). The `.dmg` is built by `desktop/make-dmg.sh` (plain `hdiutil`), since
+> repo. **Speech models are not bundled** — on a machine without one the app opens the model library and asks
+> the user to choose a download (currently about 44 MB–1.1 GB). The `.dmg` is built by
+> `desktop/make-dmg.sh` (plain `hdiutil`), since
 > Tauri's own DMG step runs a Finder AppleScript that fails non-interactively. This project deliberately
 > does not require Apple's paid Developer ID. On current macOS, recipients try the app once, then choose
 > **System Settings → Privacy & Security → Open Anyway** and confirm. Older releases may offer the same
@@ -287,6 +295,7 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 - [x] **Self-detecting capture** — finds the call from the Core Audio process list (no permission) and captures the others via a Core Audio tap, transcribes you + the others, only while in a call
 - [x] **Speaker names** from Zoom's AX tree (detector spawned as a direct child so its grant works)
 - [x] **transcribe.cpp engine** (≈2× faster, ≈half the RAM of whisper.cpp) — **whole-utterance**, automatic language preserved, transcription as spoken; **custom vocabulary** biases recognition of names/jargon
+- [x] **Curated local speech-model library** — Whisper Tiny/Base/Small/Medium English, Medium multilingual, Large v3 Turbo/Large v3, Parakeet Unified EN, both Nemotron models, and Oriserve Apex/Prime; verified resumable lifecycle and capability-driven settings
 - [x] **Manual + auto recording** — **start / pause / stop by hand** (composed with auto-detect, so pause/stop really releases the mic), plus a **floating in-call panel** (live transcript + scratchpad)
 - [x] **Real-call notifications + incremental recovery** — native alerts fire only on a Core Audio call edge; transcript JSON is atomically checkpointed throughout the call
 - [x] **On-demand Whisper** (unloaded when idle) + on-demand LLM — light on an 8 GB Mac
@@ -295,7 +304,7 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 - [x] **Desktop app (Tauri)** — double-click, self-starts the stack, **menu-bar recording indicator**, ask-once permissions
 - [x] **Screen-share stealth** · **video screen recording** (whole call / only-when-shared)
 - [x] **Dictation** — press **Right Command** by default to speak into any app (even full-screen); on-device transcription with **cached Silero VAD** silence-stripping, pasted in place. Every Settings control is live (sound · volume · clipboard · overlay · **rebindable** shortcut + **Esc**-to-cancel)
-- [x] **Portable `.app` + `.dmg`** — bundles the web app + native helpers, keeps data + the model in Application Support, and **asks before downloading** the 845 MB model on first run (Handy's way); drag-to-install DMG via `make-dmg.sh`
+- [x] **Portable `.app` + `.dmg`** — bundles the web app + native helpers, keeps data + models in Application Support, and **asks the user to choose a model** on first run; drag-to-install DMG via `make-dmg.sh`
 - [x] **Rust-native packaged server** — no bundled Node runtime/process; authenticated local routes, Keychain-backed provider secrets, private transient audio, and checksum-verified model download
 - [x] **Native low-overhead status pill** — the compact AppKit panel is created only on first use, appears across full-screen spaces without stealing focus, and leaves no hidden pill WebView resident while idle
 
@@ -304,7 +313,7 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 - [ ] **Real-time Copilot** — in-call coaching in an always-on **stealth** overlay (the keystone)
 - [ ] **Platform adapter validation matrix** — real two-person tests for every advertised native/browser/chat app and version
 - [ ] **audio in screen recordings**; **launch-at-login** + folder pickers (need Tauri plugins)
-- [ ] **Curated model picker + provider API keys** — on-device Parakeet, and cloud STT/LLM (Groq / OpenAI / Deepgram / ElevenLabs / Anthropic / Gemini) with per-model capabilities
+- [ ] **Cloud Speech provider API keys** — Groq / OpenAI / Deepgram / ElevenLabs with the same capability contract; keep Speech separate from meeting-note Intelligence providers
 - [ ] The other modules — **Writing Assistant, Agents**
 
 ## License

@@ -28,6 +28,11 @@ versions will use semantic versioning once the first public beta tag is cut.
   private session recording.
 - Sanitized full-set evidence from three complete 500-clip Whisper trials; transcript-bearing reports stay
   private and the committed aggregate records hashes, variance, preprocessing, and workload caveats.
+- A curated on-device speech-model library shared by Dictation and Meetings: Whisper speed/quality tiers,
+  Parakeet Unified English, both NVIDIA Nemotron streaming models, and Oriserve Apex/Prime for Roman
+  Hinglish. Every entry shows size, best-for guidance, abilities, license, and installed/download state.
+- Per-model language, translation, output-style, and audio-policy controls. Incompatible saved preferences
+  are preserved as user intent but fail closed at inference time.
 
 ### Changed
 
@@ -40,12 +45,12 @@ versions will use semantic versioning once the first public beta tag is cut.
 - Scheduled/calendar titles now outrank meeting-window titles; unscheduled calls are labelled
   `Impromptu meeting` instead of guessing a title from transcript text.
 - The DMG start-here guide now documents the current macOS Privacy & Security → Open Anyway flow.
-- Translation is hidden in production until a translation-capable model can be installed; the shipped Turbo
-  model remains transcription-only.
-- Speech preprocessing is selected per model: the shipped Whisper path compacts VAD speech frames, while
-  Apex/Qwen candidates retain clip context and use VAD only as a silence gate.
-- Qwen HiACC remains available only as an optional research catalog entry. It is not recommended,
-  auto-selected, bundled, or on the promotion path; Whisper remains the shipped default.
+- Translation is shown only while Whisper Medium multilingual or Whisper Large v3 is active; Turbo,
+  English-only, Parakeet, Nemotron, and Oriserve models remain transcription-only.
+- Speech preprocessing is selected per model: Whisper compacts VAD speech frames, while Parakeet,
+  Nemotron, and Oriserve retain utterance context and use VAD only as a speech gate.
+- Qwen is excluded from the user model library and further promotion benchmarking because of its current
+  memory/output trade-offs. Its completed measurements remain as historical engineering evidence.
 
 ### Fixed
 

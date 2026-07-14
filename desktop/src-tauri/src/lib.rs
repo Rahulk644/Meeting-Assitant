@@ -19,6 +19,7 @@ mod local_server;
 #[cfg(target_os = "macos")]
 mod native_pill;
 pub mod speech_audio;
+mod speech_models;
 
 // Absolute path to the repo, baked at build time. In DEV this is where everything lives. In a PACKAGED build
 // the app's own files come from the bundle's Resources dir instead (see init_paths). REPO is consulted only
@@ -668,10 +669,13 @@ fn dictation_finish(mut rec: Recorder, ms: u64) {
     } // stream fully stopped, buffer settled
     let rate = rec.rate.load(Ordering::Relaxed);
     let raw = std::mem::take(&mut *rec.samples.lock().unwrap());
-    // The active model owns its audio policy. Today this is the pinned Whisper Turbo record; a future model
-    // picker must switch the record and policy together instead of applying Whisper's compaction globally.
-    let speech =
-        speech_audio::preprocess_speech(&raw, rate, local_server::MODEL_PREPROCESSING_POLICY);
+    // The selected model owns its audio policy. Whisper compacts silence; Parakeet, Nemotron, and the
+    // Hinglish specialists retain acoustic context after a speech-presence gate.
+    let speech = speech_audio::preprocess_speech(
+        &raw,
+        rate,
+        local_server::active_speech_preprocessing_policy(),
+    );
     // Silero VAD: keep only speech → no hallucinated loop on silence
     // Acquire AFTER the VAD (per-clip, safe to run in parallel): serialize only the shared tail — the /tmp
     // WAV write, the upload, and the clipboard save/paste/restore — so overlapping finishes can't clobber

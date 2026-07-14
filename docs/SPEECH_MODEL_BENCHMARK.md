@@ -1,6 +1,6 @@
 # Speech model qualification: Hinglish, English, translation, and noise
 
-**Status:** engineering qualification; shipped default unchanged; not a marketing accuracy claim
+**Status:** engineering qualification; user-selectable catalog shipped; not a marketing accuracy claim
 
 **Measured:** 14–15 July 2026, Apple M1 / 8 GB / macOS 26.5
 
@@ -13,16 +13,16 @@ audio stay in `~/.cache/my-assistant-bench`; they are intentionally not committe
 
 ## Product decision
 
-Keep Whisper Large v3 Turbo Q8 as the shipped default. It completed three identical-accuracy 500-clip runs,
-is already integrated, and had no truncated output. A future replacement still needs a safe provider catalog,
-installed-model audio routing, downloader/removal/rollback, human Roman and field-noise evidence, and product
-acceptance. The benchmark does **not** say that Whisper variants are bad. It says different variants solve
-different jobs:
+Keep Whisper Large v3 Turbo Q8 as the recommended default. It completed three identical-accuracy 500-clip
+runs and had no truncated output. The model library now lets users explicitly download and try qualified
+runtime artifacts without turning proxy benchmarks into universal rankings. Human Roman and field-noise
+evidence still gates accuracy claims and any future automatic selection. The benchmark does **not** say that
+Whisper variants are bad. It says different variants solve different jobs:
 
-- **Mixed-script Hinglish:** Qwen3-ASR HiACC Q6 measured better recognition accuracy, but it is now an
-  optional catalog/research entry only. Two complete 500-clip runs each produced 13 partial outputs (11
-  repetition-loop stops and two 512-token caps) and used 1,053–1,188 MiB peak server RSS. By product decision
-  it will not be recommended, auto-selected, bundled, or benchmarked further for promotion.
+- **Mixed-script Hinglish:** Qwen3-ASR HiACC Q6 measured better recognition accuracy, but remains historical
+  research evidence rather than a user-catalog option. Two complete 500-clip runs each produced 13 partial
+  outputs (11 repetition-loop stops and two 512-token caps) and used 1,053–1,188 MiB peak server RSS. By
+  product decision it will not be recommended, auto-selected, bundled, or benchmarked further for promotion.
 - **Roman Hinglish:** Apex Q8 is the leading tested candidate. It scores 37.79% against a deterministic
   transliteration proxy versus 85.09% for stock Turbo forced to English. This is a strong A/B signal, not a
   publishable accuracy number. A blind 500-clip annotation pack now exists, but transcription and independent
@@ -30,9 +30,9 @@ different jobs:
 - **Ordinary English transcription:** HiACC (4.37% WER), Whisper Turbo (4.75%), Whisper Medium (4.75%), and
   Qwen Base (4.75%) all pass this 24-clip smoke control. Apex regresses to 9.70%, synthetic-trained Shuja
   Medium to 11.79%, lightweight Hhs Whisper Small to 14.26%, and Zero STT materially to 21.67%.
-- **Hindi speech translated to English:** the shipped Turbo model is not a translation model and returned
-  Hindi. Whisper Medium Q5 was the best tested option. Translation stays hidden until a separate
-  translation-capable model can be installed and routed.
+- **Hindi speech translated to English:** Turbo is not a valid translation path and returned Hindi. Whisper
+  Medium multilingual Q5 was the best tested option and is now a separate downloadable model; the setting
+  appears only when it or Large v3 is active.
 - **Noisy audio:** Qwen/HiACC are materially stronger than Turbo in the synthetic wind case. Severe competing
   speech remains unsolved for every tested model. Synthetic tests locate failure boundaries; they do not
   establish real café or outdoor quality. The consented field-capture and double-review workflow is ready;
@@ -62,7 +62,7 @@ speech-presence check. These are exact Rust production-policy paths, not separat
 | Candidate | Complete trials | WER | Character-F2 | Speed | Peak server RSS | Truncated / degenerate | Disposition |
 |---|---:|---:|---:|---:|---:|---:|---|
 | **Whisper Turbo Q8** | **3 × 500** | **39.31% every run** | **68.25 every run** | 5.64–6.67x | 959–987 MiB | 0 / 8 every run | shipped default |
-| Qwen HiACC Q6 | 2 × 500 | 20.88% every run | 83.20 every run | 6.12–7.56x | 1,053–1,188 MiB | 13 / 3 every run | optional research only; third run stopped by product decision |
+| Qwen HiACC Q6 | 2 × 500 | 20.88% every run | 83.20 every run | 6.12–7.56x | 1,053–1,188 MiB | 13 / 3 every run | historical research only; third run stopped by product decision |
 
 Both candidates produced exactly the same hypothesis for every sample across their completed trials. That
 makes the accuracy and failure counts reproducible. Speed and RSS varied because this was an interactive
@@ -72,8 +72,8 @@ lab comparison. Qwen's better WER does not override its product disposition or i
 ## 24-clip mixed-script discovery
 
 Each model ran through the pinned native `transcribe-server`. These early rows retain their original
-`product VAD` label for historical readability; the current explicit policies are `vad-compact` for shipped
-Whisper and `vad-gate` for Qwen/Apex research controls.
+`product VAD` label for historical readability; the current catalog policies are `vad-compact` for Whisper
+and `vad-gate` for Parakeet, Nemotron, and Oriserve. Qwen rows below are historical research controls.
 
 | Candidate | Audio path | WER | Speed | Peak server RSS | Truncated / degenerate | Decision |
 |---|---|---:|---:|---:|---:|---|
@@ -136,8 +136,8 @@ gain did not come with an obvious clean-English regression on the same determini
 
 OpenAI's [Whisper documentation](https://github.com/openai/whisper) states that Turbo is not trained for
 translation and should return the original language; Medium or Large must be used for translation. The old
-UI exposed an English-translation toggle while only Turbo was installed. The capability now fails closed and
-requires a separately qualified model before it can reappear.
+UI exposed an English-translation toggle while only Turbo was installed. The control now appears only for a
+translation-capable installed model and fails closed after every incompatible model switch.
 
 ## Synthetic 5 dB stress tests
 
@@ -170,7 +170,7 @@ weights, and product runtime feasibility.
 | Trelis Whisper Large v3 fine-tune | deferred safely | source weights are about 6.2 GB and the catalog requires a 12 GB free-disk safety floor for source, reference, and quantized copies |
 | Hhsjsnns Whisper Small fine-tune | tested | only 194 MB on disk / about 381 MB peak server RSS, but 60.44% mixed and 14.26% English WER; reject |
 | Shuja Whisper Medium fine-tune | tested | improves base Medium from 57.17% to 49.71% mixed WER, but is nowhere near its synthetic card claim, regresses English to 11.79%, and worsens with VAD |
-| Qwen Base, Srota, HiACC | tested; optional research only | HiACC has the best measured mixed-script accuracy, but Qwen is excluded from the recommendation/automatic/promotion path by product decision |
+| Qwen Base, Srota, HiACC | tested; historical research only | HiACC has the best measured mixed-script accuracy, but Qwen is excluded from the user catalog and recommendation/automatic/promotion path by product decision |
 | addyo07 noisy Qwen ONNX | integration required | custom ONNX path, not the shipped runtime; needs an isolated adapter and independent evaluation |
 | addyo07 Nemotron RNNT ONNX | integration required | exported encoder/decoder lack a production streaming feature/cache/RNNT runner; author scores are not independent |
 | Hinglish Conformer CTC GGUF | runtime incompatible | the pinned production server rejects the file at model load; upstream NVIDIA terms also need review |
@@ -184,8 +184,8 @@ SHA-256. A model card claim is never copied into the measured-results table as i
 
 1. **Automatic dictation was secretly forced to English.** The Rust proxy and legacy developer harness now
    preserve `language=auto`; a regression test prevents this from returning.
-2. **Turbo translation was exposed despite being unsupported.** Translation defaults off, stale saved state
-   cannot re-enable it, the server release contract forces it off, and the release matrix marks it blocked.
+2. **Turbo translation was exposed despite being unsupported.** Translation defaults off for Turbo, stale
+   saved state cannot re-enable it on an incompatible model, and the UI follows the selected model capability.
 3. **Qwen output handling was too short.** The pinned native patch raises the output budget from 256 to 512
    tokens and terminates repeated token cycles. Qwen Base improved from 30.85% with 8 truncations to 23.39%
    with one recovered/truncated sample; a 1,024-token experiment was worse because a loop ran longer.
@@ -199,7 +199,10 @@ SHA-256. A model card claim is never copied into the measured-results table as i
 These are source fixes. They belong in a shareable artifact only after the release build and audit recorded
 in `AUDIT_REPORT.md` are refreshed.
 
-## Promotion gate
+## Quality-promotion gate
+
+The library is available for explicit user choice. These gates still apply to model recommendations,
+automatic routing, and public accuracy claims:
 
 1. Complete the prepared blind 500-clip human Roman transcription and independent review; collect and review
    the consented real-noise product corpus in clean, café, wind, traffic, and secondary conditions.
@@ -207,14 +210,12 @@ in `AUDIT_REPORT.md` are refreshed.
    promotion candidate still require three complete runs; Qwen is explicitly not such a candidate.
 3. Add long-form dictation and meeting fixtures, silence/hallucination rate, multi-speaker overlap, names,
    numbers, punctuation, and paste-format checks.
-4. The exact per-model audio-policy contract is implemented for the current model and benchmark catalog.
-   Installed-model routing and an independently benchmarked optional denoiser remain.
-5. Prototype Nemotron/noisy-Qwen adapters out of process; only retain them if they beat the leaders under the
-   same references without unacceptable RAM, startup, energy, licensing, or crash costs.
-6. Verify model/dataset licenses and provenance, then implement a signed catalog, resumable downloads,
-   hardware routing, deletion, rollback, and disk/RAM warnings.
-7. Only after those gates expose Automatic / Roman Hinglish / Natural Script / Translate to English in the
-   UI. Never silently force the decoder language or translation task.
+4. Exact per-model audio policy and installed-model routing are implemented. An independently benchmarked
+   optional denoiser remains future work.
+5. Benchmark both Nemotron options and Parakeet on representative Macs and real product audio; Qwen remains
+   an optional heavy research record and is not in the product catalog.
+6. Re-verify model licenses/provenance at release updates and add representative disk/RAM/thermal measurements.
+7. Never silently force the decoder language, translation task, or a supposedly automatic model choice.
 
 ## Reproduce
 

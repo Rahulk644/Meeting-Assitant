@@ -93,7 +93,8 @@ What not to copy:
 
 Decision for My Assistant:
 
-- Use a **curated catalog** with Automatic as the default and no more than four recommended user-facing jobs.
+- Use a **curated catalog** with Whisper Large v3 Turbo as the recommended default and no more than four
+  highlighted user-facing jobs.
 - Keep exact engine, quantization, and custom model controls under Advanced.
 - Preserve the user's 10-minute default unload setting, add an immediate **Unload now** action, and show whether a model is currently resident.
 - Save the captured audio before transcription begins so a failed model run can be retried with another provider without asking the user to repeat the dictation.
@@ -222,22 +223,23 @@ Open-source reference: [Meetily repository](https://github.com/Zackriya-Solution
 
 ## Curated speech catalog decision
 
-The simple picker should expose jobs, not a wall of model names:
+The shipped picker exposes one understandable model library with job-oriented labels, exact size, abilities,
+and model-specific settings. It does not auto-rank untested hardware or claim universal quality:
 
 | User-facing job | Initial engine | Status before shipping |
 |---|---|---|
-| Automatic (recommended) | chooses using OS, locale, measured quality, memory, latency, and power | hardware profiler plus benchmark required |
-| System — Fast and light | Apple SpeechAnalyzer on macOS 26+ | implement availability/asset/fallback bridge; pass our dictation and meeting benchmark |
-| Worldwide balanced | Whisper Large v3 Turbo | current baseline; preserve |
-| Live English | Parakeet Unified EN 0.6B | integrate and benchmark on supported Macs |
-| Live multilingual | Nemotron 3.5 ASR Streaming 0.6B | integrate as preview; benchmark languages and thermal cost |
-| Highest accuracy | Whisper Large v3 | powerful-Mac option; require a measured quality gain |
+| Worldwide balanced | Whisper Large v3 Turbo | shipped recommended default |
+| Fast / accurate English | Parakeet Unified EN 0.6B | shipped user-selectable |
+| Live English | Nemotron Speech Streaming EN 0.6B | shipped user-selectable |
+| Live multilingual | Nemotron 3.5 ASR Streaming 0.6B | shipped user-selectable; 28-language local build |
+| English speed tiers | Whisper Tiny / Base / Small / Medium English | shipped user-selectable |
+| Translate to English | Whisper Medium multilingual Q5 | shipped; best current local translation benchmark |
+| Maximum Whisper quality | Whisper Large v3 Q5 | shipped powerful-Mac option |
+| Roman Hinglish | Oriserve Apex / Prime | shipped user-selectable; Apex is the faster recommended Hinglish option |
 
-SpeechAnalyzer becomes the first candidate on supported macOS 26 machines because it adds no model weight to
-the app and runs outside its memory space. Whisper remains the worldwide and older-OS safety net because it
-covers 99 languages. Parakeet Unified is an English streaming specialist. Nemotron 3.5 is the promising
-multilingual streaming path, but its macOS runtime, language quality, memory, and battery cost must pass our
-own test set before it can replace Whisper automatically.
+SpeechAnalyzer remains a future system option on supported macOS 26 machines. Whisper remains the worldwide
+and older-OS safety net. No model is silently auto-selected: the user downloads and tests what works for their
+voice and Mac, while the product preserves a conservative recommended default.
 
 Primary model references: [Apple SpeechAnalyzer](https://developer.apple.com/documentation/speech/speechanalyzer), [Whisper Large v3 Turbo](https://huggingface.co/openai/whisper-large-v3-turbo), [Parakeet Unified EN](https://huggingface.co/nvidia/parakeet-unified-en-0.6b), [Nemotron 3.5 ASR](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b), and [Parakeet TDT v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3).
 
@@ -272,8 +274,9 @@ shipped/preview truth remains in `PRODUCT_RELEASE_MATRIX.md`.
    finalized-result handling, and a transparent Whisper fallback.
 2. Build a versioned benchmark corpus for short dictation, punctuation/casing, accents, code-switching,
    far-field speech, long files, and consented two-participant meeting audio.
-3. Implement signed model manifests, verified resumable downloads, removal, and disk/RAM warnings.
-4. Add Parakeet Unified EN and Nemotron 3.5 behind benchmark gates.
+3. **Implemented:** revision-pinned catalog, verified resumable downloads, cancellation, selection, removal,
+   partial recovery, model-specific settings, and size/RAM guidance.
+4. **Implemented:** Parakeet Unified EN, Nemotron Speech Streaming EN, and Nemotron 3.5 are user-selectable.
 5. Implement Speech providers separately from Intelligence providers.
 6. Launch Speech BYOK with Groq and OpenAI first; add a specialist such as Deepgram only after the contract is proven.
 7. Launch Intelligence BYOK with OpenAI, Anthropic, Gemini, Groq, Cerebras, and custom OpenAI-compatible HTTPS/loopback endpoints.

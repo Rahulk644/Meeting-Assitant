@@ -38,6 +38,7 @@ const CAPABILITIES = Object.freeze({
   recordingNotice:           { state: "hidden", verification: "supported-chat proof and duplicate prevention required" },
 
   dictationSystem:           { state: "shipped", verification: "native recorder and paste path" },
+  curatedSpeechPicker:       { state: "shipped", verification: "pinned catalog, verified lifecycle, selection routing, and production UI contract" },
   customVocabulary:          { state: "shipped", verification: "vocabulary config route" },
   languagePunctuation:       { state: "shipped", verification: "dictation config application" },
   clipboardBehavior:         { state: "shipped", verification: "native clipboard modes" },
@@ -57,7 +58,7 @@ const CAPABILITIES = Object.freeze({
   automaticMeetingDetection: { state: "shipped", verification: "recording gate config" },
   deeperMeetingReasoning:    { state: "shipped", verification: "summary request option" },
   transcriptionLanguage:     { state: "shipped", verification: "capture config handler" },
-  translation:               { state: "blocked", verification: "translation-capable speech model and FLEURS gate required" },
+  translation:               { state: "shipped", verification: "capability-gated Whisper translation task and incompatible-model fail-closed routing" },
   videoRecording:            { state: "shipped", verification: "screen-recording mode handler" },
   meetingTemplates:          { state: "shipped", verification: "summary prompt templates" },
   aiProvider:                { state: "shipped", verification: "local and OpenAI-compatible summary path" },
@@ -129,7 +130,7 @@ const SETTING_CAPABILITY = Object.freeze({
   appearance: "appearance", accent: "accent", start_login: "startupBehavior", start_hidden: "startupBehavior",
   stealth: "screenShareInvisibility", permissions: "permissions", version: "updater", show_tray: "trayVisibility",
   overlay_enabled: "dictationOverlay", overlay_pos: "dictationOverlay", dict_enabled: "dictationSystem",
-  push_to_talk: "dictationSystem", dict_lang: "languagePunctuation", punctuation: "languagePunctuation",
+  push_to_talk: "dictationSystem", speech_models: "curatedSpeechPicker", dict_lang: "languagePunctuation", punctuation: "languagePunctuation",
   clipboard: "clipboardBehavior", custom_vocab: "customVocabulary", dict_sound: "soundVolume", volume: "soundVolume",
   sc_start: "dictationShortcut", sc_cancel: "dictationShortcut", wa_selection: "writingSettings",
   wa_noneditable: "writingSettings", wa_translate_lang: "writingSettings", wa_modes: "writingSettings",
@@ -157,7 +158,7 @@ const PRODUCTION_SETTINGS = Object.freeze(Object.entries(SETTING_CAPABILITY)
   .filter(([, cap]) => CAPABILITIES[cap].state === "shipped").map(([id]) => id));
 const HANDLED_SETTINGS = Object.freeze([
   "appearance", "accent", "stealth", "permissions", "show_tray", "overlay_enabled", "overlay_pos",
-  "dict_enabled", "push_to_talk", "dict_lang", "punctuation", "clipboard", "custom_vocab", "dict_sound",
+  "dict_enabled", "push_to_talk", "speech_models", "dict_lang", "punctuation", "clipboard", "custom_vocab", "dict_sound",
   "volume", "sc_start", "sc_cancel", "live_indicator", "auto_detect", "deeper", "trans_lang",
   "translate_en", "screen_rec", "templates", "mtg_model", "unload_model", "whisper_idle_minutes",
 ]);
