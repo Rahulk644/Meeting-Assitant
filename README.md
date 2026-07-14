@@ -122,10 +122,10 @@ Every meeting is saved to `data/meetings/*.json` (on-device, git-ignored). Open 
 for an AI **summary + action items**, and to **ask questions** about it. Rename a meeting inline. The
 model is pluggable across three tiers (Settings → *AI Model*):
 
-- **Local** *(default, private)* — **Gemma 4 E2B** (text-only) via **LiteRT-LM** on the Apple GPU. It runs
-  at *effective-2B* (**~1 GB RAM**, 2.4 GB disk), so it stays light even on an 8 GB Mac — a plain GGUF
-  loads the full ~5 B params and can hang. `setup.sh` installs it; the app **starts it on demand** (first
-  summary/ask) and **unloads it when idle**, so it never competes with Whisper for RAM during a call.
+- **Local** *(private, optional in this beta)* — **Gemma 4 E2B** (text-only) via **LiteRT-LM** on the Apple
+  GPU. It runs at *effective-2B* (**~1 GB RAM**, 2.4 GB disk), starts on demand, and unloads when idle. The
+  source setup installs it, but the current DMG does **not** yet provide an in-app Intelligence-model
+  installer; a clean beta Mac must use a configured BYOK provider for notes until that flow ships.
 - **API key** — bring your own, any OpenAI-compatible provider (Groq / OpenAI / Cerebras …).
 - **Cloud** — hosted (Pro), later.
 
@@ -144,21 +144,37 @@ survives a hard crash (playable up to the last fragment). Whisper and the LLM ar
 only when needed, unloaded when idle) and run on the **Apple GPU (Metal + flash-attention)** — so nothing
 heavy sits resident between or during calls beyond what's actively transcribing.
 
-## Requirements
+## Install the beta
+
+The beta tester experience does not require Terminal, Xcode, Homebrew, Node, or Rust:
+
+1. Open the provided DMG and drag **My Assistant** to **Applications**.
+2. Try to open it once. If macOS blocks it, click **Done**, then open **System Settings → Privacy &
+   Security → Open Anyway**, authenticate, and confirm **Open**.
+3. Choose one speech model in the first-run library. Downloads range from about 44 MB to 1.1 GB and are
+   verified before use.
+4. Grant only the permissions needed by the feature you use: Microphone for dictation, System Audio for
+   remote meeting participants, Accessibility for paste and speaker evidence, and Screen Recording only
+   for optional video.
+
+This extra Gatekeeper step is unavoidable for a downloadable app without an Apple Developer ID and
+notarization. It occurs once per installed build identity; the DMG itself remains a normal drag-to-Applications
+installer.
+
+## Build from source
+
+### Requirements
 
 - **macOS 14.4+** on Apple Silicon — meeting audio is captured with Core Audio process taps, which need the
   macOS **14.2+ SDK** (`meeting-tap` builds with `-target …14.4`). Update Command Line Tools if
   `xcrun --show-sdk-version` reports < 14.
 - Xcode Command Line Tools (`xcode-select --install`), [Homebrew](https://brew.sh), CMake, Node, Rust ([rustup](https://rustup.rs)) — `setup.sh` builds the transcription engine from source with CMake
 
-## Install & run the app
-
 ```bash
-./setup.sh                                          # one-time: build transcribe.cpp + LiteRT-LM + models
-cd desktop && npm install                           # one-time: the Tauri CLI
-npm run build                                       # build + sign "My Assistant.app" (signingIdentity in tauri.conf)
-./make-dmg.sh                                        # → a drag-to-install My_Assistant_0.1.0-beta.1_arm64.dmg
-cp -R "src-tauri/target/release/bundle/macos/My Assistant.app" /Applications/   # (or install from the .dmg)
+./setup.sh                              # one-time native engines + optional local Intelligence model
+cd desktop && npm install               # one-time deterministic desktop tooling
+cd .. && ./script/build_and_run.sh --verify
+./script/build_release_dmg.sh            # tested, signed beta DMG
 ```
 
 Then **double-click "My Assistant.app"**. It asks for macOS permissions **only as each feature needs them**,
@@ -245,7 +261,8 @@ packaged `.app` gets its own. Flags pass through (`--app all`, `--mic off`, `--m
 | `meeting-state/meeting-state.swift` | AX layer: speaker names + in-meeting / mute / share |
 | `data/meetings/` | saved history + `rec/` screen recordings (git-ignored, on-device) |
 
-The on-device LLM (LiteRT-LM + Gemma 4 E2B) is installed by `setup.sh` into `~/.litert-lm` — not in the repo.
+The optional on-device LLM (LiteRT-LM + Gemma 4 E2B) is installed by the source-only `setup.sh` into
+`~/.litert-lm`—not in the repo or DMG. An in-app local Intelligence installer remains release work.
 
 ## Design notes
 
@@ -310,11 +327,14 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 
 **Next**
 
-- [ ] **Real-time Copilot** — in-call coaching in an always-on **stealth** overlay (the keystone)
-- [ ] **Platform adapter validation matrix** — real two-person tests for every advertised native/browser/chat app and version
-- [ ] **audio in screen recordings**; **launch-at-login** + folder pickers (need Tauri plugins)
-- [ ] **Cloud Speech provider API keys** — Groq / OpenAI / Deepgram / ElevenLabs with the same capability contract; keep Speech separate from meeting-note Intelligence providers
-- [ ] The other modules — **Writing Assistant, Agents**
+- [ ] Close the physical Right-Command and real two-person platform acceptance matrices.
+- [ ] Add in-flight audio recovery, redacted diagnostics export, and a clean-Mac local Intelligence installer.
+- [ ] Measure every shipped speech model on representative Apple-silicon memory/latency/thermal profiles.
+- [ ] Add cloud Speech as a separate provider contract, beginning with Groq and OpenAI.
+- [ ] Add calendar sync and hardened platform adapters before Live Coach or cross-platform expansion.
+
+The ordered, compaction-safe backlog is maintained in
+[`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md#known-release-blockers-and-follow-ups), not duplicated here.
 
 ## License
 

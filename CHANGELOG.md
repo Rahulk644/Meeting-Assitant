@@ -54,6 +54,11 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ### Fixed
 
+- Meetings without screen recordings now show a platform identity thumbnail in both the shipped app and the
+  developer browser harness instead of a broken image in the harness.
+- The release registry now covers every capability named by the release matrix, with a regression test that
+  prevents documentation and production gating from drifting apart.
+- Rust now passes a warnings-denied Clippy gate, and CI enforces it.
 - Rapid second-press dictation now transitions to Transcribing instead of remaining stuck on Listening.
 - The obsolete WebKit pill lifecycle that could crash after dictation has been removed.
 - Native helpers now terminate when the parent application exits unexpectedly.

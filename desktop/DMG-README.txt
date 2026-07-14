@@ -3,7 +3,7 @@ MY ASSISTANT 0.1.0 — APPLE SILICON BETA
 Requirements
 • Apple Silicon Mac (M1 or newer)
 • macOS 14.4 or newer
-• About 900 MB free for the on-device speech model downloaded on first use
+• Up to 2 GB free for the on-device speech model you choose on first use
 
 Install
 1. Drag My Assistant into Applications.
@@ -17,7 +17,7 @@ On older macOS versions, Control-clicking My Assistant in Applications and choos
 the same one-time approval directly. If it does not, use Privacy & Security → Open Anyway above.
 
 First use
-• Download the speech model when prompted.
+• Choose and download a speech model when prompted (about 44 MB–1.1 GB).
 • Grant Microphone permission for your voice.
 • Grant System Audio Recording for other meeting participants.
 • Grant Accessibility for system-wide dictation paste, meeting-window detection, and speaker names.

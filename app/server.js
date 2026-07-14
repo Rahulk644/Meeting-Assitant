@@ -12,6 +12,7 @@ const { Gate } = require("./gate.js");
 const { injectMultipartFields } = require("./multipart.js");
 const { releasePayload } = require("./release.js");
 const { DEFAULT_MODEL_ID, SPEECH_MODELS, speechModel } = require("./speech-models.js");
+const { appThumbnailSvg } = require("./thumbnail.js");
 const {
   applyCorrection,
   canGenerateNotes,
@@ -802,16 +803,21 @@ http.createServer((req, res) => {
     });
     return;
   }
-  const mthumb = req.url.match(/^\/api\/meetings\/([\w-]+)\/thumb$/); // a frame of the screen recording (generated once, cached)
+  const mthumb = req.url.match(/^\/api\/meetings\/([\w-]+)\/thumb$/); // recording frame, then platform tile
   if (mthumb && req.method === "GET") {
     const m = readMeeting(mthumb[1]);
-    if (!m || !m.video) { res.writeHead(404); return res.end(); }
+    if (!m) { res.writeHead(404); return res.end(); }
+    const fallback = () => {
+      res.writeHead(200, { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "private, max-age=86400" });
+      res.end(appThumbnailSvg(m.app));
+    };
+    if (!m.video) return fallback();
     const video = path.join(REC_DIR, m.video), thumb = video.replace(/\.\w+$/, ".jpg");
     const send = () => { res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" }); fs.createReadStream(thumb).pipe(res); };
     if (fs.existsSync(thumb)) return send();
-    if (!fs.existsSync(video)) { res.writeHead(404); return res.end(); }
+    if (!fs.existsSync(video)) return fallback();
     execFile(FFMPEG, ["-y", "-ss", "1", "-i", video, "-frames:v", "1", "-vf", "scale=480:-1", thumb], () => {
-      if (fs.existsSync(thumb)) send(); else { res.writeHead(404); res.end(); }
+      if (fs.existsSync(thumb)) send(); else fallback();
     });
     return;
   }

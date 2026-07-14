@@ -896,9 +896,7 @@ fn register_dict_hotkey(app: &AppHandle, spec: &HotkeySpec) -> bool {
         return true;
     } // unchanged → already live
     let gs = app.global_shortcut();
-    match gs.on_shortcut(sc.clone(), |_app, _scut, event| {
-        on_dict_hotkey(event.state())
-    }) {
+    match gs.on_shortcut(sc, |_app, _scut, event| on_dict_hotkey(event.state())) {
         Ok(_) => {
             let mut cur = DICT_HOTKEY.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(prev) = cur.take() {
@@ -1193,7 +1191,7 @@ fn perm_status() -> PermStatus {
     {
         PermStatus {
             accessibility: macos_accessibility_client::accessibility::application_is_trusted(),
-            screen_recording: core_graphics::access::ScreenCaptureAccess::default().preflight(),
+            screen_recording: core_graphics::access::ScreenCaptureAccess.preflight(),
         }
     }
     #[cfg(not(target_os = "macos"))]

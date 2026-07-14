@@ -16,11 +16,13 @@ const CAPABILITIES = Object.freeze({
 
   meetingRecord:             { state: "shipped", verification: "manual and automatic gate tests" },
   automaticRecording:        { state: "shipped", verification: "recording gate defaults and call-edge tests" },
+  meetingDetectedNotification:{ state: "shipped", verification: "Core Audio rising-edge and native notification tests" },
   liveTranscript:            { state: "shipped", verification: "SSE transcript path" },
   callPanel:                 { state: "shipped", verification: "recording-state UI contract" },
   scratchpad:                { state: "shipped", verification: "meeting notes persistence route" },
   pauseResumeStop:           { state: "shipped", verification: "recording gate transition tests" },
   meetingLibrary:            { state: "shipped", verification: "meeting summary/list domain tests" },
+  meetingThumbnails:         { state: "shipped", verification: "recording-frame and platform-fallback endpoint tests" },
   meetingRename:             { state: "shipped", verification: "title persistence endpoint" },
   meetingExport:             { state: "shipped", verification: "client Markdown export handler" },
   meetingSummary:            { state: "shipped", verification: "summary endpoint and retry states" },
@@ -38,6 +40,7 @@ const CAPABILITIES = Object.freeze({
   recordingNotice:           { state: "hidden", verification: "supported-chat proof and duplicate prevention required" },
 
   dictationSystem:           { state: "shipped", verification: "native recorder and paste path" },
+  appleSpeechAnalyzer:       { state: "blocked", verification: "native adapter, asset lifecycle, fallback, and benchmark required" },
   curatedSpeechPicker:       { state: "shipped", verification: "pinned catalog, verified lifecycle, selection routing, and production UI contract" },
   customVocabulary:          { state: "shipped", verification: "vocabulary config route" },
   languagePunctuation:       { state: "shipped", verification: "dictation config application" },

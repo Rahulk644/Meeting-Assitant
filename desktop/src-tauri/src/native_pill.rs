@@ -150,7 +150,7 @@ impl Pill {
                     .setStringValue(&NSString::from_str("This usually takes a moment"));
                 self.timer.setHidden(true);
             }
-            DictFeedback::Idle => return,
+            DictFeedback::Idle => (),
         }
     }
 

@@ -14,8 +14,15 @@ terms continue to apply.
 
 ## Models and optional tools
 
-- **Whisper speech models:** downloaded separately, not stored in Git or bundled in the DMG. The selected
-  model's upstream license and model-card terms apply.
+- **Whisper speech models:** Apache-2.0; downloaded separately from revision-pinned Handy conversions of
+  OpenAI Whisper checkpoints, not stored in Git or bundled in the DMG.
+- **NVIDIA Parakeet Unified EN:** CC-BY-4.0; downloaded separately through the revision-pinned local-runtime
+  conversion named by the model catalog.
+- **NVIDIA Nemotron Speech Streaming EN and Nemotron 3.5 ASR Streaming:** Open Model Development and
+  Weights License 1.1 (OpenMDW-1.1); downloaded separately through the revision-pinned local-runtime
+  conversions named by the catalog.
+- **Oriserve Whisper Hindi2Hinglish Apex and Prime:** Apache-2.0 model-card terms; downloaded separately
+  through the revision-pinned GGML artifacts named by the catalog.
 - **Gemma / LiteRT-LM:** optional external installations, not bundled. Google's applicable model and tool
   terms apply to the user's installation.
 - **FFmpeg:** invoked from the host system for thumbnails when present; it is not bundled.

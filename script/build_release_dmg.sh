@@ -26,7 +26,14 @@ python3 -m json.tool "$ROOT/acceptance/cases.json" >/dev/null
 "$ROOT/script/benchmark_speech.sh" test
 
 (cd "$ROOT/app" && npm test)
-(cd "$ROOT/desktop/src-tauri" && cargo test --locked)
+(cd "$ROOT/desktop" && npm audit)
+(
+  cd "$ROOT/desktop/src-tauri"
+  cargo fmt --check
+  cargo clippy --locked --all-targets -- -D warnings
+  cargo check --locked
+  cargo test --locked
+)
 
 xcrun swiftc -O -target arm64-apple-macos14.4 "$ROOT/stt/meeting-tap.swift" -o "$ROOT/stt/meeting-tap" \
   -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework CoreImage \

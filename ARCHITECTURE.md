@@ -90,9 +90,9 @@ These were expensive to learn. Do not re-litigate them.
    on whole utterances the output is clean and identical to Handy.
 2. **Language and translate are two independent knobs.** `language` = *detection* (default `auto`, because
    the primary user speaks Hindi + English); `translate` = a separate decoder task. Automatic is preserved
-   end-to-end and must never be rewritten to English. Translation defaults off and is blocked in production
-   while Turbo is the installed model because Turbo was not trained for translation. Re-enable it only when
-   a qualified translation-capable model has its own install/routing/removal lifecycle.
+   end-to-end and must never be rewritten to English. Translation defaults off and appears only while a
+   qualified translation-capable model (currently Whisper Medium multilingual or Large v3) is active. Turbo
+   and every other incompatible model fail closed in both the UI and Rust service.
 3. **Anti-hallucination is temperature-0, not a VAD prefilter.** A Silero VAD prefilter was removed — it
    *degraded* clean speech (dropped onsets, stripped punctuation) and only ever masked the chunking bug.
    The fluent garbage on noise/silence comes from Whisper's **temperature fallback** escalating on
@@ -305,13 +305,13 @@ locations — so it runs when moved off the repo:
   `webui/`, **not** `app/` — a top-level `app/` resource collides with the crate's own `app` binary during
   Tauri's dev staging (EEXIST).
 - **Writable state → `~/Library/Application Support/My Assistant/`** (the bundle is read-only): saved
-  meetings + recordings under `data/`, the model under `models/`. Secrets are stored in macOS Keychain,
+  meetings + recordings under `data/`, speech models under `models/`. Secrets are stored in macOS Keychain,
   transient audio lives in a private `0700` temp directory, and saved files are written with owner-only
   permissions.
-- **The model is NOT bundled** (845 MB). The server resolves it across `[models dir → repo → ./run.sh
-  layout]`; if it's absent the UI **asks first** (Handy's way — never silent): `GET /api/model/status` → a
-  first-run prompt → `POST /api/model/download` streams the GGUF from Hugging Face into `models/` with
-  progress over SSE.
+- **Speech models are NOT bundled** (about 44 MB–1.1 GB each). The server resolves verified models across
+  `[models dir → legacy repo layout]`; if none is present the UI **asks first** (never silent):
+  `GET /api/model/status` → the model library → `POST /api/model/download` streams the selected artifact
+  from a revision-pinned Hugging Face URL into `models/`, with progress over SSE and cancel/resume support.
 - **The `.dmg`** is built by `desktop/make-dmg.sh` (plain `hdiutil`, a drag-to-Applications installer) —
   **not** Tauri's DMG step, whose create-dmg fork always runs a Finder AppleScript that fails in any
   non-interactive shell. So `bundle.targets` is `["app"]`: `npm run build` makes the signed `.app`,

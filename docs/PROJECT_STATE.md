@@ -23,6 +23,9 @@ chronological work log.
   are separate from the app and the active model controls languages, translation, output, and preprocessing.
 - **Cloud speech, calendar sync, updates, accounts, teams, sharing, and billing:**
   not shipped.
+- **Meeting Intelligence:** Groq, OpenAI, Cerebras, and custom OpenAI-compatible BYOK paths are shipped.
+  The optional local Gemma/LiteRT-LM runtime works when installed by source setup, but the DMG has no in-app
+  Intelligence-model installer yet; do not describe local notes as clean-install ready.
 
 The exact visibility contract is [`PRODUCT_RELEASE_MATRIX.md`](../PRODUCT_RELEASE_MATRIX.md). Product and
 provider sequencing lives in [`PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md). Competitive decisions live in
@@ -83,14 +86,15 @@ macOS Keychain.
 ## Release status
 
 The current automated-verified artifact is
-`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,585,852 bytes), SHA-256
-`a6260f8929faa0fedd28ef5ac45c1dbd68c15e708ce8de5b8774f7952cdc4533`. The app bundle is 28,260 KiB.
-After a short post-launch idle, the app and both meeting helpers measured 39 MiB aggregate physical footprint
-and 44,208 KiB aggregate RSS; no speech or LLM process was resident. Verification is 27/27 Node product tests,
-23/23 Rust tests, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, and passing transcribe-server,
-meeting-tap, and meeting-state self-tests. All 12 revision-pinned model endpoints returned the exact catalog
-content length. The DMG passed checksum and deep signature verification, carries the production model-picker
-and capability-gated Translation payload, contains no model/benchmark/transcript/source artifact, launched
+`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,586,155 bytes), SHA-256
+`9836452224f514765c7f8e7b4bd7d744d89de4dfc942b09322d8a3198a4b20c7`. The app bundle is 28,260 KiB.
+After a short post-launch idle, the app and both meeting helpers measured about 38.2 MiB aggregate physical
+footprint and 49,600 KiB aggregate RSS; no speech or LLM process was resident. Verification is 29/29 Node
+product/release/parity tests, 23/23 Rust tests, warnings-denied Clippy, 17/17 speech/corpus/matrix tests, 3/3
+acceptance-runner tests, zero desktop npm vulnerabilities, and passing transcribe-server, meeting-tap, and
+meeting-state self-tests. All 12 revision-pinned model endpoints returned the exact catalog content length.
+The DMG passed checksum and deep signature verification, carries the production model picker and
+capability-gated Translation payload, contains no model/benchmark/transcript/source artifact, launched
 successfully, kept unauthenticated loopback access at 401, and rejected a forged Host at 403.
 
 This is suitable for a small explicitly informed beta group, subject to the documented **Privacy & Security
@@ -118,14 +122,18 @@ background updates cannot be made trustworthy until a separate updater signing-k
    Whisper Large v3 Turbo as the recommended default; never market proxy WER as human Hinglish accuracy.
 8. Add and benchmark macOS 26 SpeechAnalyzer as an optional system Speech adapter, retain the local catalog
    fallback, and separate future cloud Speech providers from meeting-note Intelligence providers.
+9. Add an in-app local Intelligence install/status/remove flow; until then, clean beta testers use BYOK for
+   meeting notes even though dictation and transcription remain fully local.
+10. The verified branch is ahead of `main` and the private repository has no PR, tag, or GitHub release.
+    Review/merge it before treating GitHub's default branch or community profile as current OSS truth.
 
 ## Resume protocol
 
 1. Read this file, `PRODUCT_RELEASE_MATRIX.md`, and `git status` before editing.
 2. Preserve unrelated working-tree changes and inspect the current branch before making release changes.
 3. Run `./script/prepare_web_assets.sh` before desktop checks/builds.
-4. Verify with `npm test` in `app/`, benchmark unit tests, `cargo check && cargo test` in
-   `desktop/src-tauri/`, native helper self-tests/builds, then the release build and DMG verification.
+4. Use `./script/build_release_dmg.sh` as the release gate; it owns Node, benchmark, Rust format/Clippy/check/test,
+   native helper, dependency audit, signing, build, and DMG verification.
 5. Launch only the absolute repo-built app path during testing. `/Applications/My Assistant.app` may be an
    older comparison build.
 6. Update this state page and the release matrix when product truth changes; keep historical detail in Git

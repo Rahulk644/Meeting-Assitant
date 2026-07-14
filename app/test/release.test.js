@@ -1,6 +1,8 @@
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   CAPABILITIES,
   PRODUCTION_SETTINGS,
@@ -43,4 +45,10 @@ test("every production-visible setting has an application handler", () => {
 test("every production-visible CTA has a functional handler", () => {
   const handled = new Set(HANDLED_CTAS);
   for (const id of PRODUCTION_CTAS) assert.ok(handled.has(id), `${id} needs a handler`);
+});
+
+test("every release-matrix capability is registered in the server-owned contract", () => {
+  const matrix = fs.readFileSync(path.join(__dirname, "..", "..", "PRODUCT_RELEASE_MATRIX.md"), "utf8");
+  const matrixKeys = new Set([...matrix.matchAll(/^\| `([^`]+)` \|/gm)].map((match) => match[1]));
+  for (const key of matrixKeys) assert.ok(CAPABILITIES[key], `${key} is missing from app/release.js`);
 });

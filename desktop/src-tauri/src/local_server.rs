@@ -1812,10 +1812,10 @@ fn model_status(shared: &Shared) -> Value {
     })
 }
 
-fn model_request(mut request: Request) -> Result<(Request, Value), (Request, String)> {
+fn model_request(mut request: Request) -> Result<(Request, Value), Box<(Request, String)>> {
     match read_json(&mut request) {
         Ok(body) => Ok((request, body)),
-        Err(error) => Err((request, error)),
+        Err(error) => Err(Box::new((request, error))),
     }
 }
 
@@ -1870,7 +1870,10 @@ fn sync_runtime_for_model(
 fn model_download(request: Request, shared: Arc<Shared>) {
     let (request, body) = match model_request(request) {
         Ok(value) => value,
-        Err((request, error)) => return json_response(request, 400, json!({"error":error})),
+        Err(error) => {
+            let (request, error) = *error;
+            return json_response(request, 400, json!({"error":error}));
+        }
     };
     let model = match requested_speech_model(&body) {
         Ok(model) => model,
@@ -2053,7 +2056,10 @@ fn run_model_download(
 fn model_select(request: Request, shared: Arc<Shared>) {
     let (request, body) = match model_request(request) {
         Ok(value) => value,
-        Err((request, error)) => return json_response(request, 400, json!({"error":error})),
+        Err(error) => {
+            let (request, error) = *error;
+            return json_response(request, 400, json!({"error":error}));
+        }
     };
     let model = match requested_speech_model(&body) {
         Ok(model) => model,
@@ -2089,7 +2095,10 @@ fn model_select(request: Request, shared: Arc<Shared>) {
 fn model_delete(request: Request, shared: Arc<Shared>) {
     let (request, body) = match model_request(request) {
         Ok(value) => value,
-        Err((request, error)) => return json_response(request, 400, json!({"error":error})),
+        Err(error) => {
+            let (request, error) = *error;
+            return json_response(request, 400, json!({"error":error}));
+        }
     };
     let model = match requested_speech_model(&body) {
         Ok(model) => model,
@@ -2140,7 +2149,10 @@ fn model_delete(request: Request, shared: Arc<Shared>) {
 fn model_cancel(request: Request, shared: Arc<Shared>) {
     let (request, body) = match model_request(request) {
         Ok(value) => value,
-        Err((request, error)) => return json_response(request, 400, json!({"error":error})),
+        Err(error) => {
+            let (request, error) = *error;
+            return json_response(request, 400, json!({"error":error}));
+        }
     };
     let requested = body.get("id").and_then(Value::as_str).unwrap_or("");
     let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());

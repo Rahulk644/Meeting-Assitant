@@ -8,21 +8,25 @@ vulnerability. For the engineering detail behind these claims, see [ARCHITECTURE
 
 - **On-device by default.** Audio capture, voice-activity detection, transcription (Whisper via
   [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) on the Apple GPU), and post-call
-  summarization (Gemma via LiteRT-LM) all run as local processes. **No bot joins your calls, and no audio
-  or transcript leaves the machine** in the default configuration.
+  summarization (when the optional Gemma/LiteRT-LM runtime has been installed) all run as local processes.
+  **No bot joins your calls, and no audio or transcript leaves the machine** while the local provider is
+  available and selected.
 - **No account, no telemetry.** There is no sign-in, no analytics, and no crash/usage reporting. The app
   makes no network request on its own beyond the two explicit, opt-in cases below.
 
 ## What can leave the machine (only when you opt in)
 
-1. **First-run model download.** On first launch, if the ~845 MB speech model isn't already present, the
-   app **asks before downloading** it from Hugging Face. Decline and nothing is fetched. Cloud speech
+1. **First-run model download.** On first launch, if no speech model is already present, the app asks the
+   user to choose a 44 MB–1.1 GB revision-pinned model before downloading it from Hugging Face. Decline and
+   nothing is fetched. Cloud speech
    transcription is not implemented in this beta, so the local model is required for dictation and meeting
    transcripts. Developers can run `./setup.sh` to fetch it separately.
 2. **Bring-your-own cloud model (optional).** If you select a cloud LLM in *Settings → AI Model*
    (Groq / OpenAI / Cerebras / custom), the **meeting text** you summarize or ask about is sent to that
    provider using **your** API key. This is the only path that transmits meeting content, and only to the
-   provider you choose. Keep the default **On-device** model selected to stay fully local.
+   provider you choose. Keep **On-device** selected to stay fully local; the current DMG does not yet install
+   that optional Intelligence runtime on a clean Mac, so summary/Ask will fail closed until it is installed or
+   a BYOK provider is configured.
 
 ## Where your data lives
 

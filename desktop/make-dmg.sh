@@ -7,7 +7,7 @@
 # installs identically. So `npm run build` bundles just the .app (bundle.targets = ["app"]), and this makes
 # the installer. Result: a self-contained .dmg — drag My Assistant to Applications.
 #
-# The model is NOT inside the .app (845 MB); on first launch the app asks to download it (Handy's way).
+# Speech models are not inside the app (about 44 MB–1.1 GB each); first launch asks the user to choose one.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

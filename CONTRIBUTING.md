@@ -22,7 +22,7 @@ Architecture and the macOS permission model live in [ARCHITECTURE.md](ARCHITECTU
 
 - macOS (the app links Core Audio / CoreGraphics / AppKit — it does not build on Linux).
 - Node ≥ 18 (uses the built-in `node:test` runner; no npm dependencies).
-- Rust stable + the Tauri CLI (`cargo install tauri-cli`), for the desktop shell.
+- Rust stable; the repository-pinned npm Tauri CLI is installed with `npm ci` in `desktop/`.
 - Xcode Command Line Tools and the macOS 14.4 SDK target for the Swift helpers.
 
 ## Build, run, test
@@ -34,15 +34,17 @@ cd app && npm start
 # Run the server test suite (pure modules: the recording gate, multipart splicing)
 cd app && npm test          # → node --test
 
-# Full desktop app
-cd desktop && npm run dev    # tauri dev
-cd desktop && npm run build  # tauri build
+# Full desktop app (single kill + build + launch entry point)
+./script/build_and_run.sh --verify
 
 # Preview the native dictation pill without recording audio
 ASSISTANT_PILL_PREVIEW=listening cargo run --manifest-path desktop/src-tauri/Cargo.toml
 
-# Type/borrow-check the Rust without a full build
-cd desktop/src-tauri && cargo check && cargo test
+# Rust quality gate without a full release build
+cd desktop/src-tauri
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo check --locked && cargo test --locked
 
 # Native helper logic/build checks after touching Swift or C++ capture code
 ./meeting-state/meeting-state --selftest
@@ -71,7 +73,7 @@ cd desktop/src-tauri && cargo check && cargo test
 ## Pull requests
 
 1. Add or update tests for any logic change (`cd app && npm test` must pass).
-2. `cargo check && cargo test` must pass for desktop changes.
+2. `cargo fmt --check`, Clippy with warnings denied, `cargo check`, and `cargo test` must pass for desktop changes.
 3. Update `PRODUCT_RELEASE_MATRIX.md` when a production capability changes state.
 4. Keep model weights, audio, consent mappings, annotations, transcript-bearing reports, screenshots, and
    human acceptance sessions outside Git. Commit only aggregate evidence with no speech text or identities.

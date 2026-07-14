@@ -32,17 +32,19 @@ Speech turns audio into a timestamped transcript. The simple picker is:
 - **On this Mac** — private/offline model choices; and
 - **Cloud API** — the user's provider key and explicit privacy disclosure.
 
-The initial curated local catalog is deliberately small:
+The shipped local catalog is deliberately curated. User-selectable means “available to try,” not “proven
+best on every Mac, language, and acoustic condition”:
 
 | Product label | Model family | Job | Release position |
 |---|---|---|---|
-| System — Fast and light | Apple SpeechAnalyzer / SpeechTranscriber | OS-managed on-device engine for supported locales on macOS 26+ | first new adapter; benchmark-gated Automatic candidate |
-| Global — Balanced | Whisper Large v3 Turbo, quantized | multilingual default, good speed/accuracy | current baseline |
-| Global — Most accurate | Whisper Large v3, quantized | difficult accents/audio on higher-spec Macs | benchmark before release |
-| Hinglish — Natural script candidate | Qwen3-ASR HiACC 0.6B, Q6 | natural Hindi-English code-switching plus strong clean English | current smoke leader; pinned `vad-gate` policy preserves context, but full/real-noise gates remain |
-| Hinglish — Roman candidate | Apex Whisper Hinglish, Q8 | Roman Hinglish typing | leads machine-derived proxy; pinned `vad-gate` policy, still requires human Roman references |
-| Europe — Fast | NVIDIA Parakeet TDT 0.6B v3, int8 | fast transcription across its 25 European languages | next local adapter |
-| Live multilingual | NVIDIA Nemotron 3.5 ASR Streaming 0.6B | low-latency research track | do not ship on Mac until a supported, measured runtime exists |
+| System — Fast and light | Apple SpeechAnalyzer / SpeechTranscriber | OS-managed on-device engine for supported locales on macOS 26+ | blocked pending adapter, asset lifecycle, fallback, and product benchmarks |
+| Worldwide — Balanced | Whisper Large v3 Turbo Q8 | multilingual everyday default | shipped recommended default |
+| Worldwide — Maximum Whisper | Whisper Large v3 Q5 | slower quality-first and English translation option | shipped explicit choice; powerful-Mac measurements pending |
+| English — Speed tiers | Whisper Tiny/Base/Small/Medium English Q8 | user-controlled size/quality trade-offs | shipped explicit choices |
+| English — Streaming specialists | Parakeet Unified EN and Nemotron Speech Streaming EN | fast English with timestamp-capable model families | shipped explicit choices; product benchmarks pending |
+| Multilingual — Streaming specialist | Nemotron 3.5 ASR Streaming | 28-language local runtime | shipped explicit choice; not auto-selected pending benchmarks |
+| Hinglish — Roman | Oriserve Apex Q8 and Prime | Roman Hinglish typing | shipped explicit choices; Apex leads the current machine-derived proxy |
+| Translate to English | Whisper Medium multilingual Q5 and Large v3 Q5 | separate translation decoder task | shipped only when a capable model is active |
 
 SpeechAnalyzer adds no model weight to the app, runs outside its memory space, and receives OS-managed model
 updates. It should be tried first by Automatic on macOS 26+ only after it passes our own dictation, accent,
@@ -50,16 +52,17 @@ code-switching, long-form, and meeting-audio benchmark for the selected locale. 
 back to Whisper without losing the captured audio. The current public English benchmark beats Whisper Small,
 not Whisper Large v3 Turbo or Parakeet, and must not be generalized beyond its test set.
 
-Parakeet is not the global default: its official v3 card covers 25 European languages. NVIDIA's current
-Nemotron 3.5 card reports training across 40 language-locales, but its supported production integration is
-NVIDIA hardware on Linux. Whisper remains the safe worldwide default on Apple Silicon until our own
-multilingual benchmark proves a replacement.
+Parakeet Unified EN is an English specialist, not a worldwide default. Nemotron 3.5 is exposed through the
+same local transcribe.cpp family used by Handy, but remains an explicit choice until our own representative
+Mac, language, noise, thermal, and long-session evidence supports a stronger recommendation. Whisper remains
+the safe worldwide default on Apple Silicon.
 
 The pinned speech qualification is in
 [`docs/SPEECH_MODEL_BENCHMARK.md`](docs/SPEECH_MODEL_BENCHMARK.md). Whisper completed three deterministic
 500-clip mixed-script runs with zero truncations and remains the shipped default. Qwen HiACC measured better
-mixed-script WER in two complete runs, but produced 13 partial outputs per run and is now a catalog option for
-research only: do not recommend, auto-select, bundle, or continue its promotion benchmark. Apex leads the
+mixed-script WER in two complete runs, but produced 13 partial outputs per run and is retained only as
+historical research evidence: do not add it to the user catalog, recommend, auto-select, bundle, or continue
+its promotion benchmark. Apex leads the
 machine-derived Roman proxy, but that score is not publishable without the prepared human Roman corpus being
 transcribed and independently reviewed. Whisper fine-tunes were not categorically rejected: Zero STT and
 Shuja improve their Whisper Medium control on mixed speech, but both regress English. These are engineering
@@ -219,28 +222,27 @@ Do not paywall bug fixes, privacy controls, updates, export, or a user's own API
 
 ### P0 — reliability foundation (current gate)
 
-- eliminate dictation crashes/stuck states and orphan helpers;
-- validate the native AppKit dictation pill under shortcut stress and full-screen/multi-display use;
-- add redacted rotating logs and Export diagnostics;
-- build migration, crash-recovery, shortcut stress, and clean-install tests;
-- establish signed release/update keys, changelog, CI matrix, and staged channels.
+- complete the physical Right-Command shortcut/focus/full-screen/multi-display matrix;
+- add bounded in-flight audio recovery and consented two-person platform acceptance;
+- add redacted rotating logs, a support ID, and previewable diagnostics export;
+- add a clean-Mac in-app local Intelligence install/status/remove lifecycle;
+- add clean-install/model-switch/resource measurements and an automated SBOM/dependency policy.
 
 ### P1 — curated engines
 
 - separate Speech and Intelligence settings/providers;
 - add the macOS 26 SpeechAnalyzer system adapter, benchmark it, and retain Whisper fallback on unsupported
   systems/locales or failed system-asset preparation;
-- add the model manifest, download manager, hardware scorer, resource coordinator, and benchmarks;
-- ship Groq/OpenAI Speech and curated local Whisper choices;
-- ship E2B/E4B local Intelligence recommendations and the first cloud Intelligence adapters;
-- fix first-run copy so a cloud LLM key is never presented as a substitute for a speech model.
+- add a hardware scorer and resource coordinator on top of the shipped verified local model lifecycle;
+- ship Groq/OpenAI Speech behind a contract separate from the existing meeting-note Intelligence providers;
+- make E2B/E4B local Intelligence recommendations evidence-based and installable without developer tools.
 
 ### P2 — excellent no-bot meetings
 
-- harden native and browser call adapters;
-- native meeting notification/menu-bar upcoming state;
-- live transcript/scratchpad panel and reliable auto-finalization;
-- diarization, name correction/mapping, templates, calendar sync, and local cross-meeting search;
+- harden native and browser call adapters and add per-meeting Off/Transcript/Audio/Video choices;
+- add menu-bar upcoming-meeting state, Calendar sync, and robust scheduled/impromptu metadata;
+- add audio muxing to optional screen recordings and bounded crash recovery;
+- add diarization, editable identity mapping, calendar sync, and local cross-meeting search;
 - real-call beta matrix across apps, languages, audio devices, sleep/wake, and permission recovery.
 
 ### P3 — writing and meeting intelligence

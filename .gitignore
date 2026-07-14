@@ -22,6 +22,7 @@ gtm-workflows/
 .DS_Store
 *.swp
 .codex/
+.playwright-cli/
 
 # Node
 node_modules/

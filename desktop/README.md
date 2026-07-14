@@ -41,9 +41,9 @@ survive rebuilds *and* the helpers ride the app's single grant instead of each d
 > once: `tccutil reset ScreenCapture com.myassistant.desktop` (repeat for `Microphone`, `Accessibility`),
 > then relaunch and grant in System Settings. After that it sticks across all future rebuilds.
 
-The DMG is portable and contains all application code and native helpers. The 845 MB speech model is not
-bundled; the app asks before downloading it on first use, verifies its exact size and SHA-256, and stores it
-under the current user's Application Support directory.
+The DMG is portable and contains all application code and native helpers. Speech models (about 44 MB–1.1 GB
+each) are not bundled; the app opens the model library on first use, verifies the selected artifact's exact
+size and SHA-256, and stores it under the current user's Application Support directory.
 
 ## Dev
 
