@@ -20,6 +20,14 @@ versions will use semantic versioning once the first public beta tag is cut.
 - Reproducible, revision- and hash-pinned speech qualification across mixed-script Hinglish, Roman Hinglish,
   ordinary English, Hindi-to-English translation, exact product preprocessing, and deterministic synthetic
   noise, with private-cache data boundaries and aggregate OSS evidence.
+- Resumable three-trial 500-clip speech matrices with model-order randomization, variance, hypothesis
+  stability, and an explicit per-model `vad-compact` / `vad-gate` audio policy.
+- Blind human Roman annotation packs, consent-attested field-noise capture/import tooling, and fail-closed
+  double-review validation; private audio and transcript data remain outside Git.
+- Machine-readable physical Right-Command and two-person meeting acceptance matrices with evidence-backed,
+  private session recording.
+- Sanitized full-set evidence from three complete 500-clip Whisper trials; transcript-bearing reports stay
+  private and the committed aggregate records hashes, variance, preprocessing, and workload caveats.
 
 ### Changed
 
@@ -34,6 +42,10 @@ versions will use semantic versioning once the first public beta tag is cut.
 - The DMG start-here guide now documents the current macOS Privacy & Security → Open Anyway flow.
 - Translation is hidden in production until a translation-capable model can be installed; the shipped Turbo
   model remains transcription-only.
+- Speech preprocessing is selected per model: the shipped Whisper path compacts VAD speech frames, while
+  Apex/Qwen candidates retain clip context and use VAD only as a silence gate.
+- Qwen HiACC remains available only as an optional research catalog entry. It is not recommended,
+  auto-selected, bundled, or on the promotion path; Whisper remains the shipped default.
 
 ### Fixed
 

@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "status": "whisper-full-repeat-complete-qwen-deferred-after-two",
+  "measured": "2026-07-14/2026-07-15",
+  "host": {
+    "platform": "macOS 26.5",
+    "machine": "Apple M1 arm64",
+    "memoryBytes": 8589934592,
+    "environment": "interactive developer workstation with other user workloads and memory pressure",
+    "performanceCaveat": "Accuracy and failure counts were deterministic. RTF and RSS are indicative, not isolated-lab claims."
+  },
+  "runtime": {
+    "transcribeCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5",
+    "transcribeServerSha256": "597089376dbc7204bd81901f8524c2eff1cc474fd2be4374bbe24640177abfb6",
+    "preprocessorSha256": "60ab648c6a3383154f977a4a0f57056a77c394412c704a24135ea19a51962ff1",
+    "qwenMaxNewTokens": 512,
+    "metadataCorrection": "Early private reports said 256 because the provenance parser read the removed line in a patch diff. The compiled source and runtime logs show 512; the parser now reads active source and has a regression test."
+  },
+  "catalog": {
+    "sha256AtRun": "5eb20f9fdf4d03411a300e282060b67fc9a982a53254db16e064d6a7e85fbdcd",
+    "sha256AtPublication": "6611a58ba5ea3db31568f525e454e0815b9c7c83cfeb6af6f2d8ff015cb44eb2",
+    "publicationChange": "Qwen product and benchmark disposition only; artifact and preprocessing pins are unchanged."
+  },
+  "corpus": {
+    "dataset": "Trelis/CoSHE-500",
+    "revision": "3da116bac98bfe5349f9b454d95a17a43483e1e8",
+    "manifestSha256": "b95e9a8f6255fed7ba0fd29979156378f225ef1618299dbf5987a331ef1597d9",
+    "parquetSha256": "b5201501cde4134b2bcb70151f2b97aa0daf8b0c117b9e6c1dc494c4c230c926",
+    "license": "CC-BY-NC-4.0",
+    "use": "evaluation-only; never training or redistribution",
+    "referenceStyle": "human natural mixed Devanagari and Latin",
+    "selection": {
+      "seed": 42,
+      "samples": 500,
+      "audioSeconds": 12710.2936
+    }
+  },
+  "measurement": {
+    "wer": "NFC case-folded word error rate preserving Indic combining marks",
+    "characterF2": "character n-gram surface similarity",
+    "memory": "peak resident set size of transcribe-server only",
+    "reportsWithTranscripts": "private benchmark cache only",
+    "trialOrder": [
+      {"trial": 1, "models": ["qwen-hiacc-hinglish-q6", "whisper-turbo-q8"]},
+      {"trial": 2, "models": ["whisper-turbo-q8", "qwen-hiacc-hinglish-q6"]},
+      {"trial": 3, "models": ["whisper-turbo-q8", "qwen-hiacc-hinglish-q6-stopped-after-29-of-500"]}
+    ]
+  },
+  "models": [
+    {
+      "id": "whisper-turbo-q8",
+      "artifact": {
+        "file": "whisper-large-v3-turbo-Q8_0.gguf",
+        "bytes": 886381824,
+        "sha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448"
+      },
+      "preprocessing": {
+        "policy": "vad-compact",
+        "manifestSha256": "a663afed63238494f1c59542babc53f1ce0be3e5cb3f80762a656358111b9c53",
+        "retainedAudioSeconds": 11553.312,
+        "retainedRatio": 0.908973
+      },
+      "completedTrials": 3,
+      "samplesPerTrial": 500,
+      "scriptSafeWer": {"min": 0.393124, "median": 0.393124, "max": 0.393124, "mean": 0.393124, "populationStdDev": 0.0},
+      "characterF2": {"min": 0.682453, "median": 0.682453, "max": 0.682453, "mean": 0.682453, "populationStdDev": 0.0},
+      "rtf": {"min": 0.1499, "median": 0.1639, "max": 0.1772, "mean": 0.163667, "populationStdDev": 0.011146},
+      "speedupRange": [5.64, 6.67],
+      "peakRssMiB": {"min": 959.4, "median": 964.0, "max": 987.4, "mean": 970.266667, "populationStdDev": 12.259781},
+      "truncatedSamplesPerTrial": 0,
+      "degenerateSamplesPerTrial": 8,
+      "hypothesisDisagreementSamples": 0
+    },
+    {
+      "id": "qwen-hiacc-hinglish-q6",
+      "artifact": {
+        "file": "qwen-hiacc-Q6_K.gguf",
+        "bytes": 690417824,
+        "sha256": "578ae3e81a56065045f18ec08899bc02bf484c98f06238b097368c2b91483afc"
+      },
+      "preprocessing": {
+        "policy": "vad-gate",
+        "manifestSha256": "17d15045ba5f9feda419f613c542422c79cf68a63d9c849dd404466c94143926",
+        "retainedAudioSeconds": 12710.2936,
+        "retainedRatio": 1.0
+      },
+      "completedTrials": 2,
+      "samplesPerTrial": 500,
+      "scriptSafeWer": {"min": 0.208812, "median": 0.208812, "max": 0.208812, "mean": 0.208812, "populationStdDev": 0.0},
+      "characterF2": {"min": 0.831967, "median": 0.831967, "max": 0.831967, "mean": 0.831967, "populationStdDev": 0.0},
+      "rtf": {"min": 0.1323, "median": 0.1478, "max": 0.1633, "mean": 0.1478, "populationStdDev": 0.0155},
+      "speedupRange": [6.12, 7.56],
+      "peakRssMiB": {"min": 1053.4, "median": 1120.85, "max": 1188.3, "mean": 1120.85, "populationStdDev": 67.45},
+      "truncatedSamplesPerTrial": 13,
+      "truncationReasonsPerTrial": {"repeatedTokenLoop": 11, "generationBudget": 2},
+      "degenerateSamplesPerTrial": 3,
+      "hypothesisDisagreementSamples": 0,
+      "disposition": "Catalog option only. Do not recommend, auto-select, bundle, or continue promotion benchmarking."
+    }
+  ],
+  "decision": {
+    "shippedDefault": "whisper-turbo-q8",
+    "qwen": "Optional research/catalog entry only by product decision; no third full trial and no promotion path.",
+    "humanRoman": "Blind 500-clip annotation pack is ready; human transcription and independent review remain required.",
+    "realNoise": "Field capture and double-review tooling is ready; consented cafe, wind, traffic, and clean recordings remain required.",
+    "promotion": "No new model is promoted. Physical Right-Command and two-person meeting acceptance also remain human gates."
+  }
+}

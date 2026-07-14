@@ -39,8 +39,8 @@ The initial curated local catalog is deliberately small:
 | System — Fast and light | Apple SpeechAnalyzer / SpeechTranscriber | OS-managed on-device engine for supported locales on macOS 26+ | first new adapter; benchmark-gated Automatic candidate |
 | Global — Balanced | Whisper Large v3 Turbo, quantized | multilingual default, good speed/accuracy | current baseline |
 | Global — Most accurate | Whisper Large v3, quantized | difficult accents/audio on higher-spec Macs | benchmark before release |
-| Hinglish — Natural script candidate | Qwen3-ASR HiACC 0.6B, Q6 | natural Hindi-English code-switching plus strong clean English | current smoke leader; requires model-specific no-VAD path and full/real-noise gates |
-| Hinglish — Roman candidate | Apex Whisper Hinglish, Q8 | Roman Hinglish typing | leads machine-derived proxy; requires human Roman references and no-VAD path |
+| Hinglish — Natural script candidate | Qwen3-ASR HiACC 0.6B, Q6 | natural Hindi-English code-switching plus strong clean English | current smoke leader; pinned `vad-gate` policy preserves context, but full/real-noise gates remain |
+| Hinglish — Roman candidate | Apex Whisper Hinglish, Q8 | Roman Hinglish typing | leads machine-derived proxy; pinned `vad-gate` policy, still requires human Roman references |
 | Europe — Fast | NVIDIA Parakeet TDT 0.6B v3, int8 | fast transcription across its 25 European languages | next local adapter |
 | Live multilingual | NVIDIA Nemotron 3.5 ASR Streaming 0.6B | low-latency research track | do not ship on Mac until a supported, measured runtime exists |
 
@@ -56,13 +56,14 @@ NVIDIA hardware on Linux. Whisper remains the safe worldwide default on Apple Si
 multilingual benchmark proves a replacement.
 
 The pinned speech qualification is in
-[`docs/SPEECH_MODEL_BENCHMARK.md`](docs/SPEECH_MODEL_BENCHMARK.md). With the bounded 512-token/repetition
-guard, Qwen HiACC Q6 leads the 24-clip natural mixed-script set at 22.31% WER with zero truncations and also
-passes the clean English smoke gate at 4.37%. Apex leads the machine-derived Roman proxy, but that score is
-not publishable without human Roman references. Whisper fine-tunes were not categorically rejected: Zero
-STT and Shuja improve their Whisper Medium control on mixed speech, but both regress English and remain far
-behind HiACC. These are engineering findings, not enough evidence to change the shipped default or expand
-the product catalog before full/repeated/real-noise and provider-lifecycle gates.
+[`docs/SPEECH_MODEL_BENCHMARK.md`](docs/SPEECH_MODEL_BENCHMARK.md). Whisper completed three deterministic
+500-clip mixed-script runs with zero truncations and remains the shipped default. Qwen HiACC measured better
+mixed-script WER in two complete runs, but produced 13 partial outputs per run and is now a catalog option for
+research only: do not recommend, auto-select, bundle, or continue its promotion benchmark. Apex leads the
+machine-derived Roman proxy, but that score is not publishable without the prepared human Roman corpus being
+transcribed and independently reviewed. Whisper fine-tunes were not categorically rejected: Zero STT and
+Shuja improve their Whisper Medium control on mixed speech, but both regress English. These are engineering
+findings, not enough evidence to change the shipped default before real-noise and provider-lifecycle gates.
 
 The first cloud speech adapters should be **Groq** (not xAI Grok) for hosted Whisper Large v3 Turbo/Large
 v3 and **OpenAI** for its transcription and diarization models. Add a realtime-specialist provider only

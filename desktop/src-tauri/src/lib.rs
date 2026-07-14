@@ -594,6 +594,7 @@ fn dictation_start() {
     });
     g.started = Some(Instant::now());
     drop(g);
+    log::info!("acceptance:right-command phase=listening generation={generation}");
     play("Tink");
     dict_feedback(DictFeedback::Listening, generation);
     emit_dstate("listening", generation);
@@ -621,6 +622,10 @@ fn dictation_stop_rec() {
         .unwrap_or(0);
     g.started = None;
     drop(g);
+    log::info!(
+        "acceptance:right-command phase=transcribing generation={} capturedMs={ms}",
+        rec.generation
+    );
     play("Pop"); // immediate stop cue (encode + transcription run on the thread below)
                  // Stop must be visible immediately. VAD/model startup happens on the worker and can take noticeable time;
                  // leaving the old "Listening" state up during that work makes a successful second tap look ignored.
@@ -652,6 +657,7 @@ fn dict_ui_idle(generation: u64) {
         // Keep the generation check and delivery atomic relative to a newer start.
         emit_dstate("idle", generation);
     }
+    log::info!("acceptance:right-command phase=idle generation={generation}");
     dict_feedback(DictFeedback::Idle, generation);
 }
 fn dictation_finish(mut rec: Recorder, ms: u64) {
@@ -662,11 +668,14 @@ fn dictation_finish(mut rec: Recorder, ms: u64) {
     } // stream fully stopped, buffer settled
     let rate = rec.rate.load(Ordering::Relaxed);
     let raw = std::mem::take(&mut *rec.samples.lock().unwrap());
-    let mono16k = speech_audio::resample_16k(&raw, rate);
-    let speech = speech_audio::vad_extract_speech(&mono16k); // Silero VAD: keep only speech → no hallucinated loop on silence
-                                                             // Acquire AFTER the VAD (per-clip, safe to run in parallel): serialize only the shared tail — the /tmp
-                                                             // WAV write, the upload, and the clipboard save/paste/restore — so overlapping finishes can't clobber
-                                                             // each other. Recover the guard on poison instead of panicking the finish thread.
+    // The active model owns its audio policy. Today this is the pinned Whisper Turbo record; a future model
+    // picker must switch the record and policy together instead of applying Whisper's compaction globally.
+    let speech =
+        speech_audio::preprocess_speech(&raw, rate, local_server::MODEL_PREPROCESSING_POLICY);
+    // Silero VAD: keep only speech → no hallucinated loop on silence
+    // Acquire AFTER the VAD (per-clip, safe to run in parallel): serialize only the shared tail — the /tmp
+    // WAV write, the upload, and the clipboard save/paste/restore — so overlapping finishes can't clobber
+    // each other. Recover the guard on poison instead of panicking the finish thread.
     let _finish = DICT_FINISH.lock().unwrap_or_else(|e| e.into_inner());
     let seq = DICT_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let wav = Path::new(&data_dir())
@@ -722,6 +731,10 @@ fn dictation_cancel() {
     let Some(mut rec) = rec else {
         return;
     };
+    log::info!(
+        "acceptance:right-command phase=cancelled generation={}",
+        rec.generation
+    );
     dict_ui_idle(rec.generation);
     std::thread::spawn(move || {
         rec.stop.store(true, Ordering::Relaxed);
@@ -963,6 +976,11 @@ fn start_modifier_tap() {
                         // act only when OUR modifier's device bit transitions
                         let down = (event.get_flags().bits() & mask) != 0;
                         if down != DICT_MOD_DOWN.swap(down, Ordering::Relaxed) {
+                            // Privacy-safe acceptance breadcrumb: no audio or transcript content. Physical
+                            // RC matrix runs can prove edge order/timing from the packaged app's disk log.
+                            log::info!(
+                                "acceptance:right-command modifier-edge down={down} mask={mask:#x}"
+                            );
                             // Marshal to the MAIN thread so start/stop runs on the same thread as the Carbon
                             // hotkey path (keeps CoreAudio/AppKit on main) and keeps this tap callback fast.
                             if let Some(app) = APP.get() {

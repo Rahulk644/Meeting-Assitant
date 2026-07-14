@@ -261,10 +261,10 @@ per-keypress helper spawn. The loop:
    accidental recording. (Why this is *not* a contradiction of the "no VAD prefilter" rule: see Transcription
    rule 3 — dictation feeds short clips, the meeting path feeds gated whole utterances.)
 4. **Transcribe** — the speech-only WAV POSTs to the authenticated **`POST /api/transcribe`** route (Rust
-   starts `transcribe-server` on demand, then streams the request to it). Dictation pins
-   **`language=en` + the transcribe task** (`translate=false`), matching Handy's *runtime* (its debug log
-   shows `task=Transcribe, language=en` even though its settings say `translate_to_english` — the translate
-   task only engages for a non-English source). This gives clean English on short mixed Hindi-English clips.
+   starts `transcribe-server` on demand, then streams the request to it). Dictation preserves the user's
+   configured language, including **`language=auto`**, and uses the transcribe task (`translate=false`).
+   Automatic must never be rewritten to English: doing so damages mixed Hindi-English recognition and
+   confuses a language-selection control with the separate translation task.
 5. **Paste** — synthesize **⌘V** as a `CGEvent` with an explicit Command flag (core-graphics), authorized
    by the **app's own Accessibility grant**. Use the raw keycode 9 (`kVK_ANSI_V`), never a character —
    character→keycode goes through HIToolbox, whose layout query is main-thread-only and aborts the app when

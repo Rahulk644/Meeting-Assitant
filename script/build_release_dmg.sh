@@ -16,6 +16,15 @@ security find-certificate -c "$SIGN_IDENTITY" >/dev/null 2>&1 || {
   exit 1
 }
 
+# Release preflight covers the product surfaces that Cargo and Node do not know about. Keep this in the
+# packaging path so a corpus/acceptance runner regression or malformed release metadata cannot ship merely
+# because the app itself compiles.
+bash -n "$ROOT/script/build_release_dmg.sh" "$ROOT/script/benchmark_speech.sh" "$ROOT/desktop/make-dmg.sh"
+python3 -m py_compile "$ROOT"/benchmarks/speech/*.py "$ROOT"/acceptance/*.py
+python3 -m json.tool "$ROOT/benchmarks/speech/catalog.json" >/dev/null
+python3 -m json.tool "$ROOT/acceptance/cases.json" >/dev/null
+"$ROOT/script/benchmark_speech.sh" test
+
 (cd "$ROOT/app" && npm test)
 (cd "$ROOT/desktop/src-tauri" && cargo test --locked)
 

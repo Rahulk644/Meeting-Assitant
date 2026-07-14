@@ -12,6 +12,8 @@ The dependency-free Node service remains a development harness; it is not shippe
 | `desktop/src-tauri/` | The packaged Rust service and Tauri shell: native AppKit pill/tray, global shortcut/event tap, capture, transcription orchestration, secure settings, and Keychain access. |
 | `meeting-state/` | Swift helper — speaker names + in-call detection via Accessibility. |
 | `stt/` | On-device speech-to-text (`transcribe.cpp` / `whisper.cpp` servers). |
+| `benchmarks/speech/` | Pinned model/data qualification, private corpus tooling, and aggregate evidence. |
+| `acceptance/` | Machine-readable physical-shortcut and real two-person meeting acceptance matrices. |
 
 Architecture and the macOS permission model live in [ARCHITECTURE.md](ARCHITECTURE.md); the privacy model in
 [SECURITY.md](SECURITY.md).
@@ -45,6 +47,9 @@ cd desktop/src-tauri && cargo check && cargo test
 # Native helper logic/build checks after touching Swift or C++ capture code
 ./meeting-state/meeting-state --selftest
 ./stt/transcribe-server/build.sh
+
+# Speech/corpus and acceptance runner unit tests (does not download models or private data)
+./script/benchmark_speech.sh test
 ```
 
 ## Code standards
@@ -68,4 +73,8 @@ cd desktop/src-tauri && cargo check && cargo test
 1. Add or update tests for any logic change (`cd app && npm test` must pass).
 2. `cargo check && cargo test` must pass for desktop changes.
 3. Update `PRODUCT_RELEASE_MATRIX.md` when a production capability changes state.
-4. Keep the diff focused; describe the *why* in the PR body, not in a new block comment.
+4. Keep model weights, audio, consent mappings, annotations, transcript-bearing reports, screenshots, and
+   human acceptance sessions outside Git. Commit only aggregate evidence with no speech text or identities.
+5. Never mark a physical/platform case passed from a synthesized key, prerecorded loop, helper self-test,
+   machine transcript, or machine transliteration.
+6. Keep the diff focused; describe the *why* in the PR body, not in a new block comment.

@@ -39,3 +39,6 @@ __pycache__/
 
 # Saved meetings (local history)
 /data/
+
+# Human acceptance evidence (screenshots, logs, meeting details) is private by default.
+/acceptance/sessions/

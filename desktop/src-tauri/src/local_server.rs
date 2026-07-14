@@ -33,6 +33,10 @@ const MODEL_NAME: &str = "whisper-large-v3-turbo-Q8_0.gguf";
 const MODEL_URL: &str = "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/whisper-large-v3-turbo-Q8_0.gguf";
 const MODEL_SHA256: &str = "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448";
 const MODEL_SIZE: u64 = 886_381_824;
+// Audio policy belongs to the installed model record. Keep it beside the pinned model artifact so a future
+// model picker cannot accidentally inherit Whisper's destructive pause compaction as a global default.
+pub(crate) const MODEL_PREPROCESSING_POLICY: crate::speech_audio::SpeechPreprocessingPolicy =
+    crate::speech_audio::SpeechPreprocessingPolicy::VadCompact;
 const KEYCHAIN_SERVICE: &str = "com.myassistant.desktop.ai-provider";
 const MAX_JSON_BODY: usize = 1_000_000;
 const MAX_AUDIO_BODY: usize = 64 * 1024 * 1024;

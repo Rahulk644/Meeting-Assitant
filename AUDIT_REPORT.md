@@ -1,4 +1,4 @@
-# My Assistant beta release audit — 14 July 2026
+# My Assistant beta release audit — 15 July 2026
 
 ## Release decision
 
@@ -15,8 +15,8 @@ defects. No real private meeting was recorded during verification.
 | Item | Final value |
 |---|---|
 | DMG | `desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` |
-| SHA-256 | `b1bcb51a3a126f9d7463f575db82f7fca5045d71af116197d2190dcc7f27709a` |
-| DMG size | 14,560,334 bytes (13.9 MiB) |
+| SHA-256 | `52fa95778894d1d2ff1e17bb1281e7b416c030ea00cab7e4dee9c02efb3181d1` |
+| DMG size | 14,562,559 bytes (13.9 MiB) |
 | Installed app | 28,200 KiB (27.5 MiB) |
 | Target | Apple Silicon, macOS 14.4+ |
 | Signing | self-signed, hardened runtime, no Apple Team ID or notarization |
@@ -28,12 +28,12 @@ beta install guide. Deep app signing and all nested helper signatures pass `code
 
 | Final settled background process | Physical footprint |
 |---|---:|
-| Rust/Tauri app | 33.0 MiB |
-| `meeting-tap` | 4.9 MiB |
-| `meeting-state` | 2.2 MiB |
-| **Aggregate** | **40.1 MiB** |
+| Rust/Tauri app | 31.5 MiB |
+| `meeting-tap` | 4.7 MiB |
+| `meeting-state` | 2.0 MiB |
+| **Aggregate** | **38.2 MiB** |
 
-The final hidden-window pass also reported 109,072 KiB (106.5 MiB) aggregate RSS. RSS includes shared and
+The final hidden-window pass also reported 116,704 KiB (114.0 MiB) aggregate RSS. RSS includes shared and
 mapped WebKit pages, so macOS `vmmap` physical footprint is the more useful memory-pressure measure. A cold
 visible-window pass can briefly be higher while WebKit initializes. `transcribe-server`, Whisper, and
 LiteRT-LM were not resident at idle. Whisper unload remains user-configurable and defaults to 10 minutes.
@@ -65,7 +65,10 @@ AppKit panel, not a hidden WebView.
 - Automatic speech language now reaches the decoder unchanged rather than being silently forced to English.
   Translation fails closed in production because the shipped Turbo model is transcription-only.
 - The Qwen research runtime uses a bounded 512-token budget with repeated-cycle termination; this is
-  benchmark infrastructure, not a silent change to the shipped Whisper default.
+  benchmark infrastructure, not a silent change to the shipped Whisper default. Qwen is now an optional
+  research/catalog entry only: it is not recommended, auto-selected, bundled, or on the promotion path.
+- Model-specific preprocessing is explicit. The installed Whisper record owns `vad-compact`; research
+  candidates cannot silently inherit it as a global filter.
 
 ## Security and privacy posture
 
@@ -106,24 +109,30 @@ provider are supported for meeting intelligence. These are LLM providers, not cl
 
 ## Verification completed
 
-- Rust tests: **19 passed**.
+- Rust tests: **20 passed**.
 - Node product/release tests: **25 passed**.
-- Speech benchmark unit tests: **8 passed**; catalog/result JSON, Python syntax, shell syntax, and diff hygiene passed.
+- Speech/corpus/matrix tests: **17 passed**; human acceptance-runner tests: **3 passed**. Catalog/result/case
+  JSON, Python syntax, shell syntax, Rust formatting/check, and diff hygiene passed.
 - Both Swift helpers compiled and passed self-tests; transcribe-server rebuilt from its pinned checkout and
   passed its protocol self-test.
-- `npm audit --omit=dev` and full `npm audit`: **0 vulnerabilities**.
+- Desktop `npm audit --omit=dev` and full `npm audit`: **0 vulnerabilities**. The developer-only Node
+  harness has no dependencies or lockfile, so npm audit is not applicable there.
 - Full optimized release build and stable self-signing: passed.
 - DMG read-only mount/layout, app signature, nested signatures, production capability payload, and bundle
   inventory: passed. Production contains Dictation and Meetings, blocks Translation, and contains no model,
   benchmark, transcript manifest, or source-weight artifacts.
+- Gatekeeper rejects the self-signed app as expected because it is not Apple-notarized; this is the documented
+  Privacy & Security → Open Anyway boundary, not a packaging/signature failure.
 - Deliberately restored stale WebKit cache: final per-launch URL loaded all core navigation.
 - Unauthenticated API, forged Host, and occupied-port behavior: 401, 403, and clean fail-closed exit.
 - Final packaged UI: Dictation, Meetings Beta, Settings, and Right Command visible.
 - Native pill listening state: visually inspected on the desktop.
 - Settled idle process/RSS inventory: captured above; no speech or local-LLM server resident.
-- Mixed-script Hinglish, Roman proxy, ordinary English, Hindi-to-English translation, exact product-VAD,
-  and deterministic synthetic wind/babble tracks completed. See `docs/SPEECH_MODEL_BENCHMARK.md`; these are
-  candidate-engineering results, not marketing accuracy claims.
+- Mixed-script Hinglish, Roman proxy, ordinary English, Hindi-to-English translation, exact per-model audio,
+  and deterministic synthetic wind/babble tracks completed. Whisper additionally completed three 500-clip
+  trials with identical accuracy, zero truncations, and zero cross-trial hypothesis disagreement. Qwen's
+  third run was deliberately stopped after the product decision to retain it only as an optional research
+  entry. See `docs/SPEECH_MODEL_BENCHMARK.md`; these are engineering results, not marketing accuracy claims.
 
 ## Remaining acceptance work
 
@@ -133,13 +142,15 @@ provider are supported for meeting intelligence. These are LLM providers, not cl
 2. Record a consented test meeting with two real participants in every advertised native, browser, and chat
    call app/version; verify remote audio, speaker attribution, live transcript, notification, stop detection,
    recovery, and summary.
-3. Add bounded recovery for audio that has not yet reached a transcript checkpoint at the instant of a hard
+3. Complete the prepared blind 500-clip Roman transcription and independent human review; then capture and
+   double-review real clean, café, wind, traffic, fan, echo, overlap, and silence fixtures.
+4. Add bounded recovery for audio that has not yet reached a transcript checkpoint at the instant of a hard
    crash.
-4. Add a user-triggered redacted diagnostic archive and support ID.
-5. Generate an SBOM and automate release evidence in CI.
-6. Implement the curated speech/LLM provider catalog and hardware-aware local-model recommendations described
+5. Add a user-triggered redacted diagnostic archive and support ID.
+6. Generate an SBOM and automate release evidence in CI.
+7. Implement the curated speech/LLM provider catalog and hardware-aware local-model recommendations described
    in `PRODUCT_STRATEGY.md`.
-7. Design an offline update-signing key, rollback protection, and update channel before enabling auto-update.
+8. Design an offline update-signing key, rollback protection, and update channel before enabling auto-update.
 
 Competitive findings and the clean-room product backlog are in
 [`docs/COMPETITIVE_INTELLIGENCE.md`](docs/COMPETITIVE_INTELLIGENCE.md). The durable current-state handoff is

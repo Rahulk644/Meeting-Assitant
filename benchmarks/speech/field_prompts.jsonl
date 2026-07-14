@@ -1,0 +1,24 @@
+{"id":"hf-001","mode":"dictation","text":"Kal client call ke baad action items bhej dena, aur Priya ko launch timeline confirm karne ke liye ping karna.","tags":["code-switch","names","actions"]}
+{"id":"hf-002","mode":"dictation","text":"Meri next meeting Tuesday ko four thirty PM par schedule karo, lekin agar design review clash kare toh Wednesday morning rakh dena.","tags":["code-switch","date","time"]}
+{"id":"hf-003","mode":"dictation","text":"Budget abhi twelve lakh ke aas paas hai, jisme se twenty percent research aur baaki engineering ke liye reserve hai.","tags":["code-switch","numbers","finance"]}
+{"id":"hf-004","mode":"dictation","text":"Please note karo ki beta build sirf Apple Silicon Macs ke liye hai aur Meetings feature abhi experimental hai.","tags":["code-switch","technical"]}
+{"id":"hf-005","mode":"dictation","text":"Mujhe lagta hai onboarding ka first step bahut confusing hai; user ko seedha microphone permission ka reason samjhana chahiye.","tags":["code-switch","product"]}
+{"id":"hf-006","mode":"dictation","text":"Invoice number MA dash two zero four eight ko review karke finance at example dot com par reply bhejna.","tags":["code-switch","alphanumeric","email"]}
+{"id":"hf-007","mode":"dictation","text":"Aaj café mein background kaafi loud hai, phir bhi transcript ko meri voice aur paas wali conversation alag rakhni chahiye.","tags":["code-switch","noise","diacritic"]}
+{"id":"hf-008","mode":"dictation","text":"Zoom, Google Meet, Microsoft Teams, Slack Huddles aur Discord sabka behavior same acceptance matrix se verify karna hai.","tags":["code-switch","brands"]}
+{"id":"hf-009","mode":"dictation","text":"Customer ne bola ki demo fast tha but summary accurate thi, so next time pace thoda slow rakhenge.","tags":["code-switch","informal"]}
+{"id":"hf-010","mode":"dictation","text":"Yaar ye shortcut kabhi kabhi instantly stop nahi hota, especially jab main Right Command do baar jaldi press karta hoon.","tags":["code-switch","informal","shortcut"]}
+{"id":"hf-011","mode":"dictation","text":"Quarterly target one point five crore hai aur current pipeline lagbhag eighty seven lakh ki hai.","tags":["code-switch","numbers","finance"]}
+{"id":"hf-012","mode":"dictation","text":"Search results ko relevance, recency aur source quality ke basis par rank karo, sirf popularity ke basis par nahi.","tags":["code-switch","technical"]}
+{"id":"hf-013","mode":"meeting","text":"Mera suggestion hai ki pehle local transcription reliable banayein, uske baad cloud providers aur team collaboration add karein.","tags":["code-switch","meeting"]}
+{"id":"hf-014","mode":"meeting","text":"Agar screen recording on hai toh thumbnail video frame se aana chahiye; warna meeting app ka icon use hoga.","tags":["code-switch","meeting","conditional"]}
+{"id":"hf-015","mode":"meeting","text":"Main is decision se agree karta hoon, bas rollback plan aur migration test release se pehle complete hona chahiye.","tags":["code-switch","meeting","technical"]}
+{"id":"hf-016","mode":"meeting","text":"Can you repeat the last metric? Mujhe latency samajh aayi, lekin peak memory aur settled memory ka difference clear nahi hua.","tags":["code-switch","meeting","question"]}
+{"id":"hf-017","mode":"meeting","text":"Next sprint mein three priorities hain: crash recovery, speaker attribution, aur real-world noisy audio evaluation.","tags":["code-switch","meeting","list"]}
+{"id":"hf-018","mode":"meeting","text":"Theek hai, main documentation update kar dunga aur tum release candidate ko do alag Macs par test kar lena.","tags":["code-switch","meeting","actions"]}
+{"id":"hf-019","mode":"free-speech","text":"Describe a recent product decision in natural Hinglish for thirty seconds, including one disagreement and the final action item.","tags":["spontaneous","meeting"]}
+{"id":"hf-020","mode":"free-speech","text":"Explain how you plan your workday in natural Hinglish, mentioning times, apps, and one unexpected change.","tags":["spontaneous","time"]}
+{"id":"hf-021","mode":"free-speech","text":"Tell a short café or travel story in natural Hinglish without reading a prepared sentence.","tags":["spontaneous","narrative"]}
+{"id":"hf-022","mode":"free-speech","text":"Give constructive feedback on a fictional app in natural Hinglish, with two strengths and two problems.","tags":["spontaneous","product"]}
+{"id":"hf-023","mode":"overlap-a","text":"I think launch Friday ko hona chahiye because customer feedback already positive hai.","tags":["overlap","speaker-a"]}
+{"id":"hf-024","mode":"overlap-b","text":"Wait, Friday risky hai because regression testing aur support guide abhi pending hain.","tags":["overlap","speaker-b"]}

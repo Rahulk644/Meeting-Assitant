@@ -23,12 +23,15 @@ Build the pinned native server once before benchmarking: `./stt/transcribe-serve
 ## Quick start
 
 ```sh
-# Verify/download the two initial candidates and the already-installed baseline.
+# Verify/download the Roman candidate and the already-installed baseline.
 ./script/benchmark_speech.sh prepare-models \
-  whisper-turbo-q8 apex-hinglish-q8 qwen3-asr-base-q6
+  whisper-turbo-q8 apex-hinglish-q8
 
 # Download the pinned public evaluation parquet and extract 24 deterministic clips.
 ./script/benchmark_speech.sh prepare-data
+
+# Extract all 500 evaluation clips for promotion runs.
+./script/benchmark_speech.sh prepare-full-data
 
 # Extract 24 aligned Hindi-speech / human-English FLEURS clips for translation evaluation.
 ./script/benchmark_speech.sh prepare-translation-data
@@ -47,9 +50,21 @@ Build the pinned native server once before benchmarking: `./stt/transcribe-serve
 # quantization, disk floor, and expected output hash; add --clean-source via convert_whisper.py if needed.
 ./script/benchmark_speech.sh convert-whisper shuja-whisper-medium-hinglish-q5
 
-# Run all three models through the shipped native server.
-./script/benchmark_speech.sh run \
-  whisper-turbo-q8,apex-hinglish-q8,qwen3-asr-base-q6,srota-hinglish-q6
+# Run the shipped baseline and Roman research candidate through the native server.
+./script/benchmark_speech.sh run whisper-turbo-q8,apex-hinglish-q8
+
+# Run a resumable three-trial qualification matrix. Each model is passed through the audio policy pinned in
+# catalog.json. Fewer than 500 samples / three trials fail closed unless --allow-smoke is passed directly to
+# run_matrix.py. Qwen remains an optional research entry and is deliberately absent from this command.
+./script/benchmark_speech.sh run-matrix whisper-turbo-q8
+
+# Build a blind 500-item annotation pack. Open the printed annotate.html locally; one person transcribes
+# and a different person reviews. No source transcript is exposed to the annotators.
+./script/benchmark_speech.sh create-roman-pack
+
+# Discover microphones and capture consented field recordings in the real environment. `capture-real`
+# forwards to capture_real_noise.py; see CORPUS_PROTOCOL.md for the required metadata and coverage.
+./script/benchmark_speech.sh capture-real list-devices
 
 # Fast unit checks for script-safe scoring.
 ./script/benchmark_speech.sh test
@@ -69,9 +84,19 @@ at 5 dB SNR. The manifest records the seed, method, source hashes, mix gain, and
 stress does not establish performance in a real café, street, or windy outdoor recording.
 
 The product-pipeline comparison invokes `preprocess_speech_manifest`, a Rust example that calls the exact
-`resample_16k` and `vad_extract_speech` functions used by the app. It is not a Python approximation. Raw and
-product-pipeline results must remain separate because the current concatenating VAD helps some models and
-removes useful context for others.
+audio module used by the app. It is not a Python approximation. `catalog.json` pins one explicit policy per
+runnable model: `vad-compact` concatenates speech frames, `vad-gate` blocks silence but preserves the entire
+clip, and `resample-only` is an offline control. Whisper currently qualifies with `vad-compact`; Apex and
+Qwen use `vad-gate` because compacting their audio removed useful acoustic/contextual evidence.
+
+`run_matrix.py` enforces 500 samples and at least three trials for promotion evidence, shuffles model order
+per trial to reduce ordering/thermal bias, resumes only structurally complete reports, preserves each native
+trial log, and reports min, median, max, standard deviation, truncation/degeneration, RSS, speed, and
+cross-trial hypothesis instability. Its summary pins the catalog, server, model artifacts, preprocessor,
+derived manifests, and randomized trial order.
+
+Human Roman and real-noise procedures live in [`CORPUS_PROTOCOL.md`](CORPUS_PROTOCOL.md). Annotation packs,
+recordings, consent mappings, transcript-bearing manifests, and raw reports remain private cache data.
 
 ## Promotion gate
 

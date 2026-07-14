@@ -20,6 +20,14 @@ terms continue to apply.
   terms apply to the user's installation.
 - **FFmpeg:** invoked from the host system for thumbnails when present; it is not bundled.
 
+## Evaluation-only assets
+
+- **Trelis/CoSHE-500:** CC BY-NC 4.0, pinned and downloaded only into the private benchmark cache for
+  evaluation. It is not training data, committed content, or a release asset.
+- **Google FLEURS:** CC BY 4.0, pinned and downloaded only for English ASR and aligned translation controls.
+- **indic-transliteration:** the pinned Python package is used only to construct a clearly labelled machine
+  Roman proxy. It never substitutes for the human Roman promotion corpus.
+
 Wispr Flow, Fathom, Fireflies, Snaply, Handy, FluidVoice, and Meetily product assets or proprietary
 implementations are not included. FluidVoice's current code is GPLv3 and has not been copied into this MIT
 project. Competitive study is behavioural and clean-room. Open-source code may be adopted only after its

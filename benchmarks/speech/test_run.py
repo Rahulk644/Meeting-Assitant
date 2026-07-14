@@ -27,6 +27,10 @@ class ScriptSafeScoringTests(unittest.TestCase):
         self.assertEqual(BENCHMARK.degenerate_reason(loop), "repetition-loop")
         self.assertIsNone(BENCHMARK.degenerate_reason("यह एक normal Hinglish sentence है"))
 
+    def test_silence_is_a_separate_false_positive_track(self):
+        self.assertEqual(BENCHMARK.script_safe_tokens(""), [])
+        self.assertEqual(BENCHMARK.degenerate_reason(""), "empty")
+
     def test_multipart_includes_requested_translation_mode(self):
         import tempfile
 
@@ -64,6 +68,17 @@ class ScriptSafeScoringTests(unittest.TestCase):
         self.assertEqual(path, Path("/tmp/bench/models/custom-runtime/UNAVAILABLE"))
         with self.assertRaisesRegex(ValueError, "integration-required"):
             BENCHMARK.verify_model(path, model)
+
+    def test_qwen_budget_reads_active_source_not_patch_diff(self):
+        self.assertEqual(
+            BENCHMARK.qwen_token_budget("constexpr int k_max_new = 512;\n"),
+            512,
+        )
+        self.assertIsNone(
+            BENCHMARK.qwen_token_budget(
+                "-constexpr int k_max_new = 256;\n+constexpr int k_max_new = 512;\n"
+            )
+        )
 
 
 if __name__ == "__main__":

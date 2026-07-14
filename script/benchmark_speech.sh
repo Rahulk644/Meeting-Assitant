@@ -6,9 +6,10 @@ BENCH_DIR="$ROOT_DIR/benchmarks/speech"
 CACHE_DIR="${ASSISTANT_BENCH_CACHE:-$HOME/.cache/my-assistant-bench}"
 DATASET_DIR="$CACHE_DIR/datasets/coshe-500"
 CORPUS_DIR="$CACHE_DIR/corpora/coshe-500"
+FULL_CORPUS_DIR="$CACHE_DIR/corpora/coshe-500-full"
 
 usage() {
-  echo "usage: $0 prepare-models MODEL... | prepare-data | prepare-english-data | prepare-translation-data | prepare-noise-data | convert-whisper MODEL | convert-srota | run MODEL,MODEL... | test" >&2
+  echo "usage: $0 prepare-models MODEL... | prepare-data | prepare-full-data | prepare-english-data | prepare-translation-data | prepare-noise-data | create-roman-pack [OUT] | capture-real ARGS... | create-real-pack [OUT] | convert-whisper MODEL | convert-srota | run MODEL,MODEL... | run-matrix MODEL,MODEL... | test" >&2
 }
 
 command="${1:-}"
@@ -33,6 +34,18 @@ case "$command" in
     uv run "$BENCH_DIR/extract_coshe.py" \
       --parquet "$DATASET_DIR/data/eval-00000-of-00001.parquet" \
       --out-dir "$CORPUS_DIR"
+    ;;
+  prepare-full-data)
+    mkdir -p "$DATASET_DIR"
+    hf download Trelis/CoSHE-500 \
+      data/eval-00000-of-00001.parquet README.md \
+      --repo-type dataset \
+      --revision 3da116bac98bfe5349f9b454d95a17a43483e1e8 \
+      --local-dir "$DATASET_DIR"
+    uv run "$BENCH_DIR/extract_coshe.py" \
+      --parquet "$DATASET_DIR/data/eval-00000-of-00001.parquet" \
+      --out-dir "$FULL_CORPUS_DIR" \
+      --limit 0
     ;;
   prepare-translation-data)
     fleurs_dir="$CACHE_DIR/datasets/fleurs"
@@ -75,6 +88,30 @@ case "$command" in
         "$noisy_dir/coshe-500-seed42-n24-${condition}-5db.jsonl" "$product_dir"
     done
     ;;
+  create-roman-pack)
+    source_manifest="$FULL_CORPUS_DIR/coshe-500-seed42-n500.jsonl"
+    if [[ ! -f "$source_manifest" ]]; then
+      echo "missing $source_manifest; run prepare-full-data first" >&2
+      exit 1
+    fi
+    out="${1:-$CACHE_DIR/annotation-packs/human-roman-coshe-500}"
+    python3 "$BENCH_DIR/corpus.py" create-roman-pack \
+      --source-manifest "$source_manifest" --out-dir "$out" --count 500 --seed 42
+    echo "$out/annotate.html"
+    ;;
+  capture-real)
+    python3 "$BENCH_DIR/capture_real_noise.py" "$@"
+    ;;
+  create-real-pack)
+    captures="$CACHE_DIR/corpora/real-noise-captures/captures.jsonl"
+    if [[ ! -f "$captures" ]]; then
+      echo "missing $captures; use capture-real first" >&2
+      exit 1
+    fi
+    out="${1:-$CACHE_DIR/annotation-packs/real-noise}"
+    python3 "$BENCH_DIR/corpus.py" create-real-pack --captures "$captures" --out-dir "$out"
+    echo "$out/annotate.html"
+    ;;
   convert-srota)
     source_dir="$CACHE_DIR/sources/srota"
     output_dir="$CACHE_DIR/models/srota-hinglish-q6"
@@ -116,8 +153,20 @@ case "$command" in
     manifest="${MANIFEST:-$CORPUS_DIR/coshe-500-seed42-n24.jsonl}"
     python3 "$BENCH_DIR/run.py" --models "$models" --manifest "$manifest" --cache "$CACHE_DIR"
     ;;
+  run-matrix)
+    models="${1:-}"
+    if [[ -z "$models" ]]; then usage; exit 2; fi
+    manifest="${MANIFEST:-$FULL_CORPUS_DIR/coshe-500-seed42-n500.jsonl}"
+    if [[ ! -f "$manifest" ]]; then
+      echo "missing $manifest; run prepare-full-data first" >&2
+      exit 1
+    fi
+    python3 "$BENCH_DIR/run_matrix.py" \
+      --models "$models" --manifest "$manifest" --cache "$CACHE_DIR"
+    ;;
   test)
-    python3 -m unittest "$BENCH_DIR/test_run.py"
+    python3 -m unittest discover -s "$BENCH_DIR" -p 'test_*.py'
+    python3 -m unittest discover -s "$ROOT_DIR/acceptance" -p 'test_*.py'
     ;;
   *)
     usage

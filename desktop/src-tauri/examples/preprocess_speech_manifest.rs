@@ -1,4 +1,4 @@
-use app_lib::speech_audio::{resample_16k, vad_extract_speech};
+use app_lib::speech_audio::{preprocess_speech, SpeechPreprocessingPolicy};
 use serde_json::Value;
 use std::env;
 use std::fs::{self, File};
@@ -55,8 +55,20 @@ fn main() -> Result<(), String> {
         args.next()
             .ok_or("usage: preprocess_speech_manifest INPUT.jsonl OUTPUT_DIR")?,
     );
+    let mut policy = SpeechPreprocessingPolicy::VadCompact;
+    if let Some(flag) = args.next() {
+        if flag != "--policy" {
+            return Err(
+                "usage: preprocess_speech_manifest INPUT.jsonl OUTPUT_DIR [--policy POLICY]".into(),
+            );
+        }
+        let value = args.next().ok_or("--policy requires a value")?;
+        policy = SpeechPreprocessingPolicy::parse(&value.to_string_lossy())?;
+    }
     if args.next().is_some() {
-        return Err("usage: preprocess_speech_manifest INPUT.jsonl OUTPUT_DIR".into());
+        return Err(
+            "usage: preprocess_speech_manifest INPUT.jsonl OUTPUT_DIR [--policy POLICY]".into(),
+        );
     }
 
     let input = input.canonicalize().map_err(|error| error.to_string())?;
@@ -73,7 +85,7 @@ fn main() -> Result<(), String> {
         let mut record: Value = serde_json::from_str(&line.map_err(|error| error.to_string())?)
             .map_err(|error| error.to_string())?;
         if record.get("type").and_then(Value::as_str) == Some("corpus_header") {
-            record["audioPipeline"] = Value::String("product-dictation-vad-v1".into());
+            record["audioPipeline"] = Value::String(policy.as_str().into());
             writeln!(writer, "{record}").map_err(|error| error.to_string())?;
             continue;
         }
@@ -84,19 +96,26 @@ fn main() -> Result<(), String> {
             .ok_or("sample is missing audio")?;
         let source = input_dir.join(relative);
         let (samples, sample_rate) = read_mono_wav(&source)?;
-        let resampled = resample_16k(&samples, sample_rate);
-        let speech = vad_extract_speech(&resampled);
+        let speech = preprocess_speech(&samples, sample_rate, policy);
         let filename = source.file_name().ok_or("audio path has no filename")?;
         let destination = clips_dir.join(filename);
         write_wav(&destination, &speech)?;
         record["audio"] = Value::String(format!("clips/{}", filename.to_string_lossy()));
-        record["audioPipeline"] = Value::String("product-dictation-vad-v1".into());
+        record["audioPipeline"] = Value::String(policy.as_str().into());
         record["sourceAudioSamples"] = Value::from(samples.len() as u64);
         record["retainedAudioSamples"] = Value::from(speech.len() as u64);
-        record["retainedAudioRatio"] = Value::from(if samples.is_empty() {
+        let source_seconds = if sample_rate == 0 {
             0.0
         } else {
-            speech.len() as f64 / samples.len() as f64
+            samples.len() as f64 / f64::from(sample_rate)
+        };
+        let retained_seconds = speech.len() as f64 / 16_000.0;
+        record["sourceAudioSeconds"] = Value::from(source_seconds);
+        record["retainedAudioSeconds"] = Value::from(retained_seconds);
+        record["retainedAudioRatio"] = Value::from(if source_seconds == 0.0 {
+            0.0
+        } else {
+            retained_seconds / source_seconds
         });
         writeln!(writer, "{record}").map_err(|error| error.to_string())?;
     }

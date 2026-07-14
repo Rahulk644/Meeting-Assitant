@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "suites": {
+    "right-command": {
+      "requires": "A human using the physical right Command key on the target Mac. Synthesized key events are not evidence.",
+      "cases": [
+        {"id": "RC-001", "name": "Rapid tap-to-toggle", "steps": "Focus a text field, tap physical Right Command, then tap it again within 300 ms.", "expected": "Listening stops immediately, the pill changes to Finishing, and the app never remains stuck in Listening."},
+        {"id": "RC-002", "name": "Rapid cycles during finish", "steps": "Complete RC-001, then start a second dictation while the first transcription is still finishing.", "expected": "The newer listening session owns the pill and tray; completion of the older session cannot hide or stop it."},
+        {"id": "RC-003", "name": "Escape cancellation", "steps": "Start dictation, speak, press Escape before stopping.", "expected": "Capture ends, the pill disappears, nothing is transcribed or pasted, and the previous clipboard remains unchanged."},
+        {"id": "RC-004", "name": "Push-to-talk", "steps": "Enable push-to-talk, hold physical Right Command while speaking, then release it.", "expected": "Recording lasts only while held and release enters Finishing exactly once."},
+        {"id": "RC-005", "name": "Background app state", "steps": "Close the main window without quitting, focus another app, and dictate.", "expected": "Dictation starts without opening My Assistant and pastes into the previously focused field."},
+        {"id": "RC-006", "name": "Target-app coverage", "steps": "Dictate into TextEdit, Chrome, Safari, Slack or Discord, and a native settings-style text field.", "expected": "Each supported editable field receives one clean paste; failures name the exact target and control."},
+        {"id": "RC-007", "name": "Full-screen focus", "steps": "Dictate into a text field in a full-screen app or Space.", "expected": "The pill does not steal focus and output returns to the original field."},
+        {"id": "RC-008", "name": "Multiple displays", "steps": "Repeat dictation on each connected display for every configured pill position.", "expected": "The pill is fully visible on the active display, never clipped or stranded on another Space."},
+        {"id": "RC-009", "name": "Silence and accidental tap", "steps": "Start and stop without speaking.", "expected": "No model hallucination is pasted and the UI returns to Idle."},
+        {"id": "RC-010", "name": "Model unavailable", "steps": "Run with the local model unavailable, then attempt dictation.", "expected": "The app returns to Idle with actionable setup guidance; it never remains Listening or crashes."},
+        {"id": "RC-011", "name": "Permission recovery", "steps": "Test with Accessibility or Microphone denied, grant it in Settings, relaunch when instructed, and retry.", "expected": "Failure is explained under the correct app identity and the next attempt works without duplicate prompts."},
+        {"id": "RC-012", "name": "Sleep and event-tap recovery", "steps": "Sleep and wake the Mac, wait one minute, then dictate without relaunching.", "expected": "Right Command still produces one start/stop edge and no duplicate sessions."},
+        {"id": "RC-013", "name": "Clipboard policies", "steps": "Repeat once with Never Save and once with Save/Replace.", "expected": "Never Save restores the previous clipboard after paste; Save/Replace retains the dictated text."},
+        {"id": "RC-014", "name": "Input-device failure", "steps": "Start with an unavailable or disconnected input device, then recover to the built-in microphone.", "expected": "The app exits Listening safely, explains the failure, and a later attempt succeeds without restart when macOS permits."},
+        {"id": "RC-015", "name": "Sustained reliability", "steps": "Perform 25 start/stop cycles including five sub-second rapid toggles.", "expected": "Exactly 25 sessions start and stop; no crash, stuck pill, missed edge, duplicate paste, helper leak, or growing idle model process."}
+      ]
+    },
+    "two-person-meeting": {
+      "requires": "Two consenting people in a real call on the named platform. A prerecorded loop or one-person simulation is not platform acceptance.",
+      "platforms": [
+        "zoom-native",
+        "google-meet-chrome",
+        "google-meet-safari",
+        "teams-native",
+        "teams-browser",
+        "slack-huddle",
+        "discord",
+        "facetime"
+      ],
+      "cases": [
+        {"id": "MTG-001", "name": "No idle false positive", "steps": "Open the platform but do not join a call for two minutes.", "expected": "No meeting notification, recording indicator, helper capture, or meeting record appears."},
+        {"id": "MTG-002", "name": "Call-start detection", "steps": "Join a real two-person call and exchange speech.", "expected": "One native notification appears only after live-call audio/evidence exists; recording begins once."},
+        {"id": "MTG-003", "name": "Scheduled and impromptu title", "steps": "Run one calendar-linked call and one unscheduled call.", "expected": "The scheduled meeting keeps its title; the unscheduled call becomes Impromptu meeting or Untitled meeting."},
+        {"id": "MTG-004", "name": "Two-speaker capture", "steps": "Each participant reads six alternating, identifiable lines.", "expected": "Both sides are present in order with no dropped channel; attribution uses names only when reliable evidence exists."},
+        {"id": "MTG-005", "name": "Overlap and interruption", "steps": "Use three controlled overlaps and two interruptions.", "expected": "Transcript order remains understandable, uncertainty is visible, and speakers are not confidently mislabeled."},
+        {"id": "MTG-006", "name": "Live transcript", "steps": "Keep the live panel open during alternating speech.", "expected": "Lines arrive continuously with usable latency and the panel remains responsive."},
+        {"id": "MTG-007", "name": "Mute and unmute", "steps": "Mute and unmute each participant using the platform controls.", "expected": "Muted speech is not invented; state changes do not end or duplicate the meeting."},
+        {"id": "MTG-008", "name": "Pause and resume", "steps": "Pause capture for 30 seconds while both people talk, then resume.", "expected": "Paused content is absent by design, resume continues the same meeting, and the UI clearly indicates the gap."},
+        {"id": "MTG-009", "name": "Scratchpad persistence", "steps": "Write notes before and after pause, close and reopen the meeting panel.", "expected": "Notes survive and attach to the correct meeting without entering the transcript."},
+        {"id": "MTG-010", "name": "Screen recording on", "steps": "Enable screen recording and share changing visual content.", "expected": "The saved meeting can play the recording and its thumbnail comes from that recording."},
+        {"id": "MTG-011", "name": "Screen recording off", "steps": "Repeat with screen recording disabled.", "expected": "No video artifact is created and the meeting uses the detected platform icon as its thumbnail."},
+        {"id": "MTG-012", "name": "Screen-share state", "steps": "Start and stop platform screen sharing twice.", "expected": "Capture continues, share evidence updates when supported, and My Assistant's protected overlay is not present in the recording."},
+        {"id": "MTG-013", "name": "Automatic end and notes", "steps": "Leave the call normally and wait for processing.", "expected": "Recording stops once, transcript finalizes incrementally, and notes/action items begin automatically without manual navigation."},
+        {"id": "MTG-014", "name": "Permission failure and recovery", "steps": "Deny one required permission, observe failure, grant it, and retry.", "expected": "The correct missing permission is named, existing transcript data stays safe, and retry does not create a ghost meeting."},
+        {"id": "MTG-015", "name": "Abrupt platform exit", "steps": "Force-quit the meeting platform during the call.", "expected": "My Assistant detects the end, finalizes valid media, preserves transcript lines, and remains running."},
+        {"id": "MTG-016", "name": "Assistant relaunch recovery", "steps": "Quit or crash My Assistant mid-call, reopen it, and continue with consent.", "expected": "The prior partial meeting remains readable and recovery behavior is explicit; no corrupt or silently merged record."},
+        {"id": "MTG-017", "name": "45-minute resource soak", "steps": "Run a 45-minute two-person call with screen recording off.", "expected": "No crash, runaway RSS, unbounded temporary audio, transcript loss, or severe UI slowdown occurs."},
+        {"id": "MTG-018", "name": "History after relaunch", "steps": "Relaunch My Assistant and open the completed meeting.", "expected": "Title, participants, duration, scratchpad, transcript, summary state, media/thumbnail choice, and corrections persist."}
+      ]
+    }
+  }
+}

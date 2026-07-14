@@ -11,8 +11,8 @@ the call, no audio leaves your machine, no meeting-app captions toggle.**
 - **detects Zoom, Teams, Webex, FaceTime, Google Meet, Slack huddles, Discord, and other supported calls**
   and transcribes *you and the other participants*, with **live speaker names**, capturing **only while
   you're in a call** — or **start / pause / stop by hand**. Manual recording works with any platform;
-- **auto-detects the spoken language and outputs English** (Whisper translate; detection + translate
-  both toggleable in Settings);
+- **auto-detects the spoken language and transcribes it as spoken**; English translation is deliberately
+  hidden until a separately qualified translation model has its own install and routing lifecycle;
 - **saves every call on-device** into a browsable history with **post-call summaries, action items, and
   "ask this meeting"**;
 - can **screen-record** the call (whole call, or only while a screen is shared) and shows it in the
@@ -51,8 +51,8 @@ The long-term product, provider, model, monetization, and quality decisions live
   doing audio I/O — **no permission**), then captures the meeting app's audio with a **Core Audio process
   tap** (the *System Audio Recording Only* permission) **and** your mic, splitting each into utterances.
   ScreenCaptureKit is used **only** when you record video.
-- **Transcribe** — `transcribe-server` (started on demand) transcribes each whole utterance in ~3 s on
-  the GPU, auto-detecting the language and translating to English.
+- **Transcribe** — `transcribe-server` (started on demand) transcribes each whole utterance on the GPU,
+  preserving automatic language detection. The shipped Turbo model is transcription-only.
 - **Names** — only after Core Audio confirms a real call, `meeting-state` wakes and reads Zoom's
   Accessibility tree for the active speaker (and mute/share); the Rust server stamps each remote line with
   who's speaking. Merely leaving Zoom open does no Accessibility scanning and cannot start a meeting.
@@ -61,17 +61,19 @@ The long-term product, provider, model, monetization, and quality decisions live
 
 ## Transcription
 
-**Settings → Meetings** exposes two independent Whisper controls:
+**Settings → Meetings** exposes automatic or explicitly pinned transcription language:
 
 - **Transcription language** *(detection)* — **`Auto-detect` by default**, so mixed Hindi + English is
   recognized per utterance. Pin a language only if detection ever slips.
-- **Translate to English** *(output)* — on by default: whatever the spoken language, the caption comes
-  out in English. Off = transcribe as spoken.
+
+Translation is a distinct decoder task, not a language preference. It fails closed in production because
+Whisper Turbo is not trained for translation; a qualified Medium/Large or cloud Speech provider is required
+before that control can ship.
 
 **Settings → Advanced** controls model residency: leave **Unload model when idle** on and choose the
 timeout (immediately, 2/5/10/15/30/60 minutes). The default is **10 minutes** for fast back-to-back use.
 
-So out of the box: **auto-detect → English.**
+So out of the box: **auto-detect → transcribe as spoken.**
 
 Quality comes first from **transcribing whole utterances** — the capturer waits for a natural pause and
 sends the engine the *entire* sentence, never a fixed-length slice. (Chopping mid-sentence was what made it
@@ -192,12 +194,20 @@ Evaluate pinned local speech candidates through the production native runtime:
 
 ```bash
 ./script/benchmark_speech.sh test
-./script/benchmark_speech.sh prepare-models whisper-turbo-q8 qwen3-asr-base-q6
+./script/benchmark_speech.sh prepare-models whisper-turbo-q8 apex-hinglish-q8
 ./script/benchmark_speech.sh prepare-data
 ./script/benchmark_speech.sh prepare-english-data
 ./script/benchmark_speech.sh prepare-translation-data
 ./script/benchmark_speech.sh prepare-noise-data
-./script/benchmark_speech.sh run whisper-turbo-q8,qwen3-asr-base-q6
+./script/benchmark_speech.sh run whisper-turbo-q8,apex-hinglish-q8
+
+# Current shipped-model evidence: complete 500-clip set, three resumable trials, exact audio policy.
+./script/benchmark_speech.sh prepare-full-data
+./script/benchmark_speech.sh run-matrix whisper-turbo-q8
+
+# Human Roman and real-noise work stays in the private benchmark cache.
+./script/benchmark_speech.sh create-roman-pack
+./script/benchmark_speech.sh capture-real list-devices
 ```
 
 The data, models, and transcript-bearing reports remain in a private cache. See
@@ -220,6 +230,7 @@ packaged `.app` gets its own. Flags pass through (`--app all`, `--mic off`, `--m
 | `stt/transcribe-server/` | our HTTP wrapper around [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) (source + `build.sh`, pinned commit) |
 | `stt/whisper/` | GGUF transcription model (git-ignored; fetched by `setup.sh`) |
 | `benchmarks/speech/` | pinned speech-model catalog, private-cache harness, and aggregate non-transcript evidence |
+| `acceptance/` | physical Right-Command and real two-person meeting case definitions plus private evidence runner |
 | `desktop/src-tauri/src/local_server.rs` | shipped Rust SSE/API server, meeting store, model lifecycle, summaries, Keychain and authenticated local routes |
 | `app/server.js` | developer-only browser harness; not included in the packaged app |
 | `app/index.html` | the UI — nav, live transcript, Library + detail (player), settings; light/dark |
@@ -235,6 +246,9 @@ For the full design rationale, the transcription/permissions deep-dives, and the
 
 The completed release, performance, privacy, security, install, and reverse-engineering review is in
 [AUDIT_REPORT.md](AUDIT_REPORT.md).
+
+Human release claims follow [`docs/ACCEPTANCE_TESTS.md`](docs/ACCEPTANCE_TESTS.md); Roman/noisy speech data
+follows [`benchmarks/speech/CORPUS_PROTOCOL.md`](benchmarks/speech/CORPUS_PROTOCOL.md).
 
 Contributor setup and standards are in [CONTRIBUTING.md](CONTRIBUTING.md); support, conduct, changes, and
 third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md),
@@ -272,7 +286,7 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 
 - [x] **Self-detecting capture** — finds the call from the Core Audio process list (no permission) and captures the others via a Core Audio tap, transcribes you + the others, only while in a call
 - [x] **Speaker names** from Zoom's AX tree (detector spawned as a direct child so its grant works)
-- [x] **transcribe.cpp engine** (≈2× faster, ≈half the RAM of whisper.cpp) — **whole-utterance**, **auto-detect → English**; language + translate toggles; **custom vocabulary** biases recognition of names/jargon
+- [x] **transcribe.cpp engine** (≈2× faster, ≈half the RAM of whisper.cpp) — **whole-utterance**, automatic language preserved, transcription as spoken; **custom vocabulary** biases recognition of names/jargon
 - [x] **Manual + auto recording** — **start / pause / stop by hand** (composed with auto-detect, so pause/stop really releases the mic), plus a **floating in-call panel** (live transcript + scratchpad)
 - [x] **Real-call notifications + incremental recovery** — native alerts fire only on a Core Audio call edge; transcript JSON is atomically checkpointed throughout the call
 - [x] **On-demand Whisper** (unloaded when idle) + on-demand LLM — light on an 8 GB Mac

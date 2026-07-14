@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "models": [
     {
       "id": "whisper-turbo-q8",
@@ -10,6 +10,9 @@
       "outputStyle": "mixed",
       "decode": {
         "language": "auto"
+      },
+      "preprocessing": {
+        "policy": "vad-compact"
       },
       "license": "MIT",
       "localPaths": [
@@ -32,6 +35,9 @@
       "outputStyle": "roman",
       "decode": {
         "language": "en"
+      },
+      "preprocessing": {
+        "policy": "vad-compact"
       },
       "license": "MIT",
       "localPaths": [
@@ -56,6 +62,9 @@
         "language": "auto",
         "translate": true
       },
+      "preprocessing": {
+        "policy": "vad-compact"
+      },
       "license": "MIT",
       "localPaths": [
         "~/Library/Application Support/My Assistant/models/whisper-large-v3-turbo-Q8_0.gguf"
@@ -77,6 +86,9 @@
       "outputStyle": "mixed",
       "decode": {
         "language": "hi"
+      },
+      "preprocessing": {
+        "policy": "vad-compact"
       },
       "license": "MIT",
       "localPaths": [
@@ -101,6 +113,9 @@
         "language": "auto",
         "translate": true
       },
+      "preprocessing": {
+        "policy": "vad-compact"
+      },
       "license": "Apache-2.0",
       "source": {
         "repo": "handy-computer/whisper-medium-gguf",
@@ -119,6 +134,9 @@
       "outputStyle": "mixed",
       "decode": {
         "language": "auto"
+      },
+      "preprocessing": {
+        "policy": "vad-compact"
       },
       "license": "Apache-2.0",
       "localPaths": [
@@ -143,6 +161,9 @@
         "language": "auto",
         "translate": true
       },
+      "preprocessing": {
+        "policy": "vad-compact"
+      },
       "license": "Apache-2.0",
       "source": {
         "repo": "handy-computer/whisper-medium-gguf",
@@ -163,6 +184,9 @@
         "language": "auto",
         "translate": true
       },
+      "preprocessing": {
+        "policy": "vad-compact"
+      },
       "license": "Apache-2.0",
       "source": {
         "repo": "handy-computer/whisper-large-v3-gguf",
@@ -182,6 +206,9 @@
       "decode": {
         "language": "en"
       },
+      "preprocessing": {
+        "policy": "vad-gate"
+      },
       "license": "Apache-2.0",
       "source": {
         "repo": "Marquestra/Whisper-Hindi2Hinglish-Apex-GGML",
@@ -200,6 +227,9 @@
       "outputStyle": "mixed",
       "decode": {
         "language": "auto"
+      },
+      "preprocessing": {
+        "policy": "vad-gate"
       },
       "license": "OpenRAIL",
       "source": {
@@ -233,6 +263,9 @@
       "decode": {
         "language": "hi"
       },
+      "preprocessing": {
+        "policy": "vad-gate"
+      },
       "license": "OpenRAIL",
       "localPaths": [
         "~/.cache/my-assistant-bench/models/zero-stt-hinglish-q5/zero-stt-hinglish-Q5_K_M.gguf"
@@ -261,6 +294,9 @@
       "outputStyle": "mixed",
       "decode": {
         "language": "auto"
+      },
+      "preprocessing": {
+        "policy": "vad-gate"
       },
       "license": "Apache-2.0",
       "localPaths": [
@@ -305,6 +341,9 @@
       "decode": {
         "language": "auto"
       },
+      "preprocessing": {
+        "policy": "vad-gate"
+      },
       "license": "Apache-2.0",
       "localPaths": [
         "~/.cache/my-assistant-bench/models/shuja-whisper-medium-q5/shuja-whisper-medium-Q5_K_M.gguf"
@@ -348,6 +387,9 @@
       "decode": {
         "language": "auto"
       },
+      "preprocessing": {
+        "policy": "vad-gate"
+      },
       "license": "Apache-2.0",
       "source": {
         "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
@@ -366,6 +408,9 @@
       "outputStyle": "mixed",
       "decode": {
         "language": "auto"
+      },
+      "preprocessing": {
+        "policy": "vad-gate"
       },
       "license": "Apache-2.0",
       "source": {
@@ -391,12 +436,17 @@
     {
       "id": "qwen-hiacc-hinglish-q6",
       "label": "Qwen3-ASR HiACC Hinglish Q6",
-      "tier": "conversational-mixed-finetune",
+      "tier": "optional-heavy-research",
       "status": "runnable-local",
+      "productDisposition": "catalog-option-only; do not recommend, auto-select, bundle, or promote",
+      "benchmarkDisposition": "stopped after two complete 500-clip trials by product scope decision",
       "format": "gguf",
       "outputStyle": "mixed",
       "decode": {
         "language": "auto"
+      },
+      "preprocessing": {
+        "policy": "vad-gate"
       },
       "license": "Apache-2.0",
       "localPaths": [

@@ -238,17 +238,29 @@ def wait_ready(process: subprocess.Popen, port: int, token: str, timeout: float 
     raise RuntimeError("transcribe-server readiness timeout")
 
 
+def qwen_token_budget(source: str) -> int | None:
+    """Read the active runtime constant, never a removed line from a patch diff."""
+    match = re.search(
+        r"^[ \t]*constexpr\s+int\s+k_max_new\s*=\s*(\d+)\s*;",
+        source,
+        re.MULTILINE,
+    )
+    return int(match.group(1)) if match else None
+
+
 def host_info() -> dict:
     memory = subprocess.run(["/usr/sbin/sysctl", "-n", "hw.memsize"], capture_output=True, text=True)
     pin = (ROOT / "stt/transcribe-server/PINNED_COMMIT").read_text().strip()
-    patch = ROOT / "stt/transcribe-server/patches/qwen3-output-budget.patch"
-    budget_match = re.search(r"constexpr int k_max_new = (\d+);", patch.read_text()) if patch.is_file() else None
+    qwen_source = (
+        ROOT / "stt/transcribe-server/.transcribe.cpp/src/arch/qwen3_asr/model.cpp"
+    )
+    budget = qwen_token_budget(qwen_source.read_text()) if qwen_source.is_file() else None
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),
         "memoryBytes": int(memory.stdout.strip()) if memory.returncode == 0 else None,
         "transcribeCommit": pin,
-        "qwenMaxNewTokens": int(budget_match.group(1)) if budget_match else None,
+        "qwenMaxNewTokens": budget,
     }
 
 
@@ -292,6 +304,7 @@ def model_benchmark(model: dict, model_path: Path, entries: list[dict], server: 
                 elapsed = time.perf_counter() - started
                 response = json.loads(payload)
                 transcript = response["text"]
+                expected_silence = bool(entry.get("expectedSilence", False))
                 ref_tokens = script_safe_tokens(entry["ref_text"])
                 hyp_tokens = script_safe_tokens(transcript)
                 substitutions, deletions, insertions = edit_counts(ref_tokens, hyp_tokens)
@@ -306,8 +319,13 @@ def model_benchmark(model: dict, model_path: Path, entries: list[dict], server: 
                         "rtf": round(elapsed / duration, 4),
                         "refText": entry["ref_text"],
                         "hypText": transcript,
+                        "expectedSilence": expected_silence,
                         "truncated": bool(response.get("truncated", False)),
-                        "degenerateReason": degenerate_reason(transcript),
+                        "degenerateReason": (
+                            None
+                            if expected_silence and not transcript.strip()
+                            else degenerate_reason(transcript)
+                        ),
                         "refWords": len(ref_tokens),
                         "substitutions": substitutions,
                         "deletions": deletions,
@@ -354,6 +372,10 @@ def model_benchmark(model: dict, model_path: Path, entries: list[dict], server: 
         "peakRssMiB": round(peak_rss / 1024, 1),
         "samples": len(results),
         "emptySamples": sum(not result["hypText"].strip() for result in results),
+        "silenceSamples": sum(result["expectedSilence"] for result in results),
+        "silenceFalsePositiveSamples": sum(
+            result["expectedSilence"] and bool(result["hypText"].strip()) for result in results
+        ),
         "truncatedSamples": sum(result["truncated"] for result in results),
         "degenerateSamples": sum(result["degenerateReason"] is not None for result in results),
         "audioSeconds": round(total_audio, 4),
