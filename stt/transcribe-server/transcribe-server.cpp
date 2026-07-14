@@ -14,6 +14,11 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <thread>
+#include <unistd.h>
 
 // Our capturer writes a fixed 16 kHz mono s16 WAV (writeWav16). Scan for the "data" chunk and expand to
 // float PCM — robust to header size without pulling in a general WAV parser.
@@ -51,18 +56,41 @@ static struct transcribe_model   *g_model = nullptr;
 static struct transcribe_session *g_ctx   = nullptr;
 static std::mutex g_mtx;   // transcribe_session is single-result; serialize runs
 
+// The GUI normally stops this child explicitly. This watchdog also handles crashes, forced upgrades, and
+// test-run replacement: once the owning GUI PID disappears, the model server releases its port and memory.
+static void start_parent_watchdog() {
+    const char *raw = getenv("ASSISTANT_PARENT_PID");
+    if (!raw || !*raw) return;
+    char *end = nullptr;
+    long parsed = strtol(raw, &end, 10);
+    if (!end || *end != '\0' || parsed <= 1) return;
+    const pid_t parent = static_cast<pid_t>(parsed);
+    std::thread([parent] {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            if (kill(parent, 0) == -1 && errno == ESRCH) std::_Exit(0);
+        }
+    }).detach();
+}
+
 int main(int argc, char **argv) {
-    std::string model_path, host = "127.0.0.1";
+    start_parent_watchdog();
+    const char *token_env = getenv("ASSISTANT_STT_TOKEN");
+    std::string model_path, host = "127.0.0.1", token = token_env ? token_env : "";
     int port = 8091;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if      (a == "-m"     && i + 1 < argc) model_path = argv[++i];
         else if (a == "--host" && i + 1 < argc) host = argv[++i];
         else if (a == "--port" && i + 1 < argc) port = atoi(argv[++i]);
+        else if (a == "--token" && i + 1 < argc) token = argv[++i];
         // -t / other whisper-server flags are accepted and ignored for CLI compatibility
         else if (a == "-t"     && i + 1 < argc) ++i;
     }
-    if (model_path.empty()) { fprintf(stderr, "usage: transcribe-server -m model.gguf [--host H] [--port P]\n"); return 2; }
+    if (model_path.empty() || token.empty()) {
+        fprintf(stderr, "usage: ASSISTANT_STT_TOKEN=SECRET transcribe-server -m model.gguf [--host H] [--port P]\n");
+        return 2;
+    }
 
     transcribe_init_backends_default();
     struct transcribe_model_load_params mp; transcribe_model_load_params_init(&mp);
@@ -75,8 +103,21 @@ int main(int argc, char **argv) {
     }
 
     httplib::Server srv;
-    srv.Get("/", [](const httplib::Request &, httplib::Response &res) { res.set_content("ok", "text/plain"); });
-    srv.Post("/inference", [](const httplib::Request &req, httplib::Response &res) {
+    srv.set_payload_max_length(64ULL * 1024ULL * 1024ULL);
+    auto authorized = [&token](const httplib::Request &req, httplib::Response &res) {
+        if (req.get_header_value("Authorization") != "Bearer " + token) {
+            res.status = 401;
+            res.set_content("unauthorized", "text/plain");
+            return false;
+        }
+        return true;
+    };
+    srv.Get("/", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
+        if (!authorized(req, res)) return;
+        res.set_content("ok", "text/plain");
+    });
+    srv.Post("/inference", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
+        if (!authorized(req, res)) return;
         auto file = req.get_file_value("file");
         std::vector<float> pcm;
         if (file.content.empty() || !parse_wav16(file.content, pcm) || pcm.empty()) {

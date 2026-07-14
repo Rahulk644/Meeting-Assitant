@@ -29,4 +29,19 @@ jobs:
           workspaces: desktop/src-tauri
       - name: cargo check
         working-directory: desktop/src-tauri
-        run: cargo check
+        run: cargo check --locked
+      - name: cargo test
+        working-directory: desktop/src-tauri
+        run: cargo test --locked
+      - name: Type-check Swift helpers
+        run: |
+          xcrun swiftc -typecheck meeting-state/meeting-state.swift
+          xcrun swiftc -typecheck stt/meeting-tap.swift
+      - name: Run native helper self-tests
+        run: |
+          xcrun swiftc -O meeting-state/meeting-state.swift -o "$RUNNER_TEMP/meeting-state"
+          xcrun swiftc -O stt/meeting-tap.swift -o "$RUNNER_TEMP/meeting-tap" \
+            -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
+            -framework CoreAudio -framework CoreImage
+          "$RUNNER_TEMP/meeting-state" --selftest
+          "$RUNNER_TEMP/meeting-tap" --selftest

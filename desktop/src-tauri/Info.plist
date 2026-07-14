@@ -5,6 +5,8 @@
   <!-- My Assistant transcribes your voice on-device during calls. -->
   <key>NSMicrophoneUsageDescription</key>
   <string>My Assistant transcribes your voice on-device during calls so you get named, searchable notes.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>My Assistant captures meeting-app audio on-device so other participants can be transcribed without a meeting bot.</string>
   <!-- The UI is served from a local server on 127.0.0.1:8790 (all on-device); allow the cleartext load. -->
   <key>NSAppTransportSecurity</key>
   <dict>

@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a user problem and evidence, not just a feature name.
+title: "[Feature]: "
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Who has the problem, in what situation, and what happens today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the successful user experience without prescribing the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or examples
+      description: Frequency, affected workflows, or links to public references.
+  - type: dropdown
+    id: privacy
+    attributes:
+      label: Would this require data to leave the Mac?
+      options: [No, Yes, Unsure]
+    validations:
+      required: true

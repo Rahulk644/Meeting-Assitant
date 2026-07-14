@@ -18,14 +18,23 @@
 // Coverage (honest):
 //   Zoom native (us.zoom.xos): inMeeting / selfMuted / videoOn / sharing  = RELIABLE
 //   Teams (com.microsoft.teams2): inMeeting = best-effort; controls via --dump
-//   Google Meet (browser): NOT here -> use a Chrome extension (DOM), AX is the wrong tool
-//   participants / activeSpeaker: intentionally not guessed -> build via --dump (see README)
+//   Browser/chat calls: Core Audio first proves active call-shaped audio; this helper then reads only
+//   the matching meeting window for title/control enrichment. It never scans while there is no call.
+//   participants / activeSpeaker: best-effort with source/role/context evidence on every accepted name
 //
 // License: MIT. Written fresh from public Accessibility APIs; no vendor code copied.
 
 import AppKit
 import ApplicationServices
 import Foundation
+import Darwin          // kill(pid, 0): stop this helper if the parent app crashes
+
+private let parentPID = pid_t(ProcessInfo.processInfo.environment["ASSISTANT_PARENT_PID"] ?? "") ?? 0
+private func parentIsAlive() -> Bool {
+    guard parentPID > 1 else { return true } // standalone self-tests and dumps have no parent contract
+    if kill(parentPID, 0) == 0 { return true }
+    return errno == EPERM
+}
 
 // MARK: - AX attribute constants (raw names, import-agnostic)
 
@@ -58,15 +67,34 @@ private func nowMs() -> Int { Int(Date().timeIntervalSince1970 * 1000) }
 
 private struct MeetingApp { let key: String; let bundles: [String] }
 private let MEETING_APPS = [
-    MeetingApp(key: "zoom",  bundles: ["us.zoom.xos"]),
+    MeetingApp(key: "zoom", bundles: ["us.zoom.xos"]),
     MeetingApp(key: "teams", bundles: ["com.microsoft.teams2", "com.microsoft.teams"]),
+    MeetingApp(key: "webex", bundles: ["com.cisco.webexmeetingsapp", "com.cisco.webex2"]),
+    MeetingApp(key: "facetime", bundles: ["com.apple.FaceTime"]),
+    MeetingApp(key: "slack", bundles: ["com.tinyspeck.slackmacgap"]),
+    MeetingApp(key: "discord", bundles: ["com.hnc.Discord"]),
+    MeetingApp(key: "goto", bundles: ["com.logmein.GoToMeeting", "com.goto.GoTo"]),
+    MeetingApp(key: "ringcentral", bundles: ["com.ringcentral.glip", "com.ringcentral.RingCentral"]),
+    MeetingApp(key: "around", bundles: ["com.getaround.Around"]),
+    MeetingApp(key: "whatsapp", bundles: ["net.whatsapp.WhatsApp"]),
+    MeetingApp(key: "telegram", bundles: ["ru.keepcoder.Telegram"]),
+    MeetingApp(key: "signal", bundles: ["org.whispersystems.signal-desktop"]),
+    MeetingApp(key: "browser", bundles: ["com.apple.Safari", "com.google.Chrome", "com.google.Chrome.beta",
+        "com.google.Chrome.canary", "com.microsoft.edgemac", "com.microsoft.edgemac.Beta",
+        "com.microsoft.edgemac.Dev", "company.thebrowser.Browser", "com.brave.Browser",
+        "org.mozilla.firefox", "org.chromium.Chromium", "com.operasoftware.Opera", "com.vivaldi.Vivaldi"]),
 ]
 
 /// First running meeting app (ponytail: first-wins; add priority ordering if you run two at once).
-private func runningMeetingApp() -> (key: String, pid: pid_t)? {
+private func runningMeetingApp(preferredKey: String = "", preferredBundle: String = "") -> (key: String, pid: pid_t)? {
+    if !preferredBundle.isEmpty,
+       let running = NSRunningApplication.runningApplications(withBundleIdentifier: preferredBundle).first {
+        let key = MEETING_APPS.first(where: { $0.bundles.contains(preferredBundle) })?.key ?? preferredKey
+        return (key.isEmpty ? "call" : key, running.processIdentifier)
+    }
     for ra in NSWorkspace.shared.runningApplications {
         guard let b = ra.bundleIdentifier else { continue }
-        for app in MEETING_APPS where app.bundles.contains(b) {
+        for app in MEETING_APPS where app.bundles.contains(b) && (preferredKey.isEmpty || app.key == preferredKey) {
             return (app.key, ra.processIdentifier)
         }
     }
@@ -75,14 +103,31 @@ private func runningMeetingApp() -> (key: String, pid: pid_t)? {
 
 // MARK: - state
 
+struct ParticipantEvidence: Codable, Equatable {
+    var name: String
+    var source: String       // participant_list | video_tile | profile_button | active_speaker_tile | active_speaker_label
+    var role: String         // source AX element role
+    var context: String      // containing Zoom window title
+}
+struct IgnoredParticipantEvidence: Codable, Equatable {
+    var text: String
+    var source: String       // zoom_interface_text
+    var role: String
+    var context: String
+    var reason: String
+}
 struct State: Codable, Equatable {
     var app = ""
+    var title = ""
     var inMeeting = false
     var selfMuted: Bool? = nil     // true = your mic is muted
     var videoOn: Bool? = nil
     var sharing: Bool? = nil       // true = YOU are screen-sharing (hide the overlay!)
-    var participants: [String] = []   // best-effort; empty until you build selectors via --dump
+    var participants: [String] = []
+    var participantEvidence: [ParticipantEvidence] = []
     var activeSpeaker: String? = nil
+    var activeSpeakerEvidence: ParticipantEvidence? = nil
+    var ignoredParticipantEvidence: [IgnoredParticipantEvidence] = []
 }
 
 // MARK: - control derivation (the reliable signal: read the app's menu-bar toggle labels)
@@ -135,18 +180,37 @@ private func windowInMeeting(_ appEl: AXUIElement, appKey: String) -> Bool {
     return false
 }
 
-private func snapshot() -> State {
+private func usefulWindowTitle(_ appEl: AXUIElement, appKey: String) -> String {
+    let generic = ["meeting", "zoom meeting", "microsoft teams", "webex", "facetime", "slack", "discord"]
+    for window in (axGet(appEl, kWindows) as? [AXUIElement] ?? []) {
+        var title = (axStr(window, kTitle) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in [" - Google Chrome", " — Mozilla Firefox", " - Microsoft Edge", " — Safari", " | Microsoft Teams"] {
+            if title.hasSuffix(suffix) { title.removeLast(suffix.count) }
+        }
+        let lower = title.lowercased()
+        if title.count >= 3, title.count <= 120, !generic.contains(lower),
+           !lower.contains("floating video window"), !lower.contains("meeting controls"),
+           !lower.contains("audio settings"), !lower.contains("http") { return title }
+    }
+    return ""
+}
+
+private func snapshot(preferredKey: String = "", preferredBundle: String = "") -> State {
     var s = State()
-    guard let (key, pid) = runningMeetingApp() else { return s }
-    s.app = key
+    guard let (key, pid) = runningMeetingApp(preferredKey: preferredKey, preferredBundle: preferredBundle) else { return s }
+    s.app = preferredKey.isEmpty || preferredKey == "call" ? key : preferredKey
     let appEl = AXUIElementCreateApplication(pid)
     if key == "zoom" { enableManualAX(appEl) }   // unlock Zoom's embedded UI for name reading
+    s.title = usefulWindowTitle(appEl, appKey: s.app)
     deriveControls(from: menuTitles(appEl), into: &s)
     if windowInMeeting(appEl, appKey: key) { s.inMeeting = true }
     if key == "zoom" {
-        let (names, active) = zoomNames(appEl)
+        let (names, evidence, active, activeEvidence, ignored) = zoomNames(appEl)
         s.participants = names
+        s.participantEvidence = evidence
         s.activeSpeaker = active
+        s.activeSpeakerEvidence = activeEvidence
+        s.ignoredParticipantEvidence = ignored
         if !names.isEmpty { s.inMeeting = true }
     }
     return s
@@ -156,6 +220,7 @@ private func snapshot() -> State {
 
 private struct Line: Encodable {
     let type: String
+    var source: String? = nil
     var axTrusted: Bool? = nil
     var msg: String? = nil
     var ts: Int? = nil
@@ -164,7 +229,7 @@ private struct Line: Encodable {
     var text: String? = nil
     var isSelf: Bool? = nil
     enum CodingKeys: String, CodingKey {
-        case type, axTrusted, msg, ts, state, speaker, text
+        case type, source, axTrusted, msg, ts, state, speaker, text
         case isSelf = "self"
     }
 }
@@ -251,29 +316,239 @@ private func nameFromTalking(_ s: String) -> String? {
     return validName(raw) ? raw.capitalized : nil
 }
 
-/// Walk the app's windows harvesting tile/profile names. The floating video window's tile
-/// is the active speaker; all harvested names form the roster.
-private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], active: String?) {
-    var names: [String] = [], active: String? = nil
-    func walk(_ el: AXUIElement, floating: Bool, depth: Int) {
-        if depth > 30 { return }
-        let inFloat = floating || (axStr(el, kTitle) ?? "").lowercased().contains("floating video")
-        if let d = axStr(el, kDesc), let n = nameFromTileDesc(d) ?? nameFromProfileDesc(d) {
-            if !names.contains(n) { names.append(n) }
-            if inFloat && active == nil { active = n }   // first tile in the floating window = who's on screen
-        }
-        if let v = axGet(el, kValue) as? String, let n = nameFromTalking(v) {   // "Talking: X" — works even while sharing
-            if !names.contains(n) { names.append(n) }
-            active = n
-        }
-        for k in axKids(el) { walk(k, floating: inFloat, depth: depth + 1) }
+private func participantSource(context: String, floating: Bool, profile: Bool) -> String {
+    if context.lowercased().contains("participant") { return "participant_list" }
+    if floating { return "active_speaker_tile" }
+    return profile ? "profile_button" : "video_tile"
+}
+
+/// Walk the app's windows harvesting tile/profile names with provenance. The source AX role and
+/// containing window title travel with every name, so downstream code can distinguish confirmed
+/// participant-list evidence from active-speaker labels and ordinary video tiles. Tile-shaped Zoom
+/// interface text is retained only as rejected evidence; it never enters the participant roster.
+private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], evidence: [ParticipantEvidence], active: String?, activeEvidence: ParticipantEvidence?, ignored: [IgnoredParticipantEvidence]) {
+    var names: [String] = [], evidence: [ParticipantEvidence] = [], active: String? = nil
+    var activeEvidence: ParticipantEvidence? = nil, ignored: [IgnoredParticipantEvidence] = []
+    func add(_ ev: ParticipantEvidence) {
+        if !names.contains(ev.name) { names.append(ev.name) }
+        if !evidence.contains(ev) { evidence.append(ev) }
     }
-    for w in (axGet(appEl, kWindows) as? [AXUIElement] ?? []) { walk(w, floating: false, depth: 0) }
-    return (names, active)
+    func reject(_ text: String, role: String, context: String) {
+        guard ignored.count < 20 else { return }
+        let item = IgnoredParticipantEvidence(text: String(text.prefix(160)), source: "zoom_interface_text", role: role, context: context, reason: "not_a_person")
+        if !ignored.contains(item) { ignored.append(item) }
+    }
+    func walk(_ el: AXUIElement, floating: Bool, context: String, depth: Int) {
+        if depth > 30 { return }
+        let title = axStr(el, kTitle) ?? ""
+        let nextContext = title.isEmpty ? context : title
+        let inFloat = floating || nextContext.lowercased().contains("floating video")
+        let role = axStr(el, kRole) ?? "unknown"
+        if let d = axStr(el, kDesc) {
+            let fromTile = nameFromTileDesc(d), fromProfile = nameFromProfileDesc(d)
+            if let n = fromTile ?? fromProfile {
+                let ev = ParticipantEvidence(name: n, source: participantSource(context: nextContext, floating: inFloat, profile: fromProfile != nil), role: role, context: nextContext)
+                add(ev)
+                if inFloat && active == nil { active = n; activeEvidence = ev } // first tile in the floating window = who's on screen
+            } else {
+                let low = d.lowercased()
+                let tileShaped = d.contains(",") && (low.contains("audio") || low.contains("video") || low.contains("muted"))
+                if tileShaped || d.hasPrefix("View ") { reject(d, role: role, context: nextContext) }
+            }
+        }
+        if let v = axGet(el, kValue) as? String { // "Talking: X" — works even while sharing
+            if let n = nameFromTalking(v) {
+                let ev = ParticipantEvidence(name: n, source: "active_speaker_label", role: role, context: nextContext)
+                add(ev); active = n; activeEvidence = ev
+            } else if v.lowercased().hasPrefix("talking:") { reject(v, role: role, context: nextContext) }
+        }
+        for k in axKids(el) { walk(k, floating: inFloat, context: nextContext, depth: depth + 1) }
+    }
+    for w in (axGet(appEl, kWindows) as? [AXUIElement] ?? []) {
+        let context = axStr(w, kTitle) ?? ""
+        walk(w, floating: false, context: context, depth: 0)
+    }
+    return (names, evidence, active, activeEvidence, ignored)
 }
 
 // NOTE: live caption TEXT comes from on-device Whisper (see ../stt). This layer's job is meeting
 // STATE — in-meeting / mute / share (from menu-bar labels) and participant/active-speaker NAMES.
+
+// MARK: - meeting-only Accessibility observation
+
+// meeting-tap publishes this internal distributed notification from its Core Audio call detector.
+// It is intentionally distinct from a user-visible macOS notification: this event tells the AX
+// enrichment layer when it may wake up. No real call means no AX tree reads at all.
+private let meetingActivityNotification = Notification.Name("com.myassistant.desktop.meeting-activity")
+
+private func axObserverCallback(
+    _ observer: AXObserver,
+    _ element: AXUIElement,
+    _ notification: CFString,
+    _ refcon: UnsafeMutableRawPointer?
+) {
+    guard let refcon else { return }
+    Unmanaged<MeetingActivityMonitor>.fromOpaque(refcon).takeUnretainedValue().scheduleSnapshot()
+}
+
+private final class MeetingActivityMonitor {
+    private let interval: TimeInterval
+    private var activityToken: NSObjectProtocol?
+    private var timer: Timer?
+    private var active = false
+    private var activeApp = ""
+    private var activeBundle = ""
+    private var lastHeartbeat = Date.distantPast
+    private var lastState: State?
+    private var permissionStatusSent = false
+    private var observer: AXObserver?
+    private var observerPID: pid_t = 0
+    private var observedElement: AXUIElement?
+    private var pendingSnapshot: DispatchWorkItem?
+
+    init(interval: TimeInterval) {
+        // Zoom's embedded Chromium layer does not emit every participant/speaker mutation through AX.
+        // Keep an in-call reconciliation pass as a safety net, but never run it while idle.
+        self.interval = max(interval, 2.0)
+    }
+
+    func run() -> Never {
+        activityToken = DistributedNotificationCenter.default().addObserver(
+            forName: meetingActivityNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in self?.handleActivity(note) }
+
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            self?.reconcile()
+        }
+        RunLoop.main.run()
+        fatalError("RunLoop exited unexpectedly")
+    }
+
+    private func handleActivity(_ note: Notification) {
+        let on = (note.userInfo?["active"] as? NSNumber)?.boolValue
+            ?? (note.userInfo?["active"] as? Bool)
+            ?? false
+        let app = (note.userInfo?["app"] as? String) ?? ""
+        let bundle = (note.userInfo?["bundle"] as? String) ?? ""
+        lastHeartbeat = Date()
+        if !on {
+            deactivate()
+            return
+        }
+
+        let changed = !active || activeApp != app || activeBundle != bundle
+        active = true
+        activeApp = app
+        activeBundle = bundle
+        if changed {
+            lastState = nil
+            installObserverIfPossible()
+            snapshotNow()
+        }
+    }
+
+    private func reconcile() {
+        if !parentIsAlive() { exit(0) }
+        guard active else { return }
+        // meeting-tap heartbeats every two seconds. If it dies or the server disables Meetings,
+        // fail closed and put Accessibility back to sleep instead of scanning forever.
+        if Date().timeIntervalSince(lastHeartbeat) > max(8.0, interval * 3) {
+            deactivate()
+            return
+        }
+        installObserverIfPossible()
+        snapshotNow()
+    }
+
+    func scheduleSnapshot() {
+        guard active else { return }
+        pendingSnapshot?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.snapshotNow() }
+        pendingSnapshot = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    private func snapshotNow() {
+        guard active else { return }
+        guard axTrusted(prompt: false) else {
+            removeObserver()
+            if !permissionStatusSent {
+                emit(Line(type: "status", source: "accessibility", axTrusted: false,
+                          msg: "Accessibility off — speaker names disabled for this meeting"))
+                permissionStatusSent = true
+            }
+            return
+        }
+        permissionStatusSent = false
+        installObserverIfPossible()
+        let state = snapshot(preferredKey: activeApp, preferredBundle: activeBundle)
+        if state != lastState {
+            emit(Line(type: "state", source: "accessibility", ts: nowMs(), state: state))
+            lastState = state
+        }
+    }
+
+    private func installObserverIfPossible() {
+        guard active, axTrusted(prompt: false),
+              let (_, pid) = runningMeetingApp(preferredKey: activeApp, preferredBundle: activeBundle) else {
+            removeObserver()
+            return
+        }
+        if observer != nil, observerPID == pid { return }
+        removeObserver()
+
+        var created: AXObserver?
+        guard AXObserverCreate(pid, axObserverCallback, &created) == .success, let created else { return }
+        let appElement = AXUIElementCreateApplication(pid)
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let names: [CFString] = [
+            kAXWindowCreatedNotification as CFString,
+            kAXFocusedWindowChangedNotification as CFString,
+            kAXTitleChangedNotification as CFString,
+            kAXValueChangedNotification as CFString,
+            kAXSelectedChildrenChangedNotification as CFString,
+            kAXUIElementDestroyedNotification as CFString,
+        ]
+        for name in names { _ = AXObserverAddNotification(created, appElement, name, refcon) }
+        // Register the current windows too. App-level notifications cover lifecycle; window-level
+        // notifications catch most mute/share/control changes in native meeting UIs.
+        for window in (axGet(appElement, kWindows) as? [AXUIElement] ?? []) {
+            for name in names { _ = AXObserverAddNotification(created, window, name, refcon) }
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .defaultMode)
+        observer = created
+        observerPID = pid
+        observedElement = appElement
+    }
+
+    private func removeObserver() {
+        if let observer {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        }
+        observer = nil
+        observerPID = 0
+        observedElement = nil
+    }
+
+    private func deactivate() {
+        guard active || lastState != nil else { return }
+        active = false
+        activeApp = ""
+        activeBundle = ""
+        pendingSnapshot?.cancel()
+        pendingSnapshot = nil
+        removeObserver()
+        // Clear stale participant/mute/share metadata. The server deliberately ignores this helper's
+        // inMeeting field; only Core Audio is allowed to end the actual meeting lifecycle.
+        let empty = State()
+        if lastState != empty {
+            emit(Line(type: "state", source: "accessibility", ts: nowMs(), state: empty))
+        }
+        lastState = nil
+    }
+}
 
 // MARK: - self-test (ponytail runnable check; uses explicit checks, not assert — assert is
 //         stripped under -O)
@@ -305,9 +580,12 @@ private func selftest() -> Never {
     check(canonName("Rahul Khatri (Host, me)") == "Rahul Khatri", "canon strips (Host, me)")
     check(nameFromTileDesc("Rahul Khatri (Me), Computer audio muted") == "Rahul Khatri", "tile desc -> canonical name")
     check(nameFromTileDesc("Set up professional audio in Audio settings, Muted") == nil, "tile-shaped UI hint rejected")
+    check(participantSource(context: "Participants", floating: false, profile: true) == "participant_list", "participant panel provenance")
+    check(participantSource(context: "zoom floating video window", floating: true, profile: false) == "active_speaker_tile", "active tile provenance")
 
     // 4. Detection runs without crashing
     _ = runningMeetingApp()
+    check(State().title.isEmpty, "default title is empty")
     err("SELFTEST OK")
     exit(0)
 }
@@ -341,7 +619,7 @@ case .selftest:
 
 case .dump:
     guard axTrusted(prompt: true) else { err("Grant Accessibility permission, then rerun."); exit(1) }
-    guard let (key, pid) = runningMeetingApp() else { err("No meeting app (Zoom/Teams) running."); exit(1) }
+    guard let (key, pid) = runningMeetingApp() else { err("No supported meeting app running."); exit(1) }
     err("== \(key) pid=\(pid) ==")
     let appEl = AXUIElementCreateApplication(pid)
     if key == "zoom" { enableManualAX(appEl); Thread.sleep(forTimeInterval: 0.5) }  // unlock embedded UI, let it populate
@@ -354,23 +632,12 @@ case .dump:
 case .once:
     if !axTrusted(prompt: true) { emit(Line(type: "status", axTrusted: false,
         msg: "Accessibility permission required")) ; exit(1) }
-    emit(Line(type: "state", ts: nowMs(), state: snapshot()))
+    emit(Line(type: "state", source: "accessibility", ts: nowMs(), state: snapshot()))
     exit(0)
 
 case .watch:
-    var last: State? = nil
-    var prompted = false
-    while true {
-        if !axTrusted(prompt: false) {
-            // Do NOT auto-prompt for Accessibility at launch — permission requests are driven by the app's
-            // per-module opt-in (enabling Meetings opens the Accessibility pane). Speaker names degrade
-            // silently until then; call detection + capture don't need this (the capturer self-detects).
-            if !prompted { emit(Line(type: "status", axTrusted: false, msg: "Accessibility off — speaker names disabled until you enable Meetings")); prompted = true }
-            Thread.sleep(forTimeInterval: max(interval, 3))
-            continue
-        }
-        let s = snapshot()
-        if s != last { emit(Line(type: "state", ts: nowMs(), state: s)); last = s }
-        Thread.sleep(forTimeInterval: interval)
-    }
+    // Core Audio activity is the wake-up signal. AXObserver handles eventful native UI changes;
+    // the meeting-only timer reconciles Zoom's embedded UI, which does not expose every mutation.
+    let monitor = MeetingActivityMonitor(interval: interval)
+    monitor.run()
 }

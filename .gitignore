@@ -21,9 +21,13 @@ gtm-workflows/
 # macOS / editor
 .DS_Store
 *.swp
+.codex/
 
 # Node
 node_modules/
+desktop/web-dist/
+# Official standalone Node runtime staged for portable macOS bundles.
+desktop/runtime/
 
 # Runtime logs / scratch
 *.log

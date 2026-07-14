@@ -1,15 +1,15 @@
 # Contributing
 
-Thanks for helping improve My Assistant. It's a local-first macOS app: a Tauri (Rust) shell around a
-dependency-free Node server that streams live transcripts and proxies on-device STT/LLM. Everything runs on
-the user's machine — keep it that way.
+Thanks for helping improve My Assistant. It is a local-first macOS app with a Tauri/Rust shell, a
+Rust-native packaged HTTP service, native audio/transcription helpers, and a vanilla HTML/CSS/JS interface.
+The dependency-free Node service remains a development harness; it is not shipped in the app bundle.
 
 ## Repository layout
 
 | Path | What it is |
 |---|---|
-| `app/` | The Node relay + UI server (`server.js`), the single-file UI (`index.html`), the dictation pill (`overlay.html`), and the extracted, unit-tested modules (`gate.js`, `multipart.js`). |
-| `desktop/src-tauri/` | The Tauri shell (`src/lib.rs`): tray, overlay window, global hotkey / event tap, in-process dictation. |
+| `app/` | The UI (`index.html`), development server (`server.js`), release contract, and unit-tested domain modules. |
+| `desktop/src-tauri/` | The packaged Rust service and Tauri shell: native AppKit pill/tray, global shortcut/event tap, capture, transcription orchestration, secure settings, and Keychain access. |
 | `meeting-state/` | Swift helper — speaker names + in-call detection via Accessibility. |
 | `stt/` | On-device speech-to-text (`transcribe.cpp` / `whisper.cpp` servers). |
 
@@ -21,6 +21,7 @@ Architecture and the macOS permission model live in [ARCHITECTURE.md](ARCHITECTU
 - macOS (the app links Core Audio / CoreGraphics / AppKit — it does not build on Linux).
 - Node ≥ 18 (uses the built-in `node:test` runner; no npm dependencies).
 - Rust stable + the Tauri CLI (`cargo install tauri-cli`), for the desktop shell.
+- Xcode Command Line Tools and the macOS 14.4 SDK target for the Swift helpers.
 
 ## Build, run, test
 
@@ -35,8 +36,15 @@ cd app && npm test          # → node --test
 cd desktop && npm run dev    # tauri dev
 cd desktop && npm run build  # tauri build
 
+# Preview the native dictation pill without recording audio
+ASSISTANT_PILL_PREVIEW=listening cargo run --manifest-path desktop/src-tauri/Cargo.toml
+
 # Type/borrow-check the Rust without a full build
-cd desktop/src-tauri && cargo check
+cd desktop/src-tauri && cargo check && cargo test
+
+# Native helper logic/build checks after touching Swift or C++ capture code
+./meeting-state/meeting-state --selftest
+./stt/transcribe-server/build.sh
 ```
 
 ## Code standards
@@ -53,10 +61,11 @@ cd desktop/src-tauri && cargo check
 - **Don't swallow errors silently.** An empty `catch {}` / `let _ =` erases the debugging path; at minimum
   log it (`console.error` / `log::warn!`).
 - **No dead UI.** A setting that doesn't change behaviour shouldn't ship. Wire it or remove it.
-- Keep the server dependency-free.
+- Keep the development server dependency-free and maintain behavioural parity with the packaged Rust routes.
 
 ## Pull requests
 
 1. Add or update tests for any logic change (`cd app && npm test` must pass).
-2. `cargo check` must pass for desktop changes.
-3. Keep the diff focused; describe the *why* in the PR body, not in a new block comment.
+2. `cargo check && cargo test` must pass for desktop changes.
+3. Update `PRODUCT_RELEASE_MATRIX.md` when a production capability changes state.
+4. Keep the diff focused; describe the *why* in the PR body, not in a new block comment.

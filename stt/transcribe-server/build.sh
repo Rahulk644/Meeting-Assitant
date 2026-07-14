@@ -18,6 +18,19 @@ if [ ! -e "$SRC/.git" ]; then
   git -C "$SRC" submodule update -q --init --recursive --depth 1
 fi
 
+# Never compile an arbitrary stale checkout from a reused release workspace. The integration files below
+# are expected to be local, but the upstream commit itself must exactly match the audited pin.
+ACTUAL_COMMIT="$(git -C "$SRC" rev-parse HEAD)"
+if [[ "$ACTUAL_COMMIT" != "$COMMIT" ]]; then
+  echo "transcribe.cpp checkout mismatch: expected $COMMIT, found $ACTUAL_COMMIT" >&2
+  echo "Remove $SRC and rerun this script to fetch the pinned source." >&2
+  exit 1
+fi
+git -C "$SRC" submodule status --recursive | awk '$1 ~ /^[-+U]/ { bad=1 } END { exit bad }' || {
+  echo "transcribe.cpp submodule state does not match the pinned checkout" >&2
+  exit 1
+}
+
 # Drop our server in as an example target (its build already links the transcribe lib + ggml/Metal).
 mkdir -p "$SRC/examples/server"
 cp "$ROOT/transcribe-server.cpp" "$ROOT/httplib.h" "$SRC/examples/server/"

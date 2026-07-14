@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible My Assistant defect without sharing private meeting data.
+title: "[Bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: Never paste API keys, transcripts, recordings, or private participant information.
+  - type: input
+    id: version
+    attributes:
+      label: My Assistant version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: macOS and Mac hardware
+      placeholder: macOS 15.5, MacBook Air M2, 16 GB
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Dictation, Meetings, Installation, Permissions, Models, Summaries, Performance, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Give the smallest repeatable sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, transcripts, recordings, and personal information.
+          required: true
+        - label: I reproduced this after quitting and reopening My Assistant.
+          required: true

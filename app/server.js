@@ -3,14 +3,27 @@
 //   node server.js  -> spawn ../meeting-state/meeting-state, stream its JSON to the GUI + relay captions.
 // No dependencies. Open http://localhost:8787
 const http = require("http");
+const crypto = require("crypto");
 const fs = require("fs");
 const net = require("net");
 const path = require("path");
 const { spawn, execFile } = require("child_process");
 const { Gate } = require("./gate.js");
 const { injectMultipartFields } = require("./multipart.js");
+const { releasePayload } = require("./release.js");
+const {
+  applyCorrection,
+  canGenerateNotes,
+  ensureLineIds,
+  isAuthoritativeMeetingDetection,
+  resolvedTitle,
+  transcriptText: correctedTranscriptText,
+  validDetectedTitle,
+} = require("./meeting-domain.js");
 
 const PORT = process.env.PORT || 8787; // respect preview's assigned port; 8787 for manual runs
+const GUI_TOKEN = process.env.ASSISTANT_GUI_TOKEN || crypto.randomBytes(32).toString("hex");
+const RELEASE = releasePayload(process.env.ASSISTANT_RELEASE_CHANNEL); // defaults to production; no URL override
 const clients = new Set();
 let lastState = {}; // so a client connecting mid-meeting gets current title/participants/speaker
 let msProc = null, msShutdown = false; // meeting-state child + shutdown flag (respawn it if it dies mid-session)
@@ -22,13 +35,15 @@ const REC_DIR = path.join(MEETINGS_DIR, "rec"); // screen recordings (.mp4), wri
 // Resolve tool paths explicitly — a packaged (GUI-spawned) node has no shell PATH.
 function findBin(name) { for (const d of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) { const p = path.join(d, name); if (fs.existsSync(p)) return p; } return name; }
 const FFMPEG = findBin("ffmpeg"); // for meeting thumbnails from the screen recording
-fs.mkdirSync(REC_DIR, { recursive: true });
+fs.mkdirSync(REC_DIR, { recursive: true, mode: 0o700 });
+for (const dir of [DATA_ROOT, MEETINGS_DIR, REC_DIR]) { try { fs.chmodSync(dir, 0o700); } catch {} }
 let cur = null; // the in-progress meeting being recorded to disk
 
 // Recording gate: composes auto-detection with the manual override (see gate.js). Drives the meeting
 // lifecycle and what the UI/tray show.
 const gate = new Gate(true);
 let unloadIdle = true; // "Unload model when idle" setting — off = keep whisper hot between calls
+let whisperIdleMinutes = 10; // user-configurable; 10 minutes balances back-to-back speed with RAM recovery
 let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
 // Dictation: only the bits the SERVER applies at transcription time live here — the spoken language and
 // the punctuation behaviour. Everything the desktop app owns (sound, volume, clipboard, overlay, the
@@ -38,7 +53,7 @@ let dictationCfg = { enabled: false, language: "auto", punctuation: "auto" };
 let recentDictations = []; // last N dictation results — in-memory, session-lived (dictated text stays off disk)
 // Feature modules — everything is OFF until the user opts in (onboarding), so NO macOS permission is
 // requested until a module is enabled. meeting-tap/meeting-state gate their capability use on these.
-let modules = { dictation: false, meetings: false, writing: false };
+let modules = { dictation: true, meetings: true, writing: false };
 let dictStopSeq = 0; // bumped by POST /api/dictation/stop (pill/tray Stop) → meeting-tap finishes the current dictation
 // Durable settings — WKWebView does NOT persist localStorage for the http://localhost origin Tauri loads
 // (storage is bound to the tauri:// custom protocol, not an external URL), so EVERY UI setting was lost on
@@ -47,19 +62,40 @@ let dictStopSeq = 0; // bumped by POST /api/dictation/stop (pill/tray Stop) → 
 const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
 let settingsBlob = {};
 try { settingsBlob = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) || {}; } catch { settingsBlob = {}; }
+const devProviderKeys = Object.create(null); // developer harness only: never persist provider secrets
+function sanitizeAiModel(raw) {
+  try {
+    const cfg = JSON.parse(raw);
+    if (!cfg || typeof cfg !== "object") return raw;
+    const provider = String(cfg.provider || "local");
+    if (cfg.key) devProviderKeys[provider] = String(cfg.key);
+    const keySaved = !!(cfg.key || cfg.keySaved || devProviderKeys[provider]);
+    return JSON.stringify({ ...cfg, key: "", keySaved });
+  } catch { return raw; }
+}
 let _settingsTimer = null;
 function saveSettings() {
   clearTimeout(_settingsTimer);
   _settingsTimer = setTimeout(() => {
-    try { const tmp = SETTINGS_FILE + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(settingsBlob)); fs.renameSync(tmp, SETTINGS_FILE); }
+    try {
+      const tmp = SETTINGS_FILE + ".tmp";
+      fs.writeFileSync(tmp, JSON.stringify(settingsBlob), { mode: 0o600 });
+      fs.renameSync(tmp, SETTINGS_FILE);
+      fs.chmodSync(SETTINGS_FILE, 0o600);
+    }
     catch (e) { console.error("settings save failed:", e.message); }
   }, 300);
+}
+if (settingsBlob["set.aiModel"]) {
+  const before = settingsBlob["set.aiModel"];
+  settingsBlob["set.aiModel"] = sanitizeAiModel(before);
+  if (settingsBlob["set.aiModel"] !== before) saveSettings();
 }
 // Restore module gating from durable settings immediately, so meeting-tap sees the right state on restart
 // (before the UI boots and re-pushes it) instead of the all-off default above.
 try {
   const m = settingsBlob["set.modules"] && JSON.parse(settingsBlob["set.modules"]);
-  if (m && typeof m === "object") { modules = { dictation: !!m.dictation, meetings: !!m.meetings, writing: !!m.writing }; dictationCfg.enabled = !!modules.dictation; }
+  if (m && typeof m === "object") { modules = { dictation: m.dictation !== false, meetings: m.meetings !== false, writing: !!m.writing }; dictationCfg.enabled = !!modules.dictation; }
 } catch {}
 const effectiveRecording = () => gate.recording;
 function broadcastCall() { // push the composed call state to the UI (and lastState, for reconnects)
@@ -79,7 +115,9 @@ function setManual(action) {
   recomputeLifecycle(action); broadcastCall();
   return true;
 }
-// Raw state from a capturer: peel off inMeeting (→ detection), pass the rest (title/app/participants) through.
+// Raw state from a helper: Core Audio alone owns automatic meeting start/end. Accessibility is
+// enrichment only; an open Zoom process must never start a recording. Peel inMeeting off every
+// helper event so only the server's composed gate state reaches the UI.
 function ingest(obj) {
   if (obj && obj.type === "dictation") { // a finished dictation from meeting-tap → keep recent + push to the view
     if (obj.text) { recentDictations.unshift({ text: String(obj.text).slice(0, 4000), ts: obj.ts || Date.now(), ms: obj.ms || 0 }); recentDictations = recentDictations.slice(0, 50); }
@@ -89,7 +127,7 @@ function ingest(obj) {
   if (obj && obj.type === "state" && obj.state && "inMeeting" in obj.state) {
     const { inMeeting, ...rest } = obj.state;
     if (Object.keys(rest).length) broadcast({ type: "state", state: rest });
-    setDetected(inMeeting === true);
+    if (isAuthoritativeMeetingDetection(obj)) setDetected(inMeeting === true);
   } else broadcast(obj);
 }
 
@@ -99,13 +137,19 @@ function broadcast(obj) {
   const line = `data: ${JSON.stringify(obj)}\n\n`;
   for (const res of clients) res.write(line);
 }
+function writePrivateJson(file, value) {
+  fs.writeFileSync(file, JSON.stringify(value), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+}
 
 // ---- meeting recording (history) ---------------------------------------------
 // Accumulate live captions + state into the current meeting; persist JSON to data/meetings/.
 function startMeeting(state) {
   cur = { id: String(Date.now()), title: (state && state.title) || "Untitled meeting",
           app: (state && state.app) || "", startedAt: Date.now(), endedAt: null,
-          participants: (state && state.participants) ? [...state.participants] : [], lines: [] };
+          participants: (state && state.participants) ? [...state.participants] : [],
+          participantEvidence: (state && state.participantEvidence) ? [...state.participantEvidence] : [],
+          transcriptRevision: 0, lines: [] };
 }
 function updateMeta(state) {
   if (!cur || !state) return;
@@ -113,18 +157,30 @@ function updateMeta(state) {
   if (state.app) cur.app = state.app;
   if (state.participants && state.participants.length)
     cur.participants = [...new Set([...cur.participants, ...state.participants])];
+  if (state.participantEvidence && state.participantEvidence.length) cur.participantEvidence = state.participantEvidence;
 }
 function saveMeeting(m) {
-  try { fs.writeFileSync(path.join(MEETINGS_DIR, m.id + ".json"), JSON.stringify(m)); }
+  try { ensureLineIds(m); writePrivateJson(path.join(MEETINGS_DIR, m.id + ".json"), m); }
   catch (e) { console.error("meeting save failed:", e.message); }
 }
 function finalizeMeeting() {
   if (!cur) return;
   cur.endedAt = Date.now();
-  if (cur.lines.length) saveMeeting(cur); // skip empty meetings
+  let finalizedId = null, finalizedSummaryState = "skipped";
+  if (cur.lines.length) {
+    if (!validDetectedTitle(cur.title)) { cur.title = resolvedTitle(cur); cur.titleSource = cur.title.includes(" — ") ? "fallback" : "local_topic"; }
+    const noteGate = canGenerateNotes(cur);
+    cur.summaryState = noteGate.ok ? "queued" : "skipped";
+    finalizedSummaryState = cur.summaryState;
+    cur.summaryError = noteGate.ok ? "" : noteGate.reason;
+    saveMeeting(cur);
+    finalizedId = cur.id;
+  } // skip empty meetings
   cur = null;
   delete lastState.startedAt; // meeting over — drop the echoed start time
   unloadWhisperSoon(); // free ~1.5 GB after the call
+  if (finalizedId) broadcast({ type: "meeting-updated", id: finalizedId, summaryState: finalizedSummaryState });
+  if (finalizedId) queueAutomaticSummary(finalizedId);
 }
 // Debounce finalize: brief inMeeting=false blips (a screen-share toggle, a view switch, one missed
 // detection poll) must NOT end the call and split it into a second meeting. Only a sustained absence
@@ -137,7 +193,17 @@ function record(obj) {
   if (obj.type === "caption") {
     if (!effectiveRecording()) return;                             // dropped while paused / stopped / not in a call
     if (!cur) startMeeting(lastState);
-    cur.lines.push({ speaker: obj.speaker, text: obj.text, ts: obj.ts || Date.now(), self: !!obj.self });
+    const index = cur.lines.length, ts = obj.ts || Date.now();
+    cur.lines.push({
+      id: `line-${ts}-${index}`,
+      speaker: obj.speaker || "Unknown speaker",
+      speakerSource: obj.speakerSource || (obj.self ? "user" : "unknown"),
+      speakerContext: obj.speakerContext || "",
+      text: obj.text,
+      ts,
+      self: !!obj.self,
+      excluded: false,
+    });
   } else if (obj.type === "recording") {
     if (!cur) startMeeting(lastState);
     cur.video = obj.file; saveMeeting(cur); // meeting-tap tells us the call's screen-recording file
@@ -148,10 +214,14 @@ function record(obj) {
 setInterval(() => { if (cur && cur.lines.length) saveMeeting(cur); }, 10000); // flush so a kill mid-call doesn't lose it
 
 function meetingSummary(m) {
-  return { id: m.id, title: m.title, app: m.app, startedAt: m.startedAt, endedAt: m.endedAt,
-           participants: m.participants, lineCount: m.lines.length,
-           snippet: ((m.lines.find(l => l.text && l.text.length > 1) || {}).text || "").slice(0, 140),
+  ensureLineIds(m);
+  const visibleLines = m.lines.filter(l => !l.excluded);
+  return { id: m.id, title: resolvedTitle(m), app: m.app, startedAt: m.startedAt, endedAt: m.endedAt,
+           participants: m.participants, lineCount: visibleLines.length,
+           snippet: ((visibleLines.find(l => l.text && l.text.length > 1) || {}).text || "").slice(0, 140),
            summarized: !!m.summary, hasVideo: !!(m.video && fs.existsSync(path.join(REC_DIR, m.video))),
+           summaryState: m.summaryState || (m.summary ? "ready" : "idle"), summaryError: m.summaryError || "",
+           summaryStale: !!m.summaryStale,
            live: m.endedAt == null };
 }
 // A server killed mid-call leaves a meeting with endedAt=null; on restart it isn't actually live, so
@@ -165,7 +235,7 @@ function finalizeOrphans() {
         const m = JSON.parse(fs.readFileSync(p));
         if (m.endedAt == null) {
           m.endedAt = (m.lines && m.lines.length && m.lines[m.lines.length - 1].ts) || m.startedAt || Date.now();
-          fs.writeFileSync(p, JSON.stringify(m));
+          writePrivateJson(p, m);
         }
       } catch {}
     }
@@ -185,15 +255,19 @@ function listMeetings() {
 function readMeeting(id) {
   if (cur && cur.id === id) return cur;
   let m; try { m = JSON.parse(fs.readFileSync(path.join(MEETINGS_DIR, id + ".json"))); } catch { return null; }
+  ensureLineIds(m);
   if (m && m.video && !fs.existsSync(path.join(REC_DIR, m.video))) delete m.video; // recording missing → no player
   return m;
 }
+function meetingForClient(m) { return { ...m, title: resolvedTitle(m) }; }
+function persistMeeting(m) { if (cur && cur.id === m.id) cur = m; saveMeeting(m); }
 
 // ---- LLM backend (local-first) -----------------------------------------------
 // One OpenAI-compatible client serves every tier. The UI (Settings → AI Model) sends the chosen
 // { base, key, model } per request; the LLM_* env vars are the fallback default.
 //   Local = LiteRT-LM (Gemma 4 E2B) on 127.0.0.1:9379 — started ON DEMAND (first summary/ask), so it
-//           never competes with Whisper for RAM during a call, and unloads after LLM_IDLE_MS idle.
+//           is not loaded during the call. A post-call summary can overlap with Whisper if the user keeps
+//           Whisper warm; that speed/RAM tradeoff is controlled by the idle-timeout setting.
 //   API   = any OpenAI-compatible provider (Groq / OpenAI / Cerebras …) via a user-supplied key.
 const LLM_LOCAL = "http://127.0.0.1:" + (process.env.LLM_PORT || "9379"); // on-device server origin
 const LLM_IDLE_MS = 5 * 60 * 1000;
@@ -229,18 +303,20 @@ function touchLLM() { // unload our LLM after idle so it doesn't hold ~1 GB betw
 }
 
 // ---- Whisper (transcription) — started on demand, unloaded when idle -----------------------------
-// A packaged build no longer keeps whisper-server (~1.5 GB) resident: node spawns it when a call starts
-// and kills it WHISPER_IDLE_MS after the call ends, so it's off RAM between calls. In dev, run.sh already
+// A packaged build no longer keeps whisper-server (~1.5 GB) permanently resident: node spawns it when a
+// call starts and kills it after the user-selected idle timeout. In dev, run.sh already
 // has it up on :8091 → node sees the open port and neither spawns nor kills it (not ours to manage).
 const WHISPER_PORT = +(process.env.WHISPER_PORT || 8091);
 // Primary STT engine: transcribe.cpp (handy-computer) held hot behind our transcribe-server — ~half the RAM
 // and ~2x the speed of whisper-server on Apple Silicon, and cleaner output (proper punctuation, no dropped
 // onsets). Falls back to whisper.cpp's whisper-server if transcribe-server isn't built on this machine.
 const TS_BIN = path.join(__dirname, "..", "stt", "transcribe-server", "transcribe-server");
-// Model files aren't bundled in the .app (845 MB) — resolve them across the canonical models dir (packaged:
-// App Support, via ASSISTANT_MODELS_DIR), the build machine's repo (ASSISTANT_REPO), and ./run.sh's repo
-// layout. First hit wins, so a machine that already has the model never re-downloads it.
+// Model files aren't bundled in the .app (845 MB). Packaged builds use the canonical Application Support
+// directory supplied via ASSISTANT_MODELS_DIR; development can additionally reuse the repository model via
+// ASSISTANT_REPO. First hit wins.
 const GGUF_NAME = "whisper-large-v3-turbo-Q8_0.gguf";   // transcribe.cpp (primary engine)
+const GGUF_SIZE = 886381824;
+const GGUF_SHA256 = "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448";
 const GGML_NAME = "ggml-large-v3-turbo-q8_0.bin";       // whisper.cpp (fallback)
 const GGUF_URL = "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/" + GGUF_NAME;
 const MODELS_DIR = process.env.ASSISTANT_MODELS_DIR || path.join(__dirname, "..", "stt", "whisper");
@@ -269,14 +345,18 @@ async function startModelDownload() {
     if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
     const total = +(r.headers.get("content-length") || 0);
     let got = 0, lastPct = -1;
-    const out = fs.createWriteStream(tmp);
+    const out = fs.createWriteStream(tmp, { mode: 0o600 });
+    const hash = crypto.createHash("sha256");
     const stream = require("stream").Readable.fromWeb(r.body);
     stream.on("data", (c) => {
+      hash.update(c);
       got += c.length;
       const pct = total ? Math.floor((got / total) * 100) : 0;
       if (pct !== lastPct) { lastPct = pct; broadcast({ type: "model-progress", pct }); }
     });
     await new Promise((resolve, reject) => { stream.pipe(out); out.on("finish", resolve); out.on("error", reject); stream.on("error", reject); });
+    const digest = hash.digest("hex");
+    if (got !== GGUF_SIZE || digest !== GGUF_SHA256) throw new Error("downloaded model failed size/SHA-256 verification");
     fs.renameSync(tmp, dest);
     broadcast({ type: "model-progress", pct: 100, done: true });
     console.error("model: downloaded", GGUF_NAME);
@@ -286,7 +366,6 @@ async function startModelDownload() {
     console.error("model: download failed:", e.message || e);
   } finally { modelDownloading = false; }
 }
-const WHISPER_IDLE_MS = 10 * 60 * 1000; // keep the model hot 10 min so back-to-back dictation is fast (was 2 min → cold reloads felt slow)
 let whisperProc = null, whisperIdle = null; // the STT-server child WE started (null if not ours)
 async function ensureWhisper() {
   if (whisperIdle) { clearTimeout(whisperIdle); whisperIdle = null; }
@@ -309,7 +388,8 @@ async function ensureWhisper() {
 }
 function unloadWhisperSoon() { // only unloads the one WE started
   if (!whisperProc || whisperIdle || !unloadIdle) return; // setting off → keep the model hot between calls
-  whisperIdle = setTimeout(() => { if (whisperProc) { whisperProc.kill(); whisperProc = null; console.error("whisper-server: unloaded (idle)"); } }, WHISPER_IDLE_MS);
+  const idleMs = whisperIdleMinutes * 60 * 1000;
+  whisperIdle = setTimeout(() => { if (whisperProc) { whisperProc.kill(); whisperProc = null; console.error("whisper-server: unloaded (idle)"); } }, idleMs);
 }
 const killKids = () => { msShutdown = true; if (llmProc) llmProc.kill(); if (msProc) msProc.kill(); if (whisperProc) whisperProc.kill(); };
 ["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => { killKids(); process.exit(0); }));
@@ -317,7 +397,15 @@ process.on("exit", killKids);
 
 async function chat(messages, opts = {}) {
   const llm = opts.llm || {};
-  const base = (llm.base || process.env.LLM_BASE || LLM_LOCAL + "/v1").replace(/\/$/, "");
+  const rawBase = Object.prototype.hasOwnProperty.call(llm, "base") ? llm.base : (process.env.LLM_BASE || LLM_LOCAL + "/v1");
+  if (!rawBase) throw new Error("AI provider endpoint is missing. Choose a provider in Settings → Meetings.");
+  const base = String(rawBase).replace(/\/$/, "");
+  let parsed;
+  try { parsed = new URL(base); } catch { throw new Error("AI provider endpoint is invalid"); }
+  const loopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+  if (parsed.username || parsed.password || (parsed.protocol !== "https:" && !(loopback && parsed.protocol === "http:"))) {
+    throw new Error("AI provider endpoints must use HTTPS or a loopback HTTP address");
+  }
   const key = llm.key || process.env.LLM_KEY || "";
   const model = llm.model || process.env.LLM_MODEL || "local";
   if (isLocal(base)) await ensureLocalLLM(base);
@@ -334,8 +422,84 @@ async function chat(messages, opts = {}) {
     if (isLocal(base)) touchLLM();
   }
 }
+
+function storedSetting(key, fallback) {
+  try {
+    const raw = settingsBlob["set." + key];
+    return raw == null ? fallback : JSON.parse(raw);
+  } catch { return fallback; }
+}
+function storedLLM() {
+  const c = storedSetting("aiModel", { provider: "local", key: "", model: "", base: "" }) || {};
+  const providers = {
+    local: { base: LLM_LOCAL + "/v1", model: "gemma4-e2b", needsKey: false },
+    groq: { base: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile", needsKey: true },
+    openai: { base: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true },
+    cerebras: { base: "https://api.cerebras.ai/v1", model: "llama-3.3-70b", needsKey: true },
+    custom: { base: c.base || "", model: c.model || "", needsKey: true },
+  };
+  const p = providers[c.provider] || providers.local;
+  return { base: c.provider === "custom" ? (c.base || "") : p.base, key: p.needsKey ? (devProviderKeys[c.provider] || process.env.LLM_KEY || "") : "", model: c.model || p.model };
+}
+function storedTemplatePrompt() {
+  const selected = storedSetting("template_sel", "standard");
+  const templates = storedSetting("templates", []);
+  const template = Array.isArray(templates) && templates.find(t => t && t.id === selected);
+  return String(template?.prompt || "");
+}
+async function generateSummaryForMeeting(id, opts = {}) {
+  const meeting = readMeeting(id);
+  if (!meeting) throw new Error("meeting not found");
+  const eligible = canGenerateNotes(meeting);
+  if (!eligible.ok) {
+    meeting.summaryState = "skipped"; meeting.summaryError = eligible.reason; persistMeeting(meeting);
+    throw new Error(eligible.reason);
+  }
+  const revision = Number(meeting.transcriptRevision) || 0;
+  meeting.summaryState = "generating"; meeting.summaryError = ""; persistMeeting(meeting);
+  const deeper = opts.deeper ?? !!storedSetting("deeper", false);
+  const template = String(opts.template ?? storedTemplatePrompt());
+  const instruction = template.trim() || `Summarise this meeting as 3–5 short bullet points, then a line "Action items:" with each as "- <owner>: <task>" (or "None").`;
+  const sys = "You summarise meeting transcripts for a busy professional. Be concise, specific, neutral — no preamble."
+    + (deeper ? " Reason carefully through the discussion — capture decisions, owners, and nuance you might otherwise miss." : "");
+  const text = await chat([
+    { role: "system", content: sys },
+    { role: "user", content: `${instruction}\n\n${meeting.notes ? `The note-taker's own scratchpad from the call (weight these points):\n${meeting.notes}\n\n` : ""}Transcript:\n\n${transcriptText(meeting)}` },
+  ], { maxTokens: deeper ? 1100 : 650, temperature: deeper ? 0.2 : 0.3, llm: opts.llm || storedLLM() });
+  const latest = readMeeting(id);
+  if (!latest) throw new Error("meeting disappeared while notes were generating");
+  if ((Number(latest.transcriptRevision) || 0) !== revision) {
+    latest.summaryState = "stale"; latest.summaryStale = true;
+    latest.summaryError = "The transcript changed while notes were generating. Regenerate notes.";
+    persistMeeting(latest);
+    broadcast({ type: "meeting-updated", id, summaryState: "stale" });
+    throw new Error(latest.summaryError);
+  }
+  latest.summary = text;
+  latest.summaryRevision = revision;
+  latest.summaryStale = false;
+  latest.summaryState = "ready";
+  latest.summaryError = "";
+  persistMeeting(latest);
+  broadcast({ type: "meeting-updated", id, summaryState: "ready" });
+  return latest;
+}
+function queueAutomaticSummary(id) {
+  const meeting = readMeeting(id), eligible = meeting && canGenerateNotes(meeting);
+  if (!meeting || !eligible.ok) return;
+  setTimeout(() => {
+    generateSummaryForMeeting(id).catch((e) => {
+      const latest = readMeeting(id);
+      if (!latest || latest.summaryState === "stale") return;
+      latest.summaryState = "failed";
+      latest.summaryError = String(e.message || e).slice(0, 240) || "Notes could not be generated. Try again.";
+      persistMeeting(latest); // transcript remains intact; the UI presents a retry
+      broadcast({ type: "meeting-updated", id, summaryState: "failed" });
+    });
+  }, 250);
+}
 function transcriptText(m, cap = 16000) {
-  return m.lines.map(l => `${l.speaker}: ${l.text}`).join("\n").slice(0, cap);
+  return correctedTranscriptText(m, cap);
 }
 function readBody(req) {
   return new Promise(resolve => { let b = ""; req.on("data", c => (b += c)); req.on("end", () => resolve(b)); });
@@ -350,19 +514,41 @@ http.createServer((req, res) => {
   // defence-in-depth against LAN peers and DNS-rebinding, on top of the 127.0.0.1 bind below.
   const host = (req.headers.host || "").split(":")[0];
   if (host && host !== "127.0.0.1" && host !== "localhost") { res.writeHead(403); return res.end(); }
+  const requestUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
+  if (req.method === "GET" && requestUrl.pathname === "/" && requestUrl.searchParams.get("bootstrap") === GUI_TOKEN) {
+    res.writeHead(302, {
+      Location: "/",
+      "Set-Cookie": `assistant_session=${GUI_TOKEN}; HttpOnly; SameSite=Strict; Path=/`,
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+    });
+    return res.end();
+  }
+  const bearer = req.headers.authorization === `Bearer ${GUI_TOKEN}`;
+  const cookie = String(req.headers.cookie || "").split(";").some(v => v.trim() === `assistant_session=${GUI_TOKEN}`);
+  const origin = String(req.headers.origin || "");
+  const validOrigin = !origin || origin === `http://127.0.0.1:${PORT}` || origin === `http://localhost:${PORT}`;
+  const fetchSite = String(req.headers["sec-fetch-site"] || "");
+  if ((!bearer && !cookie) || !validOrigin || (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none")) {
+    res.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end('{"error":"unauthorized"}');
+  }
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
   if (req.url === "/" || req.url === "/index.html") {
     // no-store: the WebView (WKWebView) otherwise heuristically caches the UI and serves a stale copy after
     // an edit — so "the code is updated but the app behaves like the old version". Always fetch fresh.
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
     return res.end(fs.readFileSync(path.join(__dirname, "index.html")));
   }
-  if (req.url.split("?")[0] === "/overlay.html") { // the floating Dictation Pill + Menu Bar Tray windows
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-    return res.end(fs.readFileSync(path.join(__dirname, "overlay.html")));
-  }
   if (req.url === "/logo.png") { // brand mark (sidebar, Pro card, recording chip)
     res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "max-age=86400" });
     return res.end(fs.readFileSync(path.join(__dirname, "logo.png")));
+  }
+  if (req.url === "/favicon.ico") { res.writeHead(204, { "Cache-Control": "max-age=86400" }); return res.end(); }
+  if (req.url === "/api/release" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify(RELEASE));
   }
   if (req.url === "/ingest" && req.method === "POST") {
     let body = "";
@@ -371,8 +557,21 @@ http.createServer((req, res) => {
       try {
         const obj = JSON.parse(body);
         // Tag a remote line with whoever meeting-state says is speaking now. "You"/self lines untouched.
-        if (obj.type === "caption" && !obj.self && (!obj.speaker || obj.speaker === "Speaker") && lastState.activeSpeaker)
-          obj.speaker = lastState.activeSpeaker;
+        if (obj.type === "caption") {
+          if (obj.self) {
+            obj.speaker = obj.speaker || "You";
+            obj.speakerSource = "user";
+          } else if ((!obj.speaker || obj.speaker === "Speaker") && lastState.activeSpeaker) {
+            obj.speaker = lastState.activeSpeaker;
+            obj.speakerSource = lastState.activeSpeakerEvidence?.source || "active_speaker";
+            obj.speakerContext = lastState.activeSpeakerEvidence?.context || "";
+          } else if (!obj.speaker || obj.speaker === "Speaker") {
+            obj.speaker = "Unknown speaker";
+            obj.speakerSource = "unknown";
+          } else {
+            obj.speakerSource = obj.speakerSource || "capturer";
+          }
+        }
         ingest(obj);
       } catch {}
       res.writeHead(204); res.end();
@@ -422,9 +621,12 @@ http.createServer((req, res) => {
         const j = JSON.parse(b);
         const patch = j && j.set && typeof j.set === "object" ? j.set : null;
         if (patch) {
-          for (const k in patch) { if (patch[k] == null) delete settingsBlob[k]; else settingsBlob[k] = String(patch[k]); }
+          for (const k in patch) {
+            if (patch[k] == null) delete settingsBlob[k];
+            else settingsBlob[k] = k === "set.aiModel" ? sanitizeAiModel(String(patch[k])) : String(patch[k]);
+          }
           saveSettings();
-          try { const m = patch["set.modules"] != null && JSON.parse(patch["set.modules"]); if (m && typeof m === "object") { modules = { dictation: !!m.dictation, meetings: !!m.meetings, writing: !!m.writing }; dictationCfg.enabled = !!modules.dictation; } } catch {}
+          try { const m = patch["set.modules"] != null && JSON.parse(patch["set.modules"]); if (m && typeof m === "object") { modules = { dictation: m.dictation !== false, meetings: m.meetings !== false, writing: RELEASE.capabilities.writingAssistant ? !!m.writing : false }; dictationCfg.enabled = !!modules.dictation; } } catch {}
         }
       } catch {}
       res.writeHead(204); res.end();
@@ -440,10 +642,16 @@ http.createServer((req, res) => {
         if (typeof j.language === "string") broadcast({ type: "state", state: { language: j.language } });
         if (typeof j.autoDetect === "boolean") { gate.setAutoDetect(j.autoDetect); broadcast({ type: "state", state: { autoDetect: j.autoDetect } }); recomputeLifecycle(); broadcastCall(); } // off → ignore self-detection (manual only)
         if (typeof j.unloadIdle === "boolean") unloadIdle = j.unloadIdle; // off → keep whisper hot
+        if (Number.isFinite(Number(j.whisperIdleMinutes))) {
+          const requested = Number(j.whisperIdleMinutes);
+          // Keep the product choices bounded: immediate unload through one hour. A changed setting
+          // applies to the next idle period; it never interrupts an active transcription.
+          whisperIdleMinutes = Math.min(60, Math.max(0, requested));
+        }
         if (typeof j.vocab === "string") { vocabPrompt = j.vocab.slice(0, 800); broadcast({ type: "state", state: { vocab: vocabPrompt } }); } // custom vocabulary → meeting-tap
         if (j.dictation && typeof j.dictation === "object") { dictationCfg = { ...dictationCfg, ...j.dictation }; broadcast({ type: "state", state: { dictation: dictationCfg } }); } // Handy-style dictation config → meeting-tap
         if (j.modules && typeof j.modules === "object") { // feature opt-in → gates every permission-touching capability
-          modules = { ...modules, ...j.modules };
+            modules = { ...modules, ...j.modules, writing: RELEASE.capabilities.writingAssistant ? !!j.modules.writing : false };
           dictationCfg.enabled = !!modules.dictation;    // the dictation tap follows the module
           settingsBlob["set.modules"] = JSON.stringify(modules); saveSettings(); // persist so the boot-time restore (above) survives a relaunch — was RAM-only, so the server booted all-off until the UI re-pushed
           broadcast({ type: "state", state: { modules, dictation: dictationCfg } });
@@ -471,7 +679,7 @@ http.createServer((req, res) => {
           translate: "false",
           prompt: vocabPrompt ? `Vocabulary: ${vocabPrompt}` : "",
         });
-        const r = await fetch(`http://127.0.0.1:${WHISPER_PORT}/inference`, { method: "POST", headers: { "Content-Type": ct }, body: reqBody });
+        const r = await fetch(`http://127.0.0.1:${WHISPER_PORT}/inference`, { method: "POST", headers: { "Content-Type": ct, Authorization: `Bearer ${process.env.ASSISTANT_STT_TOKEN || GUI_TOKEN}` }, body: reqBody });
         const body = await r.text();
         if (!r.ok) throw new Error(`${r.status} ${body.slice(0, 160)}`);
         let text = ""; try { text = String(JSON.parse(body).text || "").trim(); } catch {}
@@ -500,7 +708,7 @@ http.createServer((req, res) => {
   if (req.url === "/api/open-settings" && req.method === "POST") { // deep-link a macOS Privacy pane (permission checklist)
     readBody(req).then(b => {
       let pane = ""; try { pane = String(JSON.parse(b).pane || ""); } catch {}
-      const PANES = { Privacy_Microphone: 1, Privacy_ScreenCapture: 1, Privacy_Accessibility: 1, Privacy_ListenEvent: 1 }; // whitelist
+      const PANES = { Privacy_Microphone: 1, Privacy_AudioCapture: 1, Privacy_ScreenCapture: 1, Privacy_Accessibility: 1 }; // whitelist
       if (PANES[pane]) execFile("open", ["x-apple.systempreferences:com.apple.preference.security?" + pane]);
       res.writeHead(PANES[pane] ? 204 : 400); res.end();
     });
@@ -529,20 +737,38 @@ http.createServer((req, res) => {
     const one = readMeeting(mm[1]);
     if (!one) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify(one));
+    return res.end(JSON.stringify(meetingForClient(one)));
   }
   const mtitle = req.url.match(/^\/api\/meetings\/([\w-]+)\/title$/); // rename a meeting
   if (mtitle && req.method === "POST") {
     readBody(req).then(b => {
       let t; try { t = String(JSON.parse(b).title || "").trim().slice(0, 120); } catch {}
       if (!t) { res.writeHead(400); return res.end(); }
-      if (cur && cur.id === mtitle[1]) { cur.title = t; saveMeeting(cur); }
+      if (cur && cur.id === mtitle[1]) { cur.title = t; cur.titleSource = "user"; saveMeeting(cur); }
       else {
         const p = path.join(MEETINGS_DIR, mtitle[1] + ".json");
         if (!fs.existsSync(p)) { res.writeHead(404); return res.end(); }
-        try { const m = JSON.parse(fs.readFileSync(p)); m.title = t; fs.writeFileSync(p, JSON.stringify(m)); } catch { res.writeHead(500); return res.end(); }
+        try { const m = JSON.parse(fs.readFileSync(p)); m.title = t; m.titleSource = "user"; writePrivateJson(p, m); } catch { res.writeHead(500); return res.end(); }
       }
       res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ title: t }));
+    });
+    return;
+  }
+  const mcorr = req.url.match(/^\/api\/meetings\/([\w-]+)\/corrections$/);
+  if (mcorr && req.method === "POST") {
+    readBody(req).then(b => {
+      const meeting = readMeeting(mcorr[1]);
+      if (!meeting) { res.writeHead(404); return res.end(); }
+      try {
+        applyCorrection(meeting, JSON.parse(b));
+        persistMeeting(meeting);
+        broadcast({ type: "meeting-updated", id: meeting.id, summaryState: meeting.summaryState || "stale" });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(meetingForClient(meeting)));
+      } catch (e) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(e.message || e) }));
+      }
     });
     return;
   }
@@ -561,20 +787,11 @@ http.createServer((req, res) => {
   }
   const msum = req.url.match(/^\/api\/meetings\/([\w-]+)\/summary$/);
   if (msum && req.method === "POST") {
-    const one = readMeeting(msum[1]);
-    if (!one) { res.writeHead(404); return res.end(); }
     readBody(req).then(b => {
-      let llm, deeper = false, template = ""; try { const j = JSON.parse(b); llm = j.llm; deeper = !!j.deeper; template = String(j.template || ""); } catch {}
-      const instruction = template.trim() || `Summarise this meeting as 3–5 short bullet points, then a line "Action items:" with each as "- <owner>: <task>" (or "None").`;
-      const sys = "You summarise meeting transcripts for a busy professional. Be concise, specific, neutral — no preamble."
-        + (deeper ? " Reason carefully through the discussion — capture decisions, owners, and nuance you might otherwise miss." : "");
-      return chat([
-        { role: "system", content: sys },
-        { role: "user", content: `${instruction}\n\n${one.notes ? `The note-taker's own scratchpad from the call (weight these points):\n${one.notes}\n\n` : ""}Transcript:\n\n${transcriptText(one)}` },
-      ], { maxTokens: deeper ? 1100 : 650, temperature: deeper ? 0.2 : 0.3, llm });
-    }).then(text => {
-      one.summary = text; saveMeeting(one);
-      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ summary: text }));
+      let opts = {}; try { const j = JSON.parse(b); opts = { deeper: !!j.deeper, template: String(j.template || "") }; } catch {}
+      return generateSummaryForMeeting(msum[1], opts);
+    }).then(meeting => {
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ summary: meeting.summary, summaryRevision: meeting.summaryRevision }));
     }).catch(e => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(e.message || e) })); });
     return;
   }
@@ -583,11 +800,11 @@ http.createServer((req, res) => {
     const one = readMeeting(mask[1]);
     if (!one) { res.writeHead(404); return res.end(); }
     readBody(req).then(b => {
-      let q = "", llm; try { const j = JSON.parse(b); q = j.question || ""; llm = j.llm; } catch {}
+      let q = ""; try { const j = JSON.parse(b); q = j.question || ""; } catch {}
       return chat([
         { role: "system", content: "Answer questions about this meeting using ONLY its transcript. If it isn't covered, say so briefly." },
         { role: "user", content: `Transcript:\n${transcriptText(one)}\n\nQuestion: ${q}` },
-      ], { maxTokens: 500, llm });
+      ], { maxTokens: 500, llm: storedLLM() });
     }).then(text => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ answer: text })); })
       .catch(e => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(e.message || e) })); });
     return;
@@ -627,4 +844,3 @@ function startMeetingState() {
     if (!msShutdown) setTimeout(startMeetingState, 1000); // died mid-session — respawn so the app doesn't go blind to calls
   });
 }
-

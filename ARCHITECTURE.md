@@ -10,20 +10,22 @@ changing capture, transcription, or packaging.
 ```
  you (mic, AVAudioEngine) ──────┐
  others (Core Audio tap; SCK ───┤─▶ stt/meeting-tap (Swift)
-   only when recording video)   │     • self-detects the call from the Core Audio PROCESS list (no permission)
+   only when recording video)   │     • dedicated apps: Core Audio; browser/chat: audio + AX meeting evidence
                                 │     • audio-only ⇒ "System Audio Recording Only"; Screen Recording = video
                                 │     • energy gate → splits speech into WHOLE utterances (natural pauses)
                             ▼
               transcribe-server (transcribe.cpp + Metal · large-v3-turbo)   ← on demand, unloaded when idle
                             │  POST /inference → {"text": …}
                             ▼
-              app/server.js ──Server-Sent Events──▶ http://localhost:8790  (the UI, app/index.html)
+              Rust local_server ──Server-Sent Events──▶ http://127.0.0.1:8790  (the UI, app/index.html)
                             ▲
               meeting-state (Swift, Accessibility) ─┘  speaker names, mute/share state
 ```
 
-Every component is on-device. No bot joins the call; no audio leaves the machine. A zero-dependency Node
-server relays captions over SSE; the same UI runs in a browser (dev) or the Tauri window (packaged).
+Every component is on-device. No bot joins the call; no audio leaves the machine unless the user explicitly
+selects a cloud transcription or summary provider. The authenticated Rust server inside the Tauri process
+relays captions over SSE and serves the same UI used by the developer browser harness. No Node runtime or
+second always-on server process is shipped.
 
 ## Key decisions
 
@@ -35,7 +37,7 @@ server relays captions over SSE; the same UI runs in a browser (dev) or the Taur
   a future model picker (Parakeet / Qwen3-ASR / Voxtral) cheap — the wire format is already engine-neutral.
 - **Tauri, not Electron.** Rust shell + OS WebView rendering vanilla HTML/CSS/JS. Cross-platform, tiny
   footprint. The heavy compute (transcription) is native C++/Metal, so the UI language never bottlenecks.
-  The packaged app and the browser build load the *same* UI from `localhost:8790` — one codebase.
+  The packaged app and the browser build load the *same* UI from loopback port 8790 — one codebase.
 - **On-device LLM via LiteRT-LM, not GGUF.** Post-call summary/ask uses **Gemma 4 E2B through LiteRT-LM**,
   which keeps it at *effective-2B* (~1 GB RAM) via Per-Layer-Embedding offload. A plain GGUF loads the
   full ~5 B params (~3 GB) and **hangs an 8 GB M1 Air**. OpenAI-compatible API, so one client also serves
@@ -43,13 +45,16 @@ server relays captions over SSE; the same UI runs in a browser (dev) or the Taur
 - **Core Audio process taps for audio, ScreenCaptureKit only for video** (Fathom's model). The other
   participants are captured with a **Core Audio process tap** scoped to the meeting app — the
   "System Audio Recording Only" TCC category, **no Screen Recording**. Call self-detection reads the same
-  Core Audio **process list** (which app is doing audio I/O), so knowing you're in a call needs no permission
-  either. ScreenCaptureKit (→ "Screen & System Audio Recording") is used **only** when you record video.
+  Core Audio **process list** (which app is doing audio I/O). Dedicated conferencing apps need no additional
+  detection permission. Browsers and multipurpose chat apps also require narrowly scoped Accessibility
+  evidence from the audio-active app, preventing YouTube or a notification sound from starting a meeting.
+  ScreenCaptureKit (→ "Screen & System Audio Recording") is used **only** when you record video.
   Net: an audio-only meeting asks for **Microphone + System Audio Recording Only**; Screen Recording is
   video-only. Taps need the macOS **14.2+ SDK** (so `meeting-tap` builds with `-target …14.4`; update Command
   Line Tools if `xcrun --show-sdk-version` < 14).
 - **Everything on demand.** The transcription server and the LLM load when needed and unload after an idle
-  timeout (transcription ~2 min after a call; LLM ~5 min), so nothing heavy sits resident between calls.
+  timeout (transcription is user-configurable, 10 min default; LLM ~5 min), so nothing heavy must sit
+  resident indefinitely between calls.
   This mirrors Handy's `model_unload_timeout`.
 
 ## transcribe-server
@@ -58,16 +63,17 @@ A ~130-line HTTP wrapper (`stt/transcribe-server/transcribe-server.cpp`, using s
 around transcribe.cpp's C API. It loads a GGUF once, holds it hot, and serves `POST /inference`
 **byte-compatible with whisper.cpp's `whisper-server`** — multipart `file` + `language` + `translate` +
 `prompt` (custom-vocabulary bias → the whisper run-ext's `initial_prompt`), returns `{"text": …}`. Because
-the interface matches, the capturer and Node server are engine-agnostic; swapping engines is a spawn-path
+the interface matches, the capturer and Rust server are engine-agnostic; swapping engines is a spawn-path
 change, not a client change.
 
 - **Build:** `stt/transcribe-server/build.sh` fetches transcribe.cpp at a **pinned commit**
   (`PINNED_COMMIT`), drops our `.cpp` + `httplib.h` in as a CMake example target, builds with Metal, and
   re-signs the binary (see Traps → signing). `setup.sh` runs it and downloads the GGUF. First build
   compiles ggml (~2–4 min); the clone is cached under `.transcribe.cpp/` (git-ignored).
-- **Lifecycle:** `server.js` (`ensureWhisper`) spawns it when a call starts, kills it when idle. It needs
-  **no TCC permissions** (it only reads WAV bytes over localhost), so switching to it required no rebuild
-  and no re-grant — the packaged app picks it up via the repo path on next launch.
+- **Lifecycle:** the in-process Rust server spawns it only when audio reaches transcription and kills it
+  after the user-configurable idle timeout (10 minutes by default). It binds only to loopback and requires
+  a per-launch bearer token inherited through the environment. It needs **no TCC permissions** because it
+  only reads transient WAV bytes from the trusted app over localhost.
 
 ## Transcription: the hard-won rules
 
@@ -105,17 +111,16 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   Recording Only** (`AudioCapture` — Core Audio taps), Screen Recording (`ScreenCapture` — ScreenCaptureKit),
   Accessibility. Granting one does not grant the others. An **audio-only meeting** needs Microphone (your
   voice) + System Audio Recording Only (the others' voices via the tap) — **not** Screen Recording. Screen
-  Recording is asked for **only when recording video**. Call detection reads the Core Audio process list and
-  needs no permission. Accessibility is only for Zoom speaker names. (Dictation needs none of these — its
-  Carbon hotkey + ⌘V paste are permission-free.) **Settings → General → Permissions** surfaces the live
-  grant status of each — a `perm_status` command checks `AXIsProcessTrusted()` (Accessibility) and
-  `CGPreflightScreenCaptureAccess()` (Screen Recording) in-process, rendering *Allowed* or an
-  Open-System-Settings action and re-polling while open.
-- **Grants reach a direct child, not a grandchild.** A helper spawned *through node* (`app → node → helper`)
-  is a grandchild; macOS attributes its permission check to node, not the app, so it's never trusted.
-  Therefore `meeting-state` is spawned **directly by Rust** (`start_meeting_state`), and its NDJSON is
-  forwarded to the server via `curl`. `meeting-tap` (also a direct child) inherits Mic + System Audio (+ Screen
-  Recording when recording video).
+  Recording is asked for **only when recording video**. Dedicated-app detection reads the Core Audio process
+  list without permission; browser/chat detection also uses meeting-only Accessibility evidence. Accessibility
+  is also used for Zoom speaker names and dictation paste; the Carbon hotkey itself needs no permission.
+  **Settings → General → Permissions** surfaces reliable live status for
+  Accessibility and Screen Recording through `perm_status`. Microphone and System Audio Recording are
+  labeled *Requested on first use* with recovery links because this layer does not expose a dependable live
+  status for them.
+- **Permission-needing helpers are direct children.** `meeting-state` and `meeting-tap` are spawned directly
+  by Rust, so macOS can associate their checks with the app's stable identity. `meeting-state` NDJSON is
+  forwarded over a tiny authenticated in-process localhost request (no polling or per-update `curl`).
 - **Ad-hoc signing pins the grant to a bare cdhash — it dies on the next rebuild.** swiftc's linker output
   *and* Tauri's default bundle output are ad-hoc; ad-hoc code has no stable identity, so when you grant, TCC
   can only store a bare `cdhash H"…"` requirement (no identifier, no cert). The very next rebuild changes the
@@ -131,7 +136,11 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   own (a helper with its own id would need — and re-prompt for — a separate grant, even cert-signed).
   `security find-identity -v` *hides* the cert as `CSSMERR_TP_NOT_TRUSTED`, but it still signs fine; create it
   once via Keychain Access → *Create a Certificate* (Code Signing, self-signed). Untrusted by Gatekeeper, so
-  **not** distributable to other Macs — Developer-ID + notarization remains the portable-installer answer.
+  This is intentionally not an Apple Developer ID. Recipients can still install the DMG, but on current
+  macOS must attempt launch, then use **Privacy & Security → Open Anyway** so macOS records their explicit
+  approval (older versions may expose this via Control-click → Open). Ordinary launches work afterward.
+  A completely warning-free first launch is the one benefit this project cannot provide without Apple's
+  paid Developer ID and notarization.
 - **Switching an already-granted binary from ad-hoc → cert invalidates the old grant** (its stored `csreq` is
   a stale cdhash, not the new identity). `tccutil reset ScreenCapture com.myassistant.desktop` once (or remove
   the entry in System Settings), relaunch, re-grant — then it sticks across all future rebuilds. Diagnose by
@@ -146,19 +155,27 @@ Get these wrong and the double-click app silently fails or nags on every launch.
 
 ## Call detection
 
-`meeting-tap` self-detects "in a call" from the Core Audio process list (no permission — not Screen Recording),
-POSTs `inMeeting` to the server, and gates capture on it. **Trap:** an idle native app can keep meeting-ish
-windows alive off-screen (e.g. Zoom retains a `zoom floating video window` when no call is running). Match
-the main `Zoom Meeting` window unconditionally (it exists only during a real call), but count the
-floating-video / share-statusbar windows **only when `isOnScreen`** — otherwise the app false-detects a
-call whenever the meeting app is merely open.
+`meeting-tap` self-detects "in a call" from per-app Core Audio activity. For a dedicated conferencing app,
+audio activity is sufficient. For a browser or multipurpose chat app, the same process must also expose
+platform-specific meeting evidence through Accessibility. It then POSTs a source-tagged `inMeeting` and gates
+capture on it. The server accepts automatic start/end only from this combined detector's `source: "coreaudio"`;
+the separate `meeting-state` stream is metadata, never lifecycle authority. This is the key false-positive
+boundary: an idle app, YouTube tab, or ordinary notification cannot start a meeting.
+
+The same Core Audio detector publishes an internal distributed notification to `meeting-state`.
+Accessibility is completely idle until that notification says a call is active. During the call it uses
+`AXObserver` for native UI changes plus a low-frequency reconciliation pass because Zoom's embedded
+Chromium UI does not emit every participant/speaker mutation. A heartbeat timeout puts it back to sleep if
+the capturer disappears. This internal event is **not** the user-facing “Meeting detected” notification;
+it is the efficient signal that a future top-center panel or macOS notification should follow.
 
 ## Recording control: auto-detect composed with manual
 
 Recording is driven by an **effective state** the server computes from two inputs, not by detection alone:
 
-- **`detected`** — the raw "in a call" the capturers self-report (`meeting-tap` from the window list,
-  `meeting-state` from Accessibility).
+- **`detected`** — the raw "in a call" state reported authoritatively by `meeting-tap` from Core Audio,
+  plus meeting-window evidence for browser/chat platforms.
+  `meeting-state` can enrich the active call but cannot change this value.
 - **`manual`** — an optional UI override (`on` / `paused` / `off`), set via `POST /api/meeting/control`.
 
 ```
@@ -180,7 +197,8 @@ That one value drives the meeting lifecycle (start / finalize), the elapsed time
   the `detected` edge, not the finalize path (a screen-share blip would re-arm early otherwise).
 - `meeting-tap` reads `manual` + `autoDetect` from `/api/state` and gates *capture* (the mic) on them —
   so a pause/stop genuinely releases the mic, not just the UI — while still reporting raw `detected` so the
-  server can re-arm. Captions that slip through before it polls are dropped server-side when
+  server can re-arm. Configuration is fetched with in-process `URLSession` (no two-second `curl` subprocess);
+  captions that slip through before the next update are dropped server-side when
   `!effectiveRecording()`.
 
 The **live overlay** (`app/index.html`) mirrors this state: a floating, draggable in-call panel — recording
@@ -192,11 +210,14 @@ fed into the summary prompt.
 ## Capture & recording
 
 - **Meeting-gated** (`--gate on`): mic + system taps run only during a detected call; the mic is released
-  otherwise. `--gate off` = always capture (browser calls we can't yet recognize by window).
+  otherwise. `--gate off` remains a developer/manual fallback for any unrecognized platform.
 - **Video** is optional (off / always / only-when-shared). Tuned to stay light on long calls: SCK
   downscales to ≤1080p on the GPU, hardware H.264 at 10 fps ≤4 Mbps, and `movieFragmentInterval = 10 s` so
   RAM stays flat and a hard-crashed file is still playable. Finalizes on call-end and on SIGINT/SIGTERM via
   a **retained** `DispatchSourceSignal` (a local signal source deallocates and never fires — a real bug).
+  The first complete frame is written natively as a small private JPEG; no `ffmpeg` dependency is shipped.
+  Without video, the library resolves the installed native app icon through `NSWorkspace`, then falls back
+  to a lightweight platform identity tile.
 - **Use headphones.** On speakers the mic re-hears the remote voices → duplicate lines (acoustic echo, no
   code fix). If SCK goes silent after long uptime: `sudo killall coreaudiod`.
 
@@ -207,7 +228,8 @@ fed into the summary prompt.
 **Trap:** Zoom labels non-people ("Set up professional audio…", "Waiting for host…") with the same
 AX-string shape as tiles, so `validName()` must reject UI/chrome words (whole-word list) and cap length,
 and `canonName()` strips trailing "(Me)"/"(Host, me)" so a person doesn't appear twice. `--selftest` covers
-it. Solid 1-on-1; best-effort in large gallery calls.
+it. The helper only installs its observer and reconciliation timer after Core Audio confirms a call. Solid
+1-on-1; best-effort in large gallery calls.
 
 ## Dictation
 
@@ -216,10 +238,9 @@ app process** — a deliberate reversal of an earlier design that lived in `meet
 is what lets the app's *own* Accessibility grant authorize the paste, and it removes a ~300 ms
 per-keypress helper spawn. The loop:
 
-1. **Hotkey** — a global shortcut (default **⌃⇧D**) via `tauri-plugin-global-shortcut`, backed by Carbon's
-   `RegisterEventHotKey`. It needs **no macOS permission at all** — not Accessibility, not Input Monitoring
-   — and, unlike a raw CGEvent tap, it reports key **release** as well as press, so hold-to-talk works
-   without an event tap. One shortcut drives both modes (tap-to-toggle / hold-to-talk), chosen in Settings.
+1. **Hotkey** — a global shortcut (default **Right Command**) with a bare-modifier event tap; ordinary
+   key combinations use `tauri-plugin-global-shortcut` backed by Carbon's `RegisterEventHotKey`. The
+   shortcut is rebindable and one binding drives both tap-to-toggle and hold-to-talk modes.
 2. **Record** — the mic is captured **in-process with `cpal`** on a dedicated thread (a cpal `Stream` is
    `!Send`: its owning thread builds it, parks on an atomic stop flag, and drops it on that same thread).
    The app itself prompts for **Microphone** on first use (`NSMicrophoneUsageDescription` in Info.plist).
@@ -232,8 +253,8 @@ per-keypress helper spawn. The loop:
    speech produces nothing. This is what stops Whisper from hallucinating a fluent loop on a long or
    accidental recording. (Why this is *not* a contradiction of the "no VAD prefilter" rule: see Transcription
    rule 3 — dictation feeds short clips, the meeting path feeds gated whole utterances.)
-4. **Transcribe** — the speech-only WAV POSTs to **`POST /api/transcribe`** (Node runs `ensureWhisper()`,
-   then forwards to `transcribe-server` — the seam a future cloud provider slots into). Dictation pins
+4. **Transcribe** — the speech-only WAV POSTs to the authenticated **`POST /api/transcribe`** route (Rust
+   starts `transcribe-server` on demand, then streams the request to it). Dictation pins
    **`language=en` + the transcribe task** (`translate=false`), matching Handy's *runtime* (its debug log
    shows `task=Transcribe, language=en` even though its settings say `translate_to_english` — the translate
    task only engages for a non-English source). This gives clean English on short mixed Hindi-English clips.
@@ -243,7 +264,8 @@ per-keypress helper spawn. The loop:
    called from the transcription thread.
 
 Progress and results ride the existing SSE channel: `emit_dstate()` POSTs `dictation-state` to `/ingest`
-(drives the pill), and the final text POSTs `{type:'dictation'}` (drives the Dictation view).
+(drives the main Dictation view), while Rust updates the native status pill directly. The final text POSTs
+`{type:'dictation'}` to populate Dictation history.
 
 **Settings are real, and split by who applies them.** The server owns only what it applies at transcription
 time — **language** and **punctuation** (Off strips it) — via `/api/config`. Everything the app process owns
@@ -255,13 +277,11 @@ is swapped live (unregister old → register new, validated so an unmappable com
 Custom vocabulary still feeds the transcribe prompt. Rows we can't yet honor on-device (system-audio muting,
 auto-pause) were **removed** rather than shipped inert — every switch in the panel now does what it says.
 
-**The pill overlay** — a borderless, click-through window (`app/overlay.html`) that Rust alone shows/hides.
-To float over **every** app, including another app's **full-screen** space, it is converted at show-time
-into a **non-activating `NSPanel`** via objc2: `object_setClass` NSWindow→NSPanel + the nonactivating style
-bit + `NSScreenSaverWindowLevel` + `canJoinAllSpaces | fullScreenAuxiliary` + `orderFrontRegardless`. A
-plain NSWindow cannot render in another app's full-screen space at *any* level — this is exactly the trick
-`tauri-nspanel` (which Handy uses) performs; doing it inline avoids the dependency. Being non-activating, it
-never pulls focus off the field you're dictating into.
+**The dictation pill** — a compact, borderless, click-through native **`NSPanel`** built with objc2/AppKit.
+It uses `NSScreenSaverWindowLevel`, `canJoinAllSpaces | fullScreenAuxiliary`, and
+`orderFrontRegardless`, so it remains visible above full-screen apps without activating My Assistant or
+stealing focus from the text field. It is allocated lazily on first use and reused after being ordered out.
+No hidden pill WebView or WebKit renderer remains resident while the app is idle.
 
 **Setup:** none of the old friction — no Input Monitoring grant, no 🌐/Fn-key remap. Microphone
 auto-prompts on first use; Accessibility is the single shared grant (with Meetings) for the paste.
@@ -271,15 +291,16 @@ auto-prompts on first use; Accessibility is the single shared grant (with Meetin
 A packaged `.app` is self-contained for **code**, and resolves **data + model** to writable, per-user
 locations — so it runs when moved off the repo:
 
-- **Bundled into `Contents/Resources/`** (via `bundle.resources`): the web app + server (`webui/`) and the
-  Swift/STT binaries (`stt/`, `meeting-state/`). `init_paths()` points `RES_BASE` at the Resources dir in a
-  release build and at the repo in dev; server + helpers spawn from there. The web dir is staged as
+- **Bundled into `Contents/Resources/`** (via `bundle.resources`): minified web assets (`webui/`) and the
+  Swift/STT binaries (`stt/`, `meeting-state/`). The server itself is compiled into the Rust app binary.
+  `init_paths()` points `RES_BASE` at the Resources dir in a release build and at the repo in dev; helpers
+  spawn from there. The web dir is staged as
   `webui/`, **not** `app/` — a top-level `app/` resource collides with the crate's own `app` binary during
   Tauri's dev staging (EEXIST).
 - **Writable state → `~/Library/Application Support/My Assistant/`** (the bundle is read-only): saved
-  meetings + recordings under `data/`, the model under `models/`. Node receives these as `ASSISTANT_DATA_DIR`
-  / `ASSISTANT_MODELS_DIR`; the baked repo path rides along as `ASSISTANT_REPO` so a build machine that
-  already has the model never re-downloads it.
+  meetings + recordings under `data/`, the model under `models/`. Secrets are stored in macOS Keychain,
+  transient audio lives in a private `0700` temp directory, and saved files are written with owner-only
+  permissions.
 - **The model is NOT bundled** (845 MB). The server resolves it across `[models dir → repo → ./run.sh
   layout]`; if it's absent the UI **asks first** (Handy's way — never silent): `GET /api/model/status` → a
   first-run prompt → `POST /api/model/download` streams the GGUF from Hugging Face into `models/` with
@@ -287,8 +308,9 @@ locations — so it runs when moved off the repo:
 - **The `.dmg`** is built by `desktop/make-dmg.sh` (plain `hdiutil`, a drag-to-Applications installer) —
   **not** Tauri's DMG step, whose create-dmg fork always runs a Finder AppleScript that fails in any
   non-interactive shell. So `bundle.targets` is `["app"]`: `npm run build` makes the signed `.app`,
-  `make-dmg.sh` makes the installer. Signing uses the self-signed **My Assistant Dev** identity
-  (`bundle.macOS.signingIdentity`); distribution to other Macs still needs Developer-ID + notarization.
+  `make-dmg.sh` makes the installer. Signing uses the stable self-signed **My Assistant Dev** identity
+  (`bundle.macOS.signingIdentity`). The DMG includes a short install guide for the one-time current-macOS
+  **Privacy & Security → Open Anyway** approval required by this no-paid-account distribution route.
 
 ## Traps checklist (the landmines)
 
@@ -298,7 +320,7 @@ locations — so it runs when moved off the repo:
   strip surrounding silence (see Dictation). Different input, different rule.
 - Don't leave any helper ad-hoc / `linker-signed` — re-sign it as `--identifier com.myassistant.desktop
   --sign "My Assistant Dev"` after every build (ad-hoc pins a cdhash that dies on the next rebuild).
-- Don't spawn permission-needing helpers through node — spawn them directly from Rust.
+- Don't put permission-needing helpers behind an intermediary process — spawn them directly from Rust.
 - Don't match off-screen meeting windows in detection — gate secondary windows on `isOnScreen`.
 - Don't set `excludesCurrentProcessAudio = true` — it wedges SCK into silent capture.
 - Don't run the on-device LLM as a raw GGUF — use LiteRT-LM, or it hangs an 8 GB Mac.
@@ -325,12 +347,13 @@ locations — so it runs when moved off the repo:
 | Path | Role |
 |---|---|
 | `desktop/` | Tauri app — self-starts the stack; tray, screen-share stealth, close-to-tray; **in-process dictation** (global hotkey · cpal mic · Silero VAD · CGEvent paste · NSPanel pill) |
-| `stt/meeting-tap.swift` | Core Audio tap (audio, no Screen Recording) + SCK (video) + process-list call detection + utterance segmentation |
+| `stt/meeting-tap.swift` | Core Audio tap (audio, no Screen Recording) + SCK (video) + audio/meeting-evidence call detection + utterance segmentation |
 | `stt/transcribe-server/` | our transcribe.cpp HTTP wrapper (source + pinned-commit `build.sh`) |
 | `stt/whisper/` | GGUF model (git-ignored; fetched by `setup.sh`) |
 | `meeting-state/meeting-state.swift` | Accessibility layer: speaker names, mute/share |
-| `app/server.js` | SSE relay + meeting store + on-demand engine/LLM + `/api/transcribe` + first-run model download + video serving (no deps) |
+| `desktop/src-tauri/src/local_server.rs` | packaged authenticated UI/API + SSE relay + meeting store + on-demand STT/LLM + model verification + streaming video |
+| `app/server.js` | developer-only browser harness; never bundled in the release app |
 | `app/index.html` | the UI — nav, live transcript, Library + detail, settings; light/dark |
-| `app/overlay.html` | the floating Dictation Pill (pill-only; the menu-bar dropdown is a native macOS menu) |
+| `desktop/src-tauri/src/native_pill.rs` | native AppKit dictation status pill (the menu-bar dropdown is also native) |
 | `desktop/make-dmg.sh` | portable drag-to-install `.dmg` (hdiutil; bypasses Tauri's AppleScript DMG step) |
 | `run.sh` · `setup.sh` | dev launcher · one-time build + model download |

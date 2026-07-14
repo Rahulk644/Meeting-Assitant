@@ -3,13 +3,11 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main",
-    "pill"
+    "main"
   ],
   "remote": {
     "urls": [
-      "http://127.0.0.1:8790",
-      "http://localhost:8790"
+      "http://127.0.0.1:8790"
     ]
   },
   "permissions": [

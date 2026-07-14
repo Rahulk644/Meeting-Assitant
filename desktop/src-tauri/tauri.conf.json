@@ -12,7 +12,7 @@
     "withGlobalTauri": true,
     "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; media-src 'self'; connect-src 'self' http://127.0.0.1:8790; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {
@@ -26,17 +26,18 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../app/server.js": "webui/server.js",
-      "../../app/index.html": "webui/index.html",
-      "../../app/overlay.html": "webui/overlay.html",
-      "../../app/logo.png": "webui/logo.png",
-      "../../app/logo-full.png": "webui/logo-full.png",
+      "../web-dist/index.html": "webui/index.html",
+      "../web-dist/release-payload.json": "webui/release-payload.json",
+      "../web-dist/logo.png": "webui/logo.png",
+      "../../LICENSE": "LICENSE",
+      "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../../stt/meeting-tap": "stt/meeting-tap",
       "../../stt/transcribe-server/transcribe-server": "stt/transcribe-server/transcribe-server",
       "../../meeting-state/meeting-state": "meeting-state/meeting-state"
     },
     "macOS": {
-      "signingIdentity": "My Assistant Dev"
+      "signingIdentity": "My Assistant Dev",
+      "minimumSystemVersion": "14.4"
     },
     "android": {
       "debugApplicationIdSuffix": ".debug"

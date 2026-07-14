@@ -1,10 +1,10 @@
 [package]
 name = "app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "Local-first dictation and meeting notes for macOS"
+authors = ["Rahul Khatri"]
+license = "MIT"
+repository = "https://github.com/Rahulk644/Meeting-Assitant"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -23,12 +23,26 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.3", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-log = "2"
+tauri-plugin-notification = "2"               # native meeting-start alerts, emitted only after Core Audio confirms a live call
 # In-app dictation (runs as the app itself, so one Accessibility grant covers it — no fragmented helper):
 tauri-plugin-global-shortcut = "2"          # Carbon hotkey — needs NO Input Monitoring / Accessibility
 core-graphics = "0.23"                      # synth ⌘V (explicit Command flag) to paste — the proven CGEvent method
 core-foundation = "0.9"                     # CFRunLoop that services the bare-modifier event tap (Handy-style right-⌘/Option trigger)
 macos-accessibility-client = "0.0.2"        # prompt for Accessibility under the app's own identity
-objc2 = "0.5"                               # set the pill NSWindow to a high level + all-spaces so it floats over OTHER apps
+objc2 = "0.6.4"                             # typed Objective-C ownership for the native AppKit dictation panel
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData", "NSDictionary", "NSGeometry", "NSObject", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSBitmapImageRep", "NSBox", "NSColor", "NSControl", "NSFont", "NSGraphics", "NSImage", "NSImageRep", "NSPanel", "NSResponder", "NSScreen", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
 cpal = "0.15"                               # record the mic IN-PROCESS (like Handy) — no meeting-tap spawn, so no ~300ms start lag
 hound = "3.5"                               # encode the captured audio to a 16-bit PCM WAV for the STT server
 voice_activity_detector = "0.2"             # Silero VAD (same model family Handy bundles) — strips non-speech before Whisper so silence can't hallucinate; statically links onnxruntime via `ort`, so the binary stays self-contained
+tiny_http = "0.12"                          # in-process loopback API/UI server; replaces the 108 MB bundled Node runtime
+security-framework = "3"                    # store optional cloud-provider API keys in the macOS Keychain
+ureq = { version = "3.3", default-features = false, features = ["json", "native-tls-no-default"] } # provider HTTPS in-process; secrets never enter files or process arguments
+
+[profile.release]
+# Developer/debug symbols are useful in local builds but add roughly 9 MB to the shipped executable.
+# Keep runtime code unchanged while removing that release-only packaging weight.
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+panic = "abort"

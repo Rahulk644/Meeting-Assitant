@@ -7,23 +7,22 @@
 // chunks) is what makes it accurate — a mid-sentence cut severs context and the model hallucinates.
 //
 // Build:  swiftc -O -target arm64-apple-macos14.4 meeting-tap.swift -o meeting-tap \
-//           -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreAudio \
+//           -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework CoreImage \
 //           -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist
 //
 // Run:    meeting-tap <guiPort=8787> <whisperURL> [--app auto|all|<id>] [--mic on|off] [--me <name>]
 //         meeting-tap --list-apps       # capturable apps + bundle ids (pick one for --app)
 //
-//   --app auto  (default) captures only the running native meeting app (Zoom/Teams/Webex/FaceTime),
-//               so background audio (a YouTube tab) is NOT transcribed. If none is running it falls
-//               back to the whole system. Google Meet lives in a browser — pass --app <browser bundle>.
+//   --app auto  (default) captures a dedicated meeting app, or a browser/chat app only when active audio
+//               and meeting-window evidence agree. Background browser audio does not start recording.
 //   --mic on    (default) also transcribes your own mic, labeled "<name> (Me)". Needs Microphone
 //               permission on the launching terminal.  --mic off to skip it.
 //   --me <name> your label (default: the macOS full name).  --rms / --mic-rms tune the VAD gates
 //               (system 0.006, mic 0.02 — the mic is higher because a room is noisier than the feed).
 //   --min-conf 0.5   drop utterances below this mean word-confidence (kills noise hallucinations).
 //   --expressions    keep Whisper's *sigh* / (laughs) cues as [sigh] tags for a sentiment read.
-//   --gate on|off    on (default) captures ONLY while you're in a call (self-detected from the Core Audio
-//                    PROCESS list — no Screen Recording); off = always capture (Google Meet / manual record).
+//   --gate on|off    on (default) captures ONLY while you're in a call (Core Audio plus meeting-only AX
+//                    evidence where needed — no Screen Recording); off = always capture (manual record).
 //   NOTE: use HEADPHONES. On speakers, the mic re-hears the remote voices → duplicate/misattributed
 //         lines. Headphones give a clean split: mic = you, system audio = them.
 //
@@ -37,8 +36,11 @@ import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
 import CoreAudio       // Core Audio process taps (macOS 14.2+) — "System Audio Recording Only", no screen recording
+import CoreImage       // downscaled first-frame JPEG for the meeting library; no bundled ffmpeg subprocess
 import AppKit          // NSFullUserName (the "(Me)" label). Dictation's hotkey + ⌘V paste live in the app
                        // process itself (see desktop/src-tauri) — this binary only records meeting audio.
+import ApplicationServices // meeting-only AX evidence for browser tabs and multipurpose call apps
+import Darwin          // kill(pid, 0): fail closed if the parent app crashes instead of becoming an orphan
 
 func err(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
 func f2(_ v: Float) -> String { String(format: "%.4f", v) }
@@ -62,8 +64,35 @@ let EXPRESSIONS = A.contains("--expressions")                // keep *sigh*/(lau
 let GATE = opt("--gate", "on") != "off"                      // capture ONLY while in a call (self-detected from the window list)
 let VIDEO_MODE0 = opt("--video", "off")                      // off | always | share — server config overrides live
 let REC_DIR = opt("--rec-dir", "data/meetings/rec")          // where screen recordings (.mp4) are written
+let TEMP_DIR = opt("--temp-dir", FileManager.default.temporaryDirectory.path)
+let GUI_TOKEN = ProcessInfo.processInfo.environment["ASSISTANT_GUI_TOKEN"] ?? opt("--gui-token", "")
+let STT_TOKEN = ProcessInfo.processInfo.environment["ASSISTANT_STT_TOKEN"] ?? opt("--stt-token", "")
+let PARENT_PID = pid_t(ProcessInfo.processInfo.environment["ASSISTANT_PARENT_PID"] ?? "") ?? 0
 let VIDEO_FPS: Int32 = 10                                    // screen content doesn't need 30fps; 10 keeps files small
 let ME = { let n = NSFullUserName(); return opt("--me", n.isEmpty ? "Me" : n) }()  // shown as "<name> (Me)"
+try? FileManager.default.createDirectory(atPath: TEMP_DIR, withIntermediateDirectories: true,
+                                         attributes: [.posixPermissions: 0o700])
+
+// Keep control-plane HTTP inside this process. The previous implementation launched /usr/bin/curl
+// every two seconds for configuration and again for every state/caption event. URLSession reuses
+// connections and avoids thousands of short-lived processes during a long meeting.
+let netSession: URLSession = {
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.timeoutIntervalForRequest = 2
+    cfg.httpMaximumConnectionsPerHost = 2
+    return URLSession(configuration: cfg)
+}()
+
+func postJSON(_ object: [String: Any], path: String = "/ingest") {
+    guard let body = try? JSONSerialization.data(withJSONObject: object),
+          let url = URL(string: "http://127.0.0.1:\(guiPort)\(path)") else { return }
+    var req = URLRequest(url: url)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    if !GUI_TOKEN.isEmpty { req.setValue("Bearer \(GUI_TOKEN)", forHTTPHeaderField: "Authorization") }
+    req.httpBody = body
+    netSession.dataTask(with: req).resume()
+}
 
 // VAD / segmentation tuning
 let SR = 16000.0
@@ -74,13 +103,130 @@ let MIN_SEG = 0.5                   // ignore blips shorter than this
 // feeds the entire utterance (25 s is fine — under Whisper's 30 s window). Cut only a nonstop monologue.
 let MAX_SEG = Double(opt("--max-seg", "25")) ?? 25.0
 
-// Native meeting apps we auto-scope to (browsers excluded on purpose — a browser may just be YouTube).
-let NATIVE_MEETING: Set<String> = [
-    "us.zoom.xos",                               // Zoom
-    "com.microsoft.teams", "com.microsoft.teams2",
-    "com.cisco.webexmeetingsapp",                // Webex
-    "com.apple.FaceTime",
+// Dedicated call apps are safe to gate from active Core Audio alone. Multipurpose communication apps
+// and browsers need BOTH active audio and meeting-shaped Accessibility evidence, so a Slack notification
+// or a YouTube tab cannot start a recording. If Accessibility is off, every platform remains available
+// through the explicit Record button; only conservative auto-detection is reduced.
+let DEDICATED_MEETING_APPS: [(key: String, bundles: Set<String>)] = [
+    ("zoom", ["us.zoom.xos"]),
+    ("teams", ["com.microsoft.teams", "com.microsoft.teams2"]),
+    ("webex", ["com.cisco.webexmeetingsapp", "com.cisco.webex2"]),
+    ("facetime", ["com.apple.FaceTime"]),
+    ("goto", ["com.logmein.GoToMeeting", "com.goto.GoTo"]),
+    ("ringcentral", ["com.ringcentral.glip", "com.ringcentral.RingCentral"]),
+    ("around", ["com.getaround.Around"]),
+    ("skype", ["com.skype.skype"]),
 ]
+let EVIDENCE_MEETING_APPS: [(key: String, bundles: Set<String>)] = [
+    ("slack", ["com.tinyspeck.slackmacgap"]),
+    ("discord", ["com.hnc.Discord"]),
+    ("whatsapp", ["net.whatsapp.WhatsApp"]),
+    ("telegram", ["ru.keepcoder.Telegram"]),
+    ("signal", ["org.whispersystems.signal-desktop"]),
+]
+let BROWSER_BUNDLES: Set<String> = [
+    "com.apple.Safari", "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary",
+    "com.microsoft.edgemac", "com.microsoft.edgemac.Beta", "com.microsoft.edgemac.Dev",
+    "company.thebrowser.Browser", "com.brave.Browser", "org.mozilla.firefox", "org.chromium.Chromium",
+    "com.operasoftware.Opera", "com.vivaldi.Vivaldi",
+]
+let KNOWN_CALL_BUNDLES = Set(DEDICATED_MEETING_APPS.flatMap(\.bundles)
+    + EVIDENCE_MEETING_APPS.flatMap(\.bundles) + Array(BROWSER_BUNDLES))
+
+func dedicatedKey(_ bundle: String) -> String? {
+    DEDICATED_MEETING_APPS.first(where: { $0.bundles.contains(bundle) })?.key
+}
+func evidenceKey(_ bundle: String) -> String? {
+    EVIDENCE_MEETING_APPS.first(where: { $0.bundles.contains(bundle) })?.key
+}
+func axText(_ element: AXUIElement, _ attribute: CFString) -> String? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
+    if let string = value as? String { return string }
+    if let url = value as? URL { return url.absoluteString }
+    return nil
+}
+func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success else { return [] }
+    return value as? [AXUIElement] ?? []
+}
+func collectMeetingEvidence(_ element: AXUIElement, depth: Int, values: inout [String]) {
+    guard depth >= 0, values.count < 120 else { return }
+    for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute, kAXDocumentAttribute, kAXURLAttribute] {
+        if let value = axText(element, attribute as CFString), !value.isEmpty { values.append(value) }
+    }
+    if depth > 0 {
+        for child in axChildren(element).prefix(40) {
+            collectMeetingEvidence(child, depth: depth - 1, values: &values)
+            if values.count >= 120 { break }
+        }
+    }
+}
+func meetingWindowEvidence(_ bundle: String) -> (text: String, titles: [String])? {
+    guard AXIsProcessTrusted(),
+          let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first else { return nil }
+    let appElement = AXUIElementCreateApplication(app.processIdentifier)
+    var rawWindows: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &rawWindows) == .success,
+          let windows = rawWindows as? [AXUIElement] else { return nil }
+    var values: [String] = [], titles: [String] = []
+    for window in windows.prefix(12) {
+        if let title = axText(window, kAXTitleAttribute as CFString), !title.isEmpty { titles.append(title) }
+        collectMeetingEvidence(window, depth: 3, values: &values)
+    }
+    return (values.joined(separator: "\n").lowercased(), titles)
+}
+func platformFromEvidence(_ text: String, bundle: String) -> String? {
+    let text = text.lowercased()
+    if text.contains("meet.google.com/") || text.contains("google meet") { return "meet" }
+    if text.contains("zoom.us/wc/") || text.contains("zoom.us/j/") || text.contains("zoom meeting") { return "zoom" }
+    if (text.contains("teams.microsoft.com") && (text.contains("meeting") || text.contains("call")))
+        || text.contains("microsoft teams meeting") { return "teams" }
+    if text.contains("webex.com/meet") || text.contains("webex meeting") { return "webex" }
+    if text.contains("slack huddle") || text.contains("in a huddle") || text.contains("huddle window") { return "slack" }
+    if text.contains("discord") && (text.contains("voice connected") || text.contains("in call") || text.contains("call with")) { return "discord" }
+    if text.contains("meet.jit.si/") || text.contains("jitsi meet") { return "jitsi" }
+    if text.contains("whereby.com/") || text.contains("whereby meeting") { return "whereby" }
+    if text.contains("chime.aws/") || text.contains("amazon chime") { return "chime" }
+    if text.contains("app.gather.town/") || text.contains("gather meeting") { return "gather" }
+    if text.contains("riverside.fm/studio") || text.contains("riverside studio") { return "riverside" }
+    if text.contains("around.co/") || text.contains("around meeting") { return "around" }
+    if text.contains("butter.us/") || text.contains("butter session") { return "butter" }
+    if text.contains("call") || text.contains("voice chat") {
+        return evidenceKey(bundle)
+    }
+    return nil
+}
+func usefulMeetingTitle(_ titles: [String], key: String) -> String {
+    let generic = ["meeting", "zoom meeting", "microsoft teams", "webex", "facetime", "slack", "discord"]
+    for raw in titles {
+        var title = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in [" - Google Chrome", " — Mozilla Firefox", " - Microsoft Edge", " — Safari", " | Microsoft Teams"] {
+            if title.hasSuffix(suffix) { title.removeLast(suffix.count) }
+        }
+        let lower = title.lowercased()
+        if title.count >= 3, title.count <= 120, !generic.contains(lower), !lower.contains("floating video window"),
+           !lower.contains("meeting controls"), !lower.contains("audio settings"), !lower.contains("http") {
+            return title
+        }
+    }
+    return ""
+}
+
+if A.contains("--selftest") {
+    func check(_ condition: Bool, _ message: String) {
+        if !condition { err("SELFTEST FAIL: \(message)"); exit(1) }
+    }
+    check(platformFromEvidence("https://meet.google.com/abc-defg-hij", bundle: "com.google.Chrome") == "meet", "Google Meet URL")
+    check(platformFromEvidence("YouTube — Google Chrome", bundle: "com.google.Chrome") == nil, "ordinary browser audio rejected")
+    check(platformFromEvidence("Slack huddle window", bundle: "com.tinyspeck.slackmacgap") == "slack", "Slack huddle")
+    check(platformFromEvidence("Discord voice connected", bundle: "com.hnc.Discord") == "discord", "Discord voice")
+    check(usefulMeetingTitle(["Zoom Meeting"], key: "zoom").isEmpty, "generic title rejected")
+    check(usefulMeetingTitle(["Customer launch review - Google Chrome"], key: "meet") == "Customer launch review", "browser suffix removed")
+    err("SELFTEST OK")
+    exit(0)
+}
 
 // MARK: - one energy-VAD segmenter → whisper → caption. Reused by both audio sources.
 
@@ -121,16 +267,17 @@ final class Segmenter {
     }
 
     func process(_ samples: [Float], _ idx: Int) {
-        let wav = URL(fileURLWithPath: "/tmp/mt_\(tag)_seg_\(idx % 4).wav")   // small ring of temp files
+        let wav = URL(fileURLWithPath: TEMP_DIR).appendingPathComponent("meeting-\(tag)-\(idx)-\(UUID().uuidString).wav")
         writeWav16(samples, to: wav)
+        defer { try? FileManager.default.removeItem(at: wav) }
         let secs = f1(Double(samples.count) / SR)
         guard let (raw, conf) = transcribe(wav.path) else { return }
         if conf < MIN_CONF {   // low mean word-probability = noise/hallucination (the "*Sigh*" case)
-            err("\(tag) seg#\(idx) \(secs)s dropped: conf \(f2(conf)) < \(f2(MIN_CONF)) raw='\(raw.prefix(40))'")
+            err("\(tag) seg#\(idx) \(secs)s dropped: confidence below threshold")
             return
         }
         let clean = EXPRESSIONS ? keepExpressions(raw) : cleanTranscript(raw)
-        err("\(tag) seg#\(idx) \(secs)s conf=\(f2(conf)) → '\(clean)'")
+        err("\(tag) seg#\(idx) \(secs)s accepted (\(clean.count) characters)")
         guard clean.count > 1 else { return }
         postCaption(clean)
     }
@@ -138,10 +285,7 @@ final class Segmenter {
     func postCaption(_ text: String) {
         let obj: [String: Any] = ["type": "caption", "speaker": speaker, "text": text, "self": isSelf,
                                   "ts": Int(Date().timeIntervalSince1970 * 1000)]
-        guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        let f = "/tmp/mt_cap_\(tag).json"; try? data.write(to: URL(fileURLWithPath: f))
-        _ = curl(["-s", "-X", "POST", "http://127.0.0.1:\(guiPort)/ingest",
-                  "-H", "Content-Type: application/json", "--data-binary", "@\(f)"])
+        postJSON(obj)
     }
 }
 
@@ -317,9 +461,11 @@ final class ProcessTap {
 
 final class VideoRecorder {
     let url: URL
+    let thumbnailURL: URL
     private var writer: AVAssetWriter?
     private var input: AVAssetWriterInput?
     private var started = false
+    private var wroteThumbnail = false
     private(set) var wroteAny = false
     var record = false                          // gated by mode (always) / share-state (share)
     private let q = DispatchQueue(label: "video.write")
@@ -327,7 +473,9 @@ final class VideoRecorder {
     init(dir: String, name: String) {
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         url = URL(fileURLWithPath: (dir as NSString).appendingPathComponent(name))
+        thumbnailURL = url.deletingPathExtension().appendingPathExtension("jpg")
         try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(at: thumbnailURL)
     }
     func append(_ sb: CMSampleBuffer) {
         guard record, CMSampleBufferDataIsReady(sb) else { return }
@@ -336,6 +484,25 @@ final class VideoRecorder {
             guard let w = writer, let inp = input, w.status == .writing, inp.isReadyForMoreMediaData else { return }
             if !started { w.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(sb)); started = true }
             inp.append(sb); wroteAny = true
+            if !wroteThumbnail { writeThumbnail(sb) }
+        }
+    }
+    private func writeThumbnail(_ sb: CMSampleBuffer) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sb) else { return }
+        let source = CIImage(cvPixelBuffer: pixelBuffer)
+        let width = max(1, source.extent.width)
+        let scale = min(1, 480 / width)
+        let image = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let context = CIContext(options: [.cacheIntermediates: false])
+        guard let cg = context.createCGImage(image, from: image.extent) else { return }
+        let bitmap = NSBitmapImageRep(cgImage: cg)
+        guard let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.76]) else { return }
+        do {
+            try jpeg.write(to: thumbnailURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: thumbnailURL.path)
+            wroteThumbnail = true
+        } catch {
+            err("video: thumbnail write failed: \(error)")
         }
     }
     private func setup(_ sb: CMSampleBuffer) {
@@ -398,7 +565,11 @@ func writeWav16(_ samples: [Float], to url: URL) {
     d.append(contentsOf: Array("data".utf8)); d.append(contentsOf: le32(UInt32(dataSize)))
     d.reserveCapacity(44 + dataSize)
     for f in samples { d.append(contentsOf: le16(UInt16(bitPattern: Int16(max(-1, min(1, f)) * 32767)))) }
-    try? d.write(to: url)
+    _ = FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+    if let handle = try? FileHandle(forWritingTo: url) {
+        try? handle.write(contentsOf: d)
+        try? handle.close()
+    }
 }
 
 // Ask whisper-server for verbose_json → (full text, mean per-word confidence). Whisper reports a
@@ -408,9 +579,11 @@ func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
     // Whisper detect per utterance), `translate` = OUTPUT (default on → English). The old "auto hallucinates
     // a wrong script" (کن کن کن) was really our 4 s fragments starving detection — on whole utterances `auto`
     // is accurate (A/B-verified against Handy's own WAVs). Both overridable in Settings → Meetings.
-    var args = ["-s", whisperURL, "-F", "file=@\(wavPath)", "-F", "temperature=0", "-F", "response_format=verbose_json", "-F", "language=\(curLanguage)"]
-    if curTranslate { args += ["-F", "translate=true"] }
-    if !curVocab.isEmpty { args += ["-F", "prompt=\(curVocab)"] } // custom vocabulary → bias Whisper toward these names/terms
+    var args = ["-s", whisperURL]
+    if !STT_TOKEN.isEmpty { args += ["-H", "Authorization: Bearer \(STT_TOKEN)"] }
+    args += ["-F", "file=@\(wavPath)", "--form-string", "temperature=0", "--form-string", "response_format=verbose_json", "--form-string", "language=\(curLanguage)"]
+    if curTranslate { args += ["--form-string", "translate=true"] }
+    if !curVocab.isEmpty { args += ["--form-string", "prompt=\(curVocab)"] } // form-string prevents @file expansion
     let out = curl(args)
     guard let data = out.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
@@ -459,18 +632,18 @@ func curl(_ argv: [String]) -> String {
 
 // MARK: - content filter (which app's audio to capture)
 
-func makeFilter(_ display: SCDisplay, _ apps: [SCRunningApplication]) -> SCContentFilter {
+func makeFilter(_ display: SCDisplay, _ apps: [SCRunningApplication], bundle: String) -> SCContentFilter {
     let whole = SCContentFilter(display: display, excludingWindows: [])
     switch APP_SEL {
     case "all":
         err("capturing full system audio (--app all)")
         return whole
     case "auto":
-        if let m = apps.first(where: { NATIVE_MEETING.contains($0.bundleIdentifier) }) {
+        if let m = apps.first(where: { $0.bundleIdentifier == bundle }) {
             err("auto: scoping audio to \(m.applicationName) [\(m.bundleIdentifier)]")
             return SCContentFilter(display: display, including: [m], exceptingWindows: [])
         }
-        err("auto: no native meeting app running — capturing full system audio (background audio will be transcribed; pass --app <bundleID>, see --list-apps)")
+        err("auto: detected meeting app is unavailable to ScreenCaptureKit — capturing full system audio")
         return whole
     default:
         if let m = apps.first(where: { $0.bundleIdentifier == APP_SEL }) {
@@ -504,11 +677,11 @@ if LIST_APPS {
 // (Google Meet, whose window we can't yet recognize).
 final class Capture {
     var stream: SCStream?, sckOut: SCKOut?, videoOut: VideoOut?, rec: VideoRecorder?, mic: Mic?, tap: ProcessTap?
-    var running = false, mode = "off", recFile = ""
+    var running = false, mode = "off", recFile = "", targetBundle = ""
     // aoids: the meeting app's Core Audio process objects (for the audio-only tap). Empty = global.
-    func start(mode: String, aoids: [AudioObjectID]) {
+    func start(mode: String, aoids: [AudioObjectID], bundle: String) {
         guard !running else { return }
-        running = true; self.mode = mode
+        running = true; self.mode = mode; targetBundle = bundle
         let wantVideo = mode == "always" || mode == "share"
         err(">> in a call — starting capture (video: \(mode))")
         sysSeg.reset(); micSeg.reset()
@@ -516,14 +689,14 @@ final class Capture {
         // Two paths, each asking for the MINIMUM permission (Fathom's model):
         //   audio-only → Core Audio tap  → "System Audio Recording Only"      (default; no Screen Recording)
         //   video      → ScreenCaptureKit → "Screen & System Audio Recording"  (only when you record video)
-        if wantVideo { startSCK() } else { startTap(aoids) }
+        if wantVideo { startSCK(bundle: bundle) } else { startTap(aoids) }
     }
     private func startTap(_ aoids: [AudioObjectID]) {
         let t = ProcessTap(sysSeg)
         if t.start(aoids: aoids) { self.tap = t; err(">> capture started (audio-only, Core Audio tap)") }
         else { self.tap = nil }   // start() logged why; the mic still runs, and the next tick re-arms the tap
     }
-    private func startSCK() {
+    private func startSCK(bundle: String) {
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
             guard self.running else { return }                 // call ended during the async fetch
             if let error = error { err("SCShareableContent error: \(error) — grant Screen Recording (video mode)"); return }
@@ -542,7 +715,7 @@ final class Capture {
             cfg.queueDepth = 6
             let out = SCKOut(sysSeg)
             do {
-                let stream = SCStream(filter: makeFilter(display, content?.applications ?? []), configuration: cfg, delegate: out)
+                let stream = SCStream(filter: makeFilter(display, content?.applications ?? [], bundle: bundle), configuration: cfg, delegate: out)
                 try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio"))
                 let stamp = Int(Date().timeIntervalSince1970 * 1000)
                 let file = "\(stamp).mp4"
@@ -569,40 +742,63 @@ final class Capture {
         stream = nil; sckOut = nil; videoOut = nil
         rec?.finish { ok in err(ok ? ">> screen recording saved" : ">> no screen recording written") }
         rec = nil
+        targetBundle = ""
     }
 }
 
 // Tell the server which file the current call's screen recording is in (it stamps cur.video).
 func postRecording(_ file: String, _ startedAt: Int) {
     let obj: [String: Any] = ["type": "recording", "file": file, "startedAt": startedAt]
-    guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
-    let f = "/tmp/mt_rec.json"; try? data.write(to: URL(fileURLWithPath: f))
-    _ = curl(["-s", "-X", "POST", "http://127.0.0.1:\(guiPort)/ingest",
-              "-H", "Content-Type: application/json", "--data-binary", "@\(f)"])
+    postJSON(obj)
 }
 
 let cap = Capture()
 var curModuleMeetings = false   // Meetings opt-in — gates Screen-Recording detection + capture (no opt-in ⇒ no prompt)
-var wasInCall = false, curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curVocab = ""
-// Poll the server for UI-set config (video mode + share state) AND the manual override (start/pause/stop).
+var wasInCall = false, wasApp = "", wasTitle = "", curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curBrowserMeet = true, curVocab = ""
+var configFetchInFlight = false
+var parentExitScheduled = false
+
+func parentIsAlive() -> Bool {
+    guard PARENT_PID > 1 else { return true } // standalone developer runs do not set a parent contract
+    if kill(PARENT_PID, 0) == 0 { return true }
+    return errno == EPERM
+}
+// Fetch UI-set config (video mode + share state) AND the manual override (start/pause/stop) in-process.
 // inMeeting is SELF-DETECTED below; `manual` lets the UI force capture on/off on top of that — e.g. manually
 // record a Google Meet call (no native window to auto-detect), or pause/stop while still in a call.
-func fetchConfig() -> (sharing: Bool, videoMode: String, translate: Bool, language: String, manual: String, autoDetect: Bool, vocab: String) {
-    let out = curl(["-s", "--max-time", "2", "http://127.0.0.1:\(guiPort)/api/state"])
-    guard let d = out.data(using: .utf8),
-          let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
-        return (curSharing, curVideoMode, curTranslate, curLanguage, curManual, curAutoDetect, curVocab)
-    }
-    if let m = o["modules"] as? [String: Any] { curModuleMeetings = (m["meetings"] as? Bool) ?? false }   // Meetings opt-in gate
-    return ((o["sharing"] as? Bool) ?? false, (o["videoMode"] as? String) ?? VIDEO_MODE0, (o["translate"] as? Bool) ?? true, (o["language"] as? String) ?? "auto", (o["manual"] as? String) ?? "auto", (o["autoDetect"] as? Bool) ?? true, (o["vocab"] as? String) ?? "")
+func fetchConfig() {
+    guard !configFetchInFlight,
+          let url = URL(string: "http://127.0.0.1:\(guiPort)/api/state") else { return }
+    configFetchInFlight = true
+    var request = URLRequest(url: url)
+    if !GUI_TOKEN.isEmpty { request.setValue("Bearer \(GUI_TOKEN)", forHTTPHeaderField: "Authorization") }
+    netSession.dataTask(with: request) { data, _, _ in
+        let object = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        DispatchQueue.main.async {
+            configFetchInFlight = false
+            if let o = object {
+                if let m = o["modules"] as? [String: Any] { curModuleMeetings = (m["meetings"] as? Bool) ?? false }
+                curSharing = (o["sharing"] as? Bool) ?? false
+                curVideoMode = (o["videoMode"] as? String) ?? VIDEO_MODE0
+                curTranslate = (o["translate"] as? Bool) ?? true
+                curLanguage = (o["language"] as? String) ?? "auto"
+                curManual = (o["manual"] as? String) ?? "auto"
+                curAutoDetect = (o["autoDetect"] as? Bool) ?? true
+                curBrowserMeet = (o["browserMeet"] as? Bool) ?? true
+                curVocab = (o["vocab"] as? String) ?? ""
+            }
+            applyCaptureGate()
+        }
+    }.resume()
 }
 // Self-detect "in a call" from the CORE AUDIO PROCESS LIST — needs NO permission (not Screen Recording,
 // not Accessibility): a native meeting app actively running audio I/O = we're in a call. Returns the app
 // key + the process objects to tap, or nil. This is the whole point of the audio-only model — we know
 // you're in a call AND capture the other participants without ever touching Screen Recording.
-func captureTarget() -> (key: String, aoids: [AudioObjectID])? {
-    // Resolve WHAT to tap from --app: `all` = global system audio; a bundle id = that app; `auto` = the
-    // running native meeting app. With --gate off we capture even without a detected call (Google Meet/manual).
+typealias CaptureTarget = (key: String, title: String, bundle: String, aoids: [AudioObjectID])
+func captureTarget() -> CaptureTarget? {
+    // Resolve WHAT to tap from --app: `all` = global system audio; a bundle id = that app; `auto` = a
+    // dedicated call app or an audio-active browser/chat app with meeting evidence.
     func procs(_ match: (String) -> Bool) -> [(aoid: AudioObjectID, bundle: String, running: Bool)] {
         caProcessList().compactMap { p in
             guard let b = caString(p, kAudioProcessPropertyBundleID), match(b) else { return nil }
@@ -611,49 +807,91 @@ func captureTarget() -> (key: String, aoids: [AudioObjectID])? {
     }
     switch APP_SEL {
     case "all":
-        return ("call", [])
+        return ("call", "", "", [])
     case "auto":
-        let active = procs { NATIVE_MEETING.contains($0) }.filter { $0.running }
-        if let f = active.first {
-            let key = f.bundle == "us.zoom.xos" ? "zoom" : (f.bundle.hasPrefix("com.microsoft.teams") ? "teams" : "call")
-            return (key, active.map { $0.aoid })
+        let active = procs { KNOWN_CALL_BUNDLES.contains($0) }.filter { $0.running }
+        // Dedicated conferencing apps first: active process audio is a strong call signal.
+        for spec in DEDICATED_MEETING_APPS {
+            if let first = active.first(where: { spec.bundles.contains($0.bundle) }) {
+                let hits = active.filter { $0.bundle == first.bundle }
+                let evidence = meetingWindowEvidence(first.bundle)
+                return (spec.key, usefulMeetingTitle(evidence?.titles ?? [], key: spec.key), first.bundle, hits.map(\.aoid))
+            }
         }
-        return GATE ? nil : ("call", [])
+        // Browsers and multipurpose chat apps require a meeting-shaped window or tab as well as audio.
+        for first in active where curBrowserMeet {
+            guard evidenceKey(first.bundle) != nil || BROWSER_BUNDLES.contains(first.bundle),
+                  let evidence = meetingWindowEvidence(first.bundle),
+                  let key = platformFromEvidence(evidence.text, bundle: first.bundle) else { continue }
+            let hits = active.filter { $0.bundle == first.bundle }
+            return (key, usefulMeetingTitle(evidence.titles, key: key), first.bundle, hits.map(\.aoid))
+        }
+        return GATE ? nil : ("call", "", "", [])
     default:
         let hits = procs { $0 == APP_SEL }.filter { $0.running }
-        if !hits.isEmpty { return ("call", hits.map { $0.aoid }) }
-        return GATE ? nil : ("call", [])
+        if !hits.isEmpty {
+            let key = dedicatedKey(APP_SEL) ?? evidenceKey(APP_SEL) ?? "call"
+            let evidence = meetingWindowEvidence(APP_SEL)
+            return (key, usefulMeetingTitle(evidence?.titles ?? [], key: key), APP_SEL, hits.map(\.aoid))
+        }
+        return GATE ? nil : ("call", "", APP_SEL, [])
     }
 }
 // Push inMeeting to the server so the UI flips live + shows the recording indicator.
-func postInMeeting(_ on: Bool, _ app: String) {
-    let st: [String: Any] = on ? ["inMeeting": true, "app": app] : ["inMeeting": false]
-    guard let data = try? JSONSerialization.data(withJSONObject: ["type": "state", "state": st] as [String: Any]) else { return }
-    let f = "/tmp/mt_state.json"; try? data.write(to: URL(fileURLWithPath: f))
-    _ = curl(["-s", "-X", "POST", "http://127.0.0.1:\(guiPort)/ingest", "-H", "Content-Type: application/json", "--data-binary", "@\(f)"])
+func postInMeeting(_ on: Bool, _ app: String, _ title: String) {
+    var st: [String: Any] = on ? ["inMeeting": true, "app": app] : ["inMeeting": false]
+    if on, !title.isEmpty { st["meetingTitle"] = title; st["title"] = title }
+    postJSON(["type": "state", "source": "coreaudio", "state": st])
+}
+// Internal cross-process event: the Accessibility helper sleeps until Core Audio proves a call is
+// active. This is not a user-facing macOS notification; it is the efficient signal behind one.
+let meetingActivityNotification = Notification.Name("com.myassistant.desktop.meeting-activity")
+func publishMeetingActivity(_ on: Bool, _ app: String, _ bundle: String) {
+    DistributedNotificationCenter.default().postNotificationName(
+        meetingActivityNotification,
+        object: nil,
+        userInfo: ["active": on, "app": app, "bundle": bundle, "ts": Int(Date().timeIntervalSince1970 * 1000)],
+        deliverImmediately: true
+    )
 }
 // Report raw call detection to the server on change. The server composes this with the manual override
 // to drive the UI, the meeting lifecycle, and re-arming auto-detection after a manual pause/stop.
-func reportDetected(_ inCall: Bool, _ app: String) {
-    guard inCall != wasInCall else { return }
-    wasInCall = inCall
-    postInMeeting(inCall, app)
+func reportDetected(_ inCall: Bool, _ app: String, _ title: String) {
+    guard inCall != wasInCall || (inCall && (app != wasApp || title != wasTitle)) else { return }
+    wasInCall = inCall; wasApp = inCall ? app : ""; wasTitle = inCall ? title : ""
+    postInMeeting(inCall, app, title)
 }
 // Decide capture: the manual override wins over auto-detection. start()/stop() are idempotent, so this
 // runs every tick and only acts on a change — 'paused'/'off' release the mic even mid-call; 'on' forces
 // capture even with no detected call (manual record).
-func gate(_ target: (key: String, aoids: [AudioObjectID])?) {
+func gate(_ target: CaptureTarget?) {
     let detected = target != nil
-    reportDetected(detected, target?.key ?? "")
+    publishMeetingActivity(detected, target?.key ?? "", target?.bundle ?? "")
+    reportDetected(detected, target?.key ?? "", target?.title ?? "")
     let capture = (curManual == "on") || (curManual == "auto" && curAutoDetect && detected)
-    if capture { cap.start(mode: curVideoMode, aoids: target?.aoids ?? []) } else { cap.stop() }
+    if capture { cap.start(mode: curVideoMode, aoids: target?.aoids ?? [], bundle: target?.bundle ?? "") } else { cap.stop() }
+}
+func applyCaptureGate() {
+    cap.updateShare()
+    if !curModuleMeetings {
+        publishMeetingActivity(false, "", "")
+        reportDetected(false, "", "")
+        if cap.running { cap.stop() }
+        return
+    }
+    gate(captureTarget())                                            // detect + capture, all from the audio process list
 }
 func tick() {
-    let cfg = fetchConfig()
-    curSharing = cfg.sharing; curVideoMode = cfg.videoMode; curTranslate = cfg.translate; curLanguage = cfg.language; curManual = cfg.manual; curAutoDetect = cfg.autoDetect; curVocab = cfg.vocab
-    cap.updateShare()
-    if !curModuleMeetings { if cap.running { cap.stop() }; return }   // Meetings module off → capture nothing (no prompts)
-    gate(captureTarget())                                            // detect + capture, all from the audio process list
+    guard parentIsAlive() else {
+        if !parentExitScheduled {
+            parentExitScheduled = true
+            err(">> parent app exited — releasing capture")
+            cap.stop()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { exit(0) }
+        }
+        return
+    }
+    fetchConfig()
 }
 
 err(">> meeting-tap ready — gate:\(GATE ? "on (captures only during a call)" : "off (always captures)") gui:\(guiPort) whisper:\(whisperURL) app:\(APP_SEL) mic:\(MIC_ON) me:\(ME)")

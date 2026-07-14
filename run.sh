@@ -19,6 +19,11 @@ TS_BIN="$ROOT/stt/transcribe-server/transcribe-server"       # primary: transcri
 TS_MODEL="$ROOT/stt/whisper/whisper-large-v3-turbo-Q8_0.gguf"
 MODEL="$ROOT/stt/whisper/ggml-large-v3-turbo-q8_0.bin"       # whisper.cpp fallback (GGML)
 WHISPER_BIN="$(command -v whisper-server || true)"
+SESSION_TOKEN="$(/usr/bin/openssl rand -hex 32)"
+export ASSISTANT_GUI_TOKEN="$SESSION_TOKEN" ASSISTANT_STT_TOKEN="$SESSION_TOKEN"
+PRIVATE_TMP="$ROOT/data/tmp"
+mkdir -p "$PRIVATE_TMP"
+chmod 700 "$PRIVATE_TMP"
 
 [ -x "$ROOT/stt/meeting-tap" ] || { echo "Not built. Run ./setup.sh first."; exit 1; }
 command -v node >/dev/null    || { echo "node is required — brew install node"; exit 1; }
@@ -32,10 +37,10 @@ trap cleanup INT TERM
 
 # 1) STT server — loads the model once, stays hot on the GPU. Prefer transcribe.cpp; fall back to whisper.cpp
 #    (no Silero VAD — it degraded clean speech; whole-utterance capture + conf gate handle noise).
-if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$WHISPER_PORT/" 2>/dev/null; then
+if ! curl -fsS -o /dev/null --max-time 2 -H "Authorization: Bearer $SESSION_TOKEN" "http://127.0.0.1:$WHISPER_PORT/" 2>/dev/null; then
   if [ -x "$TS_BIN" ] && [ -f "$TS_MODEL" ]; then
     echo "starting transcribe-server (transcribe.cpp, large-v3-turbo)…"
-    "$TS_BIN" -m "$TS_MODEL" --host 127.0.0.1 --port "$WHISPER_PORT" >/tmp/mt-whisper.log 2>&1 &
+    "$TS_BIN" -m "$TS_MODEL" --host 127.0.0.1 --port "$WHISPER_PORT" >"$PRIVATE_TMP/transcribe.log" 2>&1 &
   else
     echo "starting whisper-server (fallback, large-v3-turbo, ~10s)…"
     "$WHISPER_BIN" -m "$MODEL" --host 127.0.0.1 --port "$WHISPER_PORT" -t 4 --suppress-nst >/tmp/mt-whisper.log 2>&1 &
@@ -58,14 +63,15 @@ pkill -f 'app/server.js' 2>/dev/null
 PORT="$GUI_PORT" node "$ROOT/app/server.js" >/tmp/mt-gui.log 2>&1 &
 PIDS+=($!)
 
-until curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$WHISPER_PORT/" 2>/dev/null; do sleep 1; done
-until curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$GUI_PORT/"     2>/dev/null; do sleep 1; done
+until curl -s -o /dev/null --max-time 2 -H "Authorization: Bearer $SESSION_TOKEN" "http://127.0.0.1:$WHISPER_PORT/" 2>/dev/null; do sleep 1; done
+until curl -s -o /dev/null --max-time 2 -H "Authorization: Bearer $SESSION_TOKEN" "http://127.0.0.1:$GUI_PORT/" 2>/dev/null; do sleep 1; done
 
 echo
-echo "  ✅  Open  http://localhost:$GUI_PORT"
+echo "  ✅  Open  http://127.0.0.1:$GUI_PORT/?bootstrap=$SESSION_TOKEN"
 echo "  🎙  Transcribing you + the other participants live. Ctrl-C to stop."
 echo
 
 # 3) capturer — foreground, under THIS Terminal's Screen-Recording grant.
 #    "$@" forwards flags like --app / --mic to meeting-tap.
-exec "$ROOT/stt/meeting-tap" "$GUI_PORT" "http://127.0.0.1:$WHISPER_PORT/inference" --rec-dir "$ROOT/data/meetings/rec" "$@"
+exec "$ROOT/stt/meeting-tap" "$GUI_PORT" "http://127.0.0.1:$WHISPER_PORT/inference" \
+  --rec-dir "$ROOT/data/meetings/rec" --temp-dir "$PRIVATE_TMP" "$@"
