@@ -9,10 +9,10 @@ jobs:
     name: Server tests (node --test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
       - name: Run tests
         working-directory: app
         run: npm test
@@ -24,10 +24,10 @@ jobs:
     name: Desktop compile check (cargo)
     runs-on: macos-latest # links Core Audio / CoreGraphics / AppKit — macOS only
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
