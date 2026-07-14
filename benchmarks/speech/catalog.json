@@ -24,6 +24,51 @@
       }
     },
     {
+      "id": "whisper-turbo-q8-en",
+      "label": "Whisper Large v3 Turbo Q8 (English token control)",
+      "tier": "control",
+      "status": "runnable",
+      "format": "gguf",
+      "outputStyle": "roman",
+      "decode": {
+        "language": "en"
+      },
+      "license": "MIT",
+      "localPaths": [
+        "~/Library/Application Support/My Assistant/models/whisper-large-v3-turbo-Q8_0.gguf"
+      ],
+      "source": {
+        "repo": "handy-computer/whisper-large-v3-turbo-gguf",
+        "revision": "d222c9f621c1128299248f2ded4d8a1820519780",
+        "file": "whisper-large-v3-turbo-Q8_0.gguf",
+        "size": 886381824,
+        "sha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448"
+      }
+    },
+    {
+      "id": "whisper-turbo-q8-translate-en",
+      "label": "Whisper Large v3 Turbo Q8 (English translation)",
+      "tier": "translation-control",
+      "status": "runnable",
+      "format": "gguf",
+      "outputStyle": "english",
+      "decode": {
+        "language": "auto",
+        "translate": true
+      },
+      "license": "MIT",
+      "localPaths": [
+        "~/Library/Application Support/My Assistant/models/whisper-large-v3-turbo-Q8_0.gguf"
+      ],
+      "source": {
+        "repo": "handy-computer/whisper-large-v3-turbo-gguf",
+        "revision": "d222c9f621c1128299248f2ded4d8a1820519780",
+        "file": "whisper-large-v3-turbo-Q8_0.gguf",
+        "size": 886381824,
+        "sha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448"
+      }
+    },
+    {
       "id": "whisper-turbo-q8-hi",
       "label": "Current Whisper Large v3 Turbo Q8 (Hindi forced)",
       "tier": "control",
@@ -46,6 +91,88 @@
       }
     },
     {
+      "id": "whisper-medium-q5-translate-en",
+      "label": "Whisper Medium Q5_K_M (English translation)",
+      "tier": "translation-balanced",
+      "status": "runnable",
+      "format": "gguf",
+      "outputStyle": "english",
+      "decode": {
+        "language": "auto",
+        "translate": true
+      },
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "handy-computer/whisper-medium-gguf",
+        "revision": "ec78f06fded51aa82cde751678b78f76f78c8b7f",
+        "file": "whisper-medium-Q5_K_M.gguf",
+        "size": 582746048,
+        "sha256": "4e2a8904a866b3aa7ef70d7640ec6abc5f0a05524cd950ea4b66ace12122bf53"
+      }
+    },
+    {
+      "id": "whisper-medium-q5",
+      "label": "Whisper Medium Q5_K_M",
+      "tier": "whisper-control",
+      "status": "runnable",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "auto"
+      },
+      "license": "Apache-2.0",
+      "localPaths": [
+        "~/.cache/my-assistant-bench/models/whisper-medium-q5-translate-en/whisper-medium-Q5_K_M.gguf"
+      ],
+      "source": {
+        "repo": "handy-computer/whisper-medium-gguf",
+        "revision": "ec78f06fded51aa82cde751678b78f76f78c8b7f",
+        "file": "whisper-medium-Q5_K_M.gguf",
+        "size": 582746048,
+        "sha256": "4e2a8904a866b3aa7ef70d7640ec6abc5f0a05524cd950ea4b66ace12122bf53"
+      }
+    },
+    {
+      "id": "whisper-medium-q8-translate-en",
+      "label": "Whisper Medium Q8_0 (English translation)",
+      "tier": "translation-quality-control",
+      "status": "runnable",
+      "format": "gguf",
+      "outputStyle": "english",
+      "decode": {
+        "language": "auto",
+        "translate": true
+      },
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "handy-computer/whisper-medium-gguf",
+        "revision": "ec78f06fded51aa82cde751678b78f76f78c8b7f",
+        "file": "whisper-medium-Q8_0.gguf",
+        "size": 831538144,
+        "sha256": "09e6a65e7de377aa5b10bae24608bc6f8ca2ed04b3993ef10d4a02bcd9a82adf"
+      }
+    },
+    {
+      "id": "whisper-large-v3-q5-translate-en",
+      "label": "Whisper Large v3 Q5_K_M (English translation)",
+      "tier": "translation-max",
+      "status": "runnable",
+      "format": "gguf",
+      "outputStyle": "english",
+      "decode": {
+        "language": "auto",
+        "translate": true
+      },
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "handy-computer/whisper-large-v3-gguf",
+        "revision": "e3e29bee6389c7da4a141406f07bb80ddac5337c",
+        "file": "whisper-large-v3-Q5_K_M.gguf",
+        "size": 1161143008,
+        "sha256": "6053d0fd69a0fd48b8fea5ea7a52b9e0cde389343566fa30e453a1b2b258dc38"
+      }
+    },
+    {
       "id": "apex-hinglish-q8",
       "label": "Apex Hinglish Q8",
       "tier": "fast-roman",
@@ -62,6 +189,153 @@
         "file": "ggml-apex-hinglish-q8_0.bin",
         "size": 874188075,
         "sha256": "bef6d9d571e9e7bd3cd2ebba8b2d5c9cc4731e210d6750ae6a9c621a87e60d4c"
+      }
+    },
+    {
+      "id": "zero-stt-hinglish-q5",
+      "label": "Zero STT Hinglish Q5_K_M",
+      "tier": "mixed-finetune",
+      "status": "runnable-local",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "auto"
+      },
+      "license": "OpenRAIL",
+      "source": {
+        "repo": "shunyalabs/zero-stt-hinglish",
+        "revision": "93b882ac4f1d470d910ef8e1e48d44d51a439cc6",
+        "file": "model.safetensors",
+        "size": 1527827760,
+        "sha256": "d45102deb636dc22cbced741bd896a7bbb28dd7ecea565904f458937e3447ca5"
+      },
+      "artifact": {
+        "file": "zero-stt-hinglish-Q5_K_M.gguf",
+        "size": 582746048,
+        "sha256": "558cf54be81743950884a103808adb83f95d5b3b7d344f48d66671cdc9a9b784",
+        "converterCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5",
+        "quant": "Q5_K_M"
+      },
+      "conversion": {
+        "family": "whisper",
+        "variant": "whisper-medium",
+        "quant": "Q5_K_M",
+        "minimumFreeBytes": 4000000000
+      }
+    },
+    {
+      "id": "zero-stt-hinglish-q5-hi",
+      "label": "Zero STT Hinglish Q5_K_M (Hindi token control)",
+      "tier": "control",
+      "status": "runnable-local",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "hi"
+      },
+      "license": "OpenRAIL",
+      "localPaths": [
+        "~/.cache/my-assistant-bench/models/zero-stt-hinglish-q5/zero-stt-hinglish-Q5_K_M.gguf"
+      ],
+      "source": {
+        "repo": "shunyalabs/zero-stt-hinglish",
+        "revision": "93b882ac4f1d470d910ef8e1e48d44d51a439cc6",
+        "file": "model.safetensors",
+        "size": 1527827760,
+        "sha256": "d45102deb636dc22cbced741bd896a7bbb28dd7ecea565904f458937e3447ca5"
+      },
+      "artifact": {
+        "file": "zero-stt-hinglish-Q5_K_M.gguf",
+        "size": 582746048,
+        "sha256": "558cf54be81743950884a103808adb83f95d5b3b7d344f48d66671cdc9a9b784",
+        "converterCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5",
+        "quant": "Q5_K_M"
+      }
+    },
+    {
+      "id": "hhs-whisper-small-hinglish-q5",
+      "label": "Hhsjsnns Whisper Small Hinglish Q5_K_M",
+      "tier": "small-whisper-finetune",
+      "status": "runnable-local",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "auto"
+      },
+      "license": "Apache-2.0",
+      "localPaths": [
+        "~/.cache/my-assistant-bench/models/hhs-whisper-small-q5/hhs-whisper-small-Q5_K_M.gguf"
+      ],
+      "source": {
+        "repo": "Hhsjsnns/whisper-small-hinglish",
+        "revision": "8dc4c36b5ec5c2dffba258a85740f291aaa1c8f2",
+        "file": "model.safetensors",
+        "size": 966995080,
+        "sha256": "6f98b2b0039a851877295863e3d371f5ea3a10e96cae480781c688f46ffcd537"
+      },
+      "preprocessor": {
+        "repo": "openai/whisper-small",
+        "revision": "973afd24965f72e36ca33b3055d56a652f456b4d",
+        "file": "preprocessor_config.json",
+        "size": 184990,
+        "sha256": "9b5cd03a36fbb8a627c64d98a5b5b126ead95a77720723944487311f0110b666",
+        "reason": "The fine-tune packaged nested processor_config.json; feature extraction was restored from its declared Whisper Small base."
+      },
+      "artifact": {
+        "file": "hhs-whisper-small-Q5_K_M.gguf",
+        "size": 193749056,
+        "sha256": "7cc4d4b953ee8c193b58eed14a742be6ead7b5aa54e379834cbf309c213fa750",
+        "converterCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5",
+        "quant": "Q5_K_M"
+      },
+      "conversion": {
+        "family": "whisper",
+        "variant": "whisper-small",
+        "quant": "Q5_K_M",
+        "minimumFreeBytes": 2500000000
+      }
+    },
+    {
+      "id": "shuja-whisper-medium-hinglish-q5",
+      "label": "Shuja Whisper Medium Hindi-Hinglish Q5_K_M",
+      "tier": "synthetic-trained-whisper-finetune",
+      "status": "runnable-local",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "auto"
+      },
+      "license": "Apache-2.0",
+      "localPaths": [
+        "~/.cache/my-assistant-bench/models/shuja-whisper-medium-q5/shuja-whisper-medium-Q5_K_M.gguf"
+      ],
+      "source": {
+        "repo": "shujaAK/whisper-medium-hindi-hinglish-asr-fine-tuned",
+        "revision": "13f8f955b8921fe8b2dc7783c2f5571214fe8600",
+        "file": "model.safetensors",
+        "size": 3055544304,
+        "sha256": "0ccef0b10e2fceef3b828ef2c6a76ae619d7a76f27d30afe4a510f3b4400a0e3"
+      },
+      "preprocessor": {
+        "repo": "openai/whisper-medium",
+        "revision": "abdf7c39ab9d0397620ccaea8974cc764cd0953e",
+        "file": "preprocessor_config.json",
+        "size": 184990,
+        "sha256": "9b5cd03a36fbb8a627c64d98a5b5b126ead95a77720723944487311f0110b666",
+        "reason": "The fine-tune packaged nested processor_config.json; feature extraction was restored from its declared Whisper Medium base."
+      },
+      "artifact": {
+        "file": "shuja-whisper-medium-Q5_K_M.gguf",
+        "size": 582745664,
+        "sha256": "ff3b064101946dba323eb75c98e3cbeea3945fb3fd84bc08e3b700dbb88a9064",
+        "converterCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5",
+        "quant": "Q5_K_M"
+      },
+      "conversion": {
+        "family": "whisper",
+        "variant": "whisper-medium",
+        "quant": "Q5_K_M",
+        "minimumFreeBytes": 7500000000
       }
     },
     {
@@ -115,6 +389,40 @@
       }
     },
     {
+      "id": "qwen-hiacc-hinglish-q6",
+      "label": "Qwen3-ASR HiACC Hinglish Q6",
+      "tier": "conversational-mixed-finetune",
+      "status": "runnable-local",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "auto"
+      },
+      "license": "Apache-2.0",
+      "localPaths": [
+        "~/.cache/my-assistant-bench/models/qwen-hiacc-q6/qwen-hiacc-Q6_K.gguf"
+      ],
+      "source": {
+        "repo": "moorlee/qwen3-asr-0.6b-hinglish-hiacc-v1",
+        "revision": "b6d7a400e653326e963d81abd50fdbbd8a851146",
+        "file": "model.safetensors",
+        "size": 1564926456,
+        "sha256": "e28aca014f1fecaf2dbd21d8572c4daf32bf8d6b237a6492dea8873ee462b888"
+      },
+      "artifact": {
+        "file": "qwen-hiacc-Q6_K.gguf",
+        "size": 690417824,
+        "sha256": "578ae3e81a56065045f18ec08899bc02bf484c98f06238b097368c2b91483afc",
+        "converterCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5",
+        "quant": "Q6_K"
+      },
+      "conversion": {
+        "family": "qwen3_asr",
+        "quant": "Q6_K",
+        "minimumFreeBytes": 6000000000
+      }
+    },
+    {
       "id": "trelis-hinglish-q8",
       "label": "Trelis Whisper Hinglish Preview Q8",
       "tier": "max-mixed",
@@ -146,6 +454,52 @@
         "quant": "Q8_0",
         "minimumFreeBytes": 12000000000
       }
+    },
+    {
+      "id": "hinglish-conformer-ctc-f32",
+      "label": "Hinglish Conformer CTC F32",
+      "tier": "low-memory-candidate",
+      "status": "runtime-incompatible",
+      "format": "gguf",
+      "outputStyle": "mixed",
+      "decode": {
+        "language": "hi"
+      },
+      "license": "CC-BY-4.0 metadata; upstream NVIDIA terms require review",
+      "source": {
+        "repo": "Singla0009/Hinglish-Conformer-CTC-GGUF",
+        "revision": "c2e4e7151c63017d6f117921e321fe9c19caeefe",
+        "file": "hinglish-conformer-ctc.f32.gguf",
+        "size": 460918336,
+        "sha256": "9f98b095bf9bb9276f5a133ff7d49ef20474fcefa6a98afa81eb315c6af71002"
+      },
+      "blocker": "The pinned production transcribe-server rejects this GGUF at model load; a separate Conformer CTC runtime and a license review are required."
+    },
+    {
+      "id": "nemotron-hinglish-onnx",
+      "label": "Nemotron 0.6B Hinglish ONNX",
+      "tier": "noisy-speech-research",
+      "status": "integration-required",
+      "format": "onnx-rnnt",
+      "outputStyle": "mixed",
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "addyo07/nemotron-3.5-0.6b-hinglish"
+      },
+      "blocker": "The repository provides exported encoder and decoder graphs but no production-ready ONNX streaming feature, cache, and RNNT decoding runner. Its published noisy scores are author-reported on the author's dataset, not this independent gate."
+    },
+    {
+      "id": "qwen-noisy-hinglish-onnx",
+      "label": "Qwen ASR 0.6B Noisy Hinglish ONNX",
+      "tier": "noisy-speech-research",
+      "status": "integration-required",
+      "format": "onnx-custom",
+      "outputStyle": "mixed",
+      "license": "Apache-2.0",
+      "source": {
+        "repo": "addyo07/qwen-asr-0.6b-noisy-hinglish"
+      },
+      "blocker": "This candidate uses a custom ONNX path rather than the shipped transcribe-server; it needs an isolated adapter and independent validation before it can enter product comparison."
     }
   ],
   "enhancements": [

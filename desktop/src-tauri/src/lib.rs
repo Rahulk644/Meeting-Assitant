@@ -18,6 +18,7 @@ use tauri_plugin_notification::NotificationExt;
 mod local_server;
 #[cfg(target_os = "macos")]
 mod native_pill;
+pub mod speech_audio;
 
 // Absolute path to the repo, baked at build time. In DEV this is where everything lives. In a PACKAGED build
 // the app's own files come from the bundle's Resources dir instead (see init_paths). REPO is consulted only
@@ -392,55 +393,6 @@ fn spawn_capture(
     })
 }
 
-// Downsample captured mono f32 to 16 kHz (whisper's + Silero's rate) with a BOX AVERAGE over each source
-// window (a cheap low-pass) instead of plain decimation — decimating 48k→16k by taking every 3rd sample
-// aliased speech's high-frequency energy back down as noise. (The mic is 48 kHz on this Mac; any rate ok.)
-fn resample_16k(samples: &[f32], rate: u32) -> Vec<f32> {
-    if rate <= 16_000 || rate == 0 {
-        return samples.to_vec();
-    }
-    let ratio = rate as f64 / 16_000.0;
-    let out_len = (samples.len() as f64 / ratio) as usize;
-    let mut out = Vec::with_capacity(out_len);
-    for i in 0..out_len {
-        let start = (i as f64 * ratio) as usize;
-        let end = (((i + 1) as f64 * ratio) as usize).clamp(start + 1, samples.len());
-        let win = &samples[start..end];
-        out.push(win.iter().sum::<f32>() / win.len() as f32);
-    }
-    out
-}
-
-// Silero VAD: keep only the speech regions of the 16 kHz clip — silence/room-tone otherwise makes Whisper
-// hallucinate a fluent loop. Returns empty when there's no speech (an accidental hotkey press inserts
-// nothing); on init failure we keep the whole clip rather than drop audio. The detector (an `ort` Session,
-// Send) is built once and reset() between utterances, so the one-time model load stays off the transcribe path.
-static VAD: Mutex<Option<voice_activity_detector::VoiceActivityDetector>> = Mutex::new(None);
-fn vad_extract_speech(samples16k: &[f32]) -> Vec<f32> {
-    use voice_activity_detector::{IteratorExt, VoiceActivityDetector};
-    let mut guard = VAD.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.is_none() {
-        match VoiceActivityDetector::builder()
-            .sample_rate(16_000i64)
-            .chunk_size(512usize)
-            .build()
-        {
-            Ok(v) => *guard = Some(v),
-            Err(_) => return samples16k.to_vec(), // model unavailable → keep the whole clip rather than drop audio
-        }
-    }
-    let vad = guard.as_mut().unwrap();
-    vad.reset(); // clear the LSTM state so this utterance doesn't inherit the previous one's recurrent context
-                 // threshold 0.5 = Silero's default speech probability; pad 3 chunks (~96 ms) so onsets/tails aren't clipped.
-    let mut out = Vec::with_capacity(samples16k.len());
-    for chunk in samples16k.iter().copied().label(&mut *vad, 0.5f32, 3usize) {
-        if chunk.is_speech() {
-            out.extend(chunk.iter().copied());
-        }
-    }
-    out
-}
-
 // Write mono 16 kHz f32 samples as a 16-bit PCM WAV for the STT server.
 fn write_wav16k(path: &Path, samples16k: &[f32]) -> bool {
     use std::os::unix::fs::OpenOptionsExt;
@@ -710,11 +662,11 @@ fn dictation_finish(mut rec: Recorder, ms: u64) {
     } // stream fully stopped, buffer settled
     let rate = rec.rate.load(Ordering::Relaxed);
     let raw = std::mem::take(&mut *rec.samples.lock().unwrap());
-    let mono16k = resample_16k(&raw, rate);
-    let speech = vad_extract_speech(&mono16k); // Silero VAD: keep only speech → no hallucinated loop on silence
-                                               // Acquire AFTER the VAD (per-clip, safe to run in parallel): serialize only the shared tail — the /tmp
-                                               // WAV write, the upload, and the clipboard save/paste/restore — so overlapping finishes can't clobber
-                                               // each other. Recover the guard on poison instead of panicking the finish thread.
+    let mono16k = speech_audio::resample_16k(&raw, rate);
+    let speech = speech_audio::vad_extract_speech(&mono16k); // Silero VAD: keep only speech → no hallucinated loop on silence
+                                                             // Acquire AFTER the VAD (per-clip, safe to run in parallel): serialize only the shared tail — the /tmp
+                                                             // WAV write, the upload, and the clipboard save/paste/restore — so overlapping finishes can't clobber
+                                                             // each other. Recover the guard on poison instead of panicking the finish thread.
     let _finish = DICT_FINISH.lock().unwrap_or_else(|e| e.into_inner());
     let seq = DICT_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let wav = Path::new(&data_dir())

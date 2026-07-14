@@ -64,22 +64,31 @@ macOS Keychain.
   depend on summary generation.
 - App-started helpers receive the parent PID and must exit when the parent disappears.
 - Whisper unload is user-configurable and defaults to 10 idle minutes.
+- Automatic speech language is preserved end-to-end; the app must never rewrite `auto` to English. Roman,
+  natural mixed script, ordinary English, and English translation are separate model/evaluation tracks.
+- Audio preprocessing is a provider policy, not a global invariant. The shipped VAD helps Turbo in several
+  controls but measurably damages Apex and Qwen HiACC; new providers require raw-versus-product A/B evidence.
+- Translation fails closed in production while Turbo is the only installed speech model. Turbo transcribes
+  but is not trained for translation; a separate qualified model and routing lifecycle are required.
 - Native transcription keeps valid partial text when a model reaches its output limit, reports truncation,
   and guarantees valid UTF-8 JSON.
 - API keys never belong in JSON, SQLite, logs, process arguments, temporary files, or WebView state.
 
 ## Release status
 
-The last fully verified artifact is
-`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,593,923 bytes), SHA-256
-`ce7672606efe71cad8e5ddc6650aab037ae2b10c973fce6cb82eb771f9e63e52`. The app is 28,320 KiB. With the
-window closed, the app and both meeting helpers measured about 39.9 MiB aggregate physical footprint; RSS,
-which includes mapped/shared WebKit pages, was 113,216 KiB. Rust tests are 15/15 and Node product tests are
-25/25. The DMG layout, deep signature, nested helper signatures, restored-stale-cache launch, quarantined-copy
-behavior, loopback auth, forged Host, and occupied-port behavior were verified.
+The current automated-verified artifact is
+`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,560,334 bytes), SHA-256
+`b1bcb51a3a126f9d7463f575db82f7fca5045d71af116197d2190dcc7f27709a`. The mounted app is 28,200 KiB.
+With the window closed, the app and both meeting helpers measured about 40.1 MiB aggregate physical
+footprint and 109,072 KiB aggregate RSS. Verification is 25/25 Node product tests, 19/19 Rust tests, 8/8
+benchmark tests, and passing transcribe-server, meeting-tap, and meeting-state self-tests. The read-only
+mounted DMG passed deep/nested signature checks, carries the production capability payload with Translation
+blocked, contains no model/benchmark/transcript artifact, launched successfully, and kept unauthenticated
+loopback access at 401.
 
-**Do not distribute that artifact as the current build.** It predates the native partial-transcript and UTF-8
-fixes now in source. Rebuild the app and DMG, then repeat the release audit before sharing it.
+This is suitable for a small explicitly informed beta group, subject to the documented **Privacy & Security
+→ Open Anyway** installation flow. The physical Right-Command matrix and real two-person meeting matrix below
+remain human acceptance work; do not describe the beta as zero-bug or notarized.
 
 Rebuild and remeasure after any native/helper change; do not send an older artifact merely because it exists.
 The beta has no Apple Developer ID, so current macOS recipients must attempt launch and use **Privacy &
@@ -97,8 +106,10 @@ background updates cannot be made trustworthy until a separate updater signing-k
    platform/version acceptance matrix for every advertised native/browser/chat adapter.
 5. Generate a dependency SBOM and complete third-party notice packaging.
 6. Add signed update manifests only after an offline update-key and rollback design is documented and tested.
-7. Fix Qwen output truncation, then complete the full Hinglish/noise benchmark. Qwen3-ASR Base Q6 is the
-   current smoke-test leader but is not release-ready. Keep Whisper as default until the gate passes.
+7. Complete the speech promotion gate. The 512-token/repetition guard is implemented and Qwen HiACC now
+   leads the clean mixed-script and English smoke tracks, while Apex leads the Roman proxy. Still required:
+   human Roman references, full/repeated sets, real noise, long-form fixtures, and per-model audio routing.
+   Keep Whisper as default until model download/removal/rollback and all acceptance gates pass.
 8. Add and benchmark macOS 26 SpeechAnalyzer as the first system Speech adapter, retain Whisper fallback,
    then evaluate Parakeet/Nemotron and separate Speech providers from Intelligence providers in the UI.
 
@@ -107,8 +118,8 @@ background updates cannot be made trustworthy until a separate updater signing-k
 1. Read this file, `PRODUCT_RELEASE_MATRIX.md`, and `git status` before editing.
 2. Preserve unrelated working-tree changes and inspect the current branch before making release changes.
 3. Run `./script/prepare_web_assets.sh` before desktop checks/builds.
-4. Verify with `npm test` in `app/`, `cargo check && cargo test` in `desktop/src-tauri/`, native helper
-   self-tests/builds, then the release build and DMG verification.
+4. Verify with `npm test` in `app/`, benchmark unit tests, `cargo check && cargo test` in
+   `desktop/src-tauri/`, native helper self-tests/builds, then the release build and DMG verification.
 5. Launch only the absolute repo-built app path during testing. `/Applications/My Assistant.app` may be an
    older comparison build.
 6. Update this state page and the release matrix when product truth changes; keep historical detail in Git

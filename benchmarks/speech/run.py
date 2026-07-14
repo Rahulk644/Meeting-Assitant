@@ -17,6 +17,7 @@ import sys
 import time
 import unicodedata
 import wave
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -66,17 +67,52 @@ def edit_counts(reference: list[str], hypothesis: list[str]) -> tuple[int, int, 
     return substitutions, deletions, insertions
 
 
+def character_f2(pairs: list[tuple[str, str]], max_order: int = 6) -> float:
+    """Corpus character n-gram F-score with beta=2; useful alongside strict WER for translation."""
+    precisions: list[float] = []
+    recalls: list[float] = []
+    for order in range(1, max_order + 1):
+        matches = reference_total = hypothesis_total = 0
+        for reference, hypothesis in pairs:
+            ref_chars = "".join(script_safe_tokens(reference))
+            hyp_chars = "".join(script_safe_tokens(hypothesis))
+            ref_ngrams = Counter(ref_chars[index : index + order] for index in range(len(ref_chars) - order + 1))
+            hyp_ngrams = Counter(hyp_chars[index : index + order] for index in range(len(hyp_chars) - order + 1))
+            matches += sum((ref_ngrams & hyp_ngrams).values())
+            reference_total += sum(ref_ngrams.values())
+            hypothesis_total += sum(hyp_ngrams.values())
+        precisions.append(matches / hypothesis_total if hypothesis_total else 0.0)
+        recalls.append(matches / reference_total if reference_total else 0.0)
+    precision = sum(precisions) / len(precisions)
+    recall = sum(recalls) / len(recalls)
+    return 5 * precision * recall / (4 * precision + recall) if precision and recall else 0.0
+
+
 def degenerate_reason(text: str) -> str | None:
     tokens = script_safe_tokens(text)
     if not tokens:
         return "empty"
     if tokens == ["nan"]:
         return "non-finite-token"
+    for period in range(1, 9):
+        repeated = period * 8
+        if len(tokens) >= repeated:
+            suffix = tokens[-repeated:]
+            if all(suffix[index] == suffix[index % period] for index in range(period, repeated)):
+                return "repetition-loop"
     if len(tokens) >= 20:
         ngrams = [tuple(tokens[index : index + 4]) for index in range(len(tokens) - 3)]
         if len(set(ngrams)) / len(ngrams) < 0.2:
             return "repetition-loop"
     return None
+
+
+def styles_comparable(reference_style: str, output_style: str) -> bool:
+    """Return whether orthography makes strict WER meaningful for this track."""
+    # English speech has one Latin-script reference target. A multilingual or Roman-output model remains
+    # directly scoreable: emitting another script for English audio is a recognition error, not an evaluation
+    # mismatch. Natural mixed-script and Romanized Hinglish, however, need distinct reference tracks.
+    return reference_style == "english" or reference_style == output_style
 
 
 def sha256(path: Path) -> str:
@@ -98,7 +134,9 @@ def resolve_model_path(model: dict, cache: Path) -> Path:
         if candidate.is_file():
             return candidate
     expected = model.get("artifact", model["source"])
-    return cache / "models" / model["id"] / expected["file"]
+    # Non-runnable research entries may intentionally describe a repository rather than one production
+    # artifact. Return a harmless placeholder so verify_model can report the catalog status cleanly.
+    return cache / "models" / model["id"] / expected.get("file", "UNAVAILABLE")
 
 
 def verify_model(path: Path, model: dict) -> None:
@@ -139,7 +177,7 @@ def wav_duration(path: Path) -> float:
         return audio.getnframes() / audio.getframerate()
 
 
-def multipart(audio_path: Path, language: str) -> tuple[str, bytes]:
+def multipart(audio_path: Path, language: str, translate: bool = False) -> tuple[str, bytes]:
     boundary = f"assistant-{secrets.token_hex(12)}"
     chunks: list[bytes] = []
 
@@ -157,7 +195,7 @@ def multipart(audio_path: Path, language: str) -> tuple[str, bytes]:
 
     field("file", audio_path.read_bytes(), audio_path.name, "audio/wav")
     field("language", language.encode())
-    field("translate", b"false")
+    field("translate", b"true" if translate else b"false")
     chunks.append(f"--{boundary}--\r\n".encode())
     return f"multipart/form-data; boundary={boundary}", b"".join(chunks)
 
@@ -203,11 +241,14 @@ def wait_ready(process: subprocess.Popen, port: int, token: str, timeout: float 
 def host_info() -> dict:
     memory = subprocess.run(["/usr/sbin/sysctl", "-n", "hw.memsize"], capture_output=True, text=True)
     pin = (ROOT / "stt/transcribe-server/PINNED_COMMIT").read_text().strip()
+    patch = ROOT / "stt/transcribe-server/patches/qwen3-output-budget.patch"
+    budget_match = re.search(r"constexpr int k_max_new = (\d+);", patch.read_text()) if patch.is_file() else None
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),
         "memoryBytes": int(memory.stdout.strip()) if memory.returncode == 0 else None,
         "transcribeCommit": pin,
+        "qwenMaxNewTokens": int(budget_match.group(1)) if budget_match else None,
     }
 
 
@@ -229,8 +270,11 @@ def model_benchmark(model: dict, model_path: Path, entries: list[dict], server: 
             loaded_rss = rss_kib(process.pid)
             if warmup:
                 first = entries[0]
-                decode_language = model.get("decode", {}).get("language", first.get("language", "auto"))
-                content_type, body = multipart(Path(first["audio"]), decode_language)
+                decode = model.get("decode", {})
+                decode_language = decode.get("language", first.get("language", "auto"))
+                content_type, body = multipart(
+                    Path(first["audio"]), decode_language, bool(decode.get("translate", False))
+                )
                 request(port, token, "POST", "/inference", body, content_type)
 
             results: list[dict] = []
@@ -238,8 +282,11 @@ def model_benchmark(model: dict, model_path: Path, entries: list[dict], server: 
             for index, entry in enumerate(entries, start=1):
                 audio_path = Path(entry["audio"])
                 duration = wav_duration(audio_path)
-                decode_language = model.get("decode", {}).get("language", entry.get("language", "auto"))
-                content_type, body = multipart(audio_path, decode_language)
+                decode = model.get("decode", {})
+                decode_language = decode.get("language", entry.get("language", "auto"))
+                content_type, body = multipart(
+                    audio_path, decode_language, bool(decode.get("translate", False))
+                )
                 started = time.perf_counter()
                 payload = request(port, token, "POST", "/inference", body, content_type)
                 elapsed = time.perf_counter() - started
@@ -277,6 +324,9 @@ def model_benchmark(model: dict, model_path: Path, entries: list[dict], server: 
                 process.wait()
 
     reference_style = entries[0].get("referenceStyle", "unknown")
+    reference_quality = entries[0].get("referenceQuality", "human")
+    style_matches = styles_comparable(reference_style, model["outputStyle"])
+    human_reference = reference_quality == "human" or reference_quality.startswith("human-")
     totals = {
         key: sum(result[key] for result in results)
         for key in ("refWords", "substitutions", "deletions", "insertions")
@@ -292,7 +342,11 @@ def model_benchmark(model: dict, model_path: Path, entries: list[dict], server: 
         "outputStyle": model["outputStyle"],
         "decode": model.get("decode", {"language": "auto"}),
         "referenceStyle": reference_style,
-        "scoreComparable": model["outputStyle"] == reference_style,
+        "referenceQuality": reference_quality,
+        "scoreComparable": style_matches and human_reference,
+        "scoreKind": "comparable" if style_matches and human_reference else (
+            "proxy" if style_matches else "style-mismatch"
+        ),
         "modelPath": str(model_path),
         "modelBytes": model_path.stat().st_size,
         "startupSeconds": round(startup_seconds, 4),
@@ -307,6 +361,9 @@ def model_benchmark(model: dict, model_path: Path, entries: list[dict], server: 
         "rtf": round(total_inference / total_audio, 4),
         "speedup": round(total_audio / total_inference, 2),
         "scriptSafeWer": round(total_errors / totals["refWords"], 6) if totals["refWords"] else None,
+        "characterF2": round(
+            character_f2([(result["refText"], result["hypText"]) for result in results]), 6
+        ),
         **totals,
         "results": results,
         "logPath": str(log_path),
@@ -314,17 +371,17 @@ def model_benchmark(model: dict, model_path: Path, entries: list[dict], server: 
 
 
 def print_summary(models: list[dict]) -> None:
-    print("\nmodel                         WER       comparable  speed     peak RSS  trunc  degenerate")
-    print("----------------------------  --------  ----------  --------  --------  -----  ----------")
+    print("\nmodel                         WER       char-F2  score           speed     peak RSS  trunc  degenerate")
+    print("----------------------------  --------  -------  --------------  --------  --------  -----  ----------")
     for model in models:
         wer = f"{model['scriptSafeWer'] * 100:6.2f}%" if model["scriptSafeWer"] is not None else "n/a"
-        comparable = "yes" if model["scoreComparable"] else "NO"
+        score_kind = model["scoreKind"]
         print(
-            f"{model['id'][:28]:28}  {wer:8}  {comparable:10}  "
+            f"{model['id'][:28]:28}  {wer:8}  {model['characterF2'] * 100:6.2f}  {score_kind:14}  "
             f"{model['speedup']:6.1f}x  {model['peakRssMiB']:6.1f} MiB  "
             f"{model['truncatedSamples']:>5}  {model['degenerateSamples']:>10}"
         )
-    print("\nWER is comparable only when model and reference output styles match.")
+    print("\nRoman proxy scores are A/B signals only. Translation WER is strict; char-F2 adds surface similarity, not semantics.")
 
 
 def main() -> int:

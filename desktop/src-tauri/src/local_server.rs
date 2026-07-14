@@ -307,6 +307,15 @@ fn validate_release_contract(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn release_capability(release: &Value, key: &str) -> bool {
+    release
+        .get("capabilities")
+        .and_then(Value::as_object)
+        .and_then(|capabilities| capabilities.get(key))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
 pub fn start(
     web_dir: String,
     data_dir: String,
@@ -1338,11 +1347,17 @@ fn config_post(mut request: Request, shared: Arc<Shared>) {
     let mut broadcasts = Vec::new();
     {
         let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-        for key in ["videoMode", "translate", "language", "browserMeet"] {
+        for key in ["videoMode", "language", "browserMeet"] {
             if let Some(value) = body.get(key) {
                 state.last_state.insert(key.into(), value.clone());
                 broadcasts.push((key, value.clone()));
             }
+        }
+        if let Some(requested) = body.get("translate").and_then(Value::as_bool) {
+            let value =
+                Value::Bool(requested && release_capability(&shared.cfg.release, "translation"));
+            state.last_state.insert("translate".into(), value.clone());
+            broadcasts.push(("translate", value));
         }
         if let Some(auto) = body.get("autoDetect").and_then(Value::as_bool) {
             state.gate.auto_detect = auto;
@@ -1419,11 +1434,7 @@ fn transcribe_proxy(mut request: Request, shared: Arc<Shared>) {
         }
         state.stt_last_used = Some(Instant::now());
         (
-            if state.dictation.language == "auto" {
-                "en".into()
-            } else {
-                state.dictation.language.clone()
-            },
+            dictation_decode_language(&state.dictation.language),
             state.dictation.punctuation.clone(),
             state.vocab.clone(),
         )
@@ -1459,6 +1470,18 @@ fn transcribe_proxy(mut request: Request, shared: Arc<Shared>) {
             json_response(request, 200, value)
         }
         Err(error) => json_response(request, 502, json!({"error":error})),
+    }
+}
+
+// Preserve the user's decoder choice all the way to the speech runtime. In particular, "auto" must not be
+// rewritten to English: forcing the English token changes Hinglish recognition and can turn Hindi speech into
+// an English-looking phonetic guess. Empty legacy settings fall back to automatic detection.
+fn dictation_decode_language(configured: &str) -> String {
+    let configured = configured.trim();
+    if configured.is_empty() {
+        "auto".into()
+    } else {
+        configured.into()
     }
 }
 
@@ -2936,6 +2959,23 @@ mod tests {
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("name=\"language\""));
         assert!(text.ends_with("--x--\r\n"));
+    }
+    #[test]
+    fn automatic_dictation_language_is_not_rewritten_to_english() {
+        assert_eq!(dictation_decode_language("auto"), "auto");
+        assert_eq!(dictation_decode_language("hi"), "hi");
+        assert_eq!(dictation_decode_language(""), "auto");
+    }
+    #[test]
+    fn disabled_translation_capability_fails_closed() {
+        assert!(!release_capability(
+            &json!({"capabilities":{"translation":false}}),
+            "translation"
+        ));
+        assert!(release_capability(
+            &json!({"capabilities":{"translation":true}}),
+            "translation"
+        ));
     }
     #[test]
     fn recording_ranges_are_bounded() {

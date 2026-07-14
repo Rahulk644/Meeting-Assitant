@@ -1,0 +1,106 @@
+diff --git a/src/arch/qwen3_asr/model.cpp b/src/arch/qwen3_asr/model.cpp
+index 6e382fb..8742fec 100644
+--- a/src/arch/qwen3_asr/model.cpp
++++ b/src/arch/qwen3_asr/model.cpp
+@@ -82,8 +82,37 @@ constexpr const char k_default_variant[] = "qwen3-asr";
+ // transcript that fills the generation budget before end-of-stream is flagged
+ // via transcribe_was_truncated().
+
+-// Per-run generation budget (matches the reference dumper default).
+-constexpr int k_max_new = 256;
++// The upstream 256-token cap truncates ordinary 20-30 second Hindi/Hinglish clips because Indic text can
++// require more decoder tokens than Latin text. Qwen's official evaluation uses 1024; 512 avoids ordinary
++// truncation on the 8 GB support floor without letting a pathological repetition loop run twice as long.
++constexpr int k_max_new = 512;
++
++// Greedy Qwen decoding can occasionally enter a non-EOS token cycle. Stop after eight identical periods and
++// retain one period so a user gets the valid prefix instead of hundreds of repeated words. The caller still
++// receives OUTPUT_TRUNCATED because content after the loop cannot be recovered safely.
++bool trim_repeating_suffix(std::vector<int32_t> & tokens) {
++    constexpr size_t k_repeats   = 8;
++    constexpr size_t k_max_cycle = 8;
++    for (size_t period = 1; period <= k_max_cycle; ++period) {
++        const size_t repeated = period * k_repeats;
++        if (tokens.size() < repeated) {
++            continue;
++        }
++        const size_t start = tokens.size() - repeated;
++        bool         match = true;
++        for (size_t i = period; i < repeated; ++i) {
++            if (tokens[start + i] != tokens[start + (i % period)]) {
++                match = false;
++                break;
++            }
++        }
++        if (match) {
++            tokens.resize(start + period);
++            return true;
++        }
++    }
++    return false;
++}
+
+ // Effective decoder context ceiling, in tokens: the model's trained maximum,
+ // optionally lowered — never raised — by the caller's session n_ctx knob.
+@@ -881,6 +910,7 @@ transcribe_status run(transcribe_session *          session,
+     const int32_t eos_id   = cm->hparams.eos_token_id;
+     const int32_t max_new  = k_max_new;
+     int           cur_past = T_prompt;
++    bool          repetition_loop_stopped = false;
+
+     // Build the step graph ONCE and reuse every step, sized for the actual
+     // workload (T_prompt written + up to max_new generated). Metal's flash-attn
+@@ -969,6 +999,10 @@ transcribe_status run(transcribe_session *          session,
+         ggml_backend_tensor_get(sb.out, &argmax_tok, 0, sizeof(int32_t));
+         next_tok = argmax_tok;
+         generated_ids.push_back(next_tok);
++        if (trim_repeating_suffix(generated_ids)) {
++            repetition_loop_stopped = true;
++            break;
++        }
+         cur_past += 1;
+         cc->kv_cache.n    = cur_past + 1;
+         cc->kv_cache.head = cur_past + 1;
+@@ -981,11 +1015,17 @@ transcribe_status run(transcribe_session *          session,
+     // (truncated). Surface the latter via transcribe_was_truncated() + WARN.
+     if (next_tok != eos_id) {
+         cc->was_truncated = true;
+-        transcribe::log_msg(TRANSCRIBE_LOG_LEVEL_WARN,
+-                            "qwen3_asr run: output truncated at %d tokens — decode reached the "
+-                            "generation budget before end-of-stream; the transcript may be "
+-                            "incomplete.",
+-                            static_cast<int>(generated_ids.size()));
++        if (repetition_loop_stopped) {
++            transcribe::log_msg(TRANSCRIBE_LOG_LEVEL_WARN,
++                                "qwen3_asr run: stopped a repeated-token loop; returning the valid "
++                                "prefix as a truncated transcript.");
++        } else {
++            transcribe::log_msg(TRANSCRIBE_LOG_LEVEL_WARN,
++                                "qwen3_asr run: output truncated at %d tokens — decode reached the "
++                                "generation budget before end-of-stream; the transcript may be "
++                                "incomplete.",
++                                static_cast<int>(generated_ids.size()));
++        }
+     }
+
+     // Map granular counters to the debug-print shape. With graph reuse all
+@@ -1550,7 +1590,7 @@ transcribe_status run_batch(transcribe_session *          session,
+
+     // Prompt length bound → max_n_kv and batched-cache n_ctx. Build and keep
+     // each utterance's prompt token ids for the batched prefill.
+-    const int                         max_new      = 256;
++    const int                         max_new      = k_max_new;
+     int                               max_T_prompt = 0;
+     int                               prefix_len   = 0;
+     // Per-utterance terminal status for rejected rows. Defaults to INVALID_ARG;
+@@ -1673,5 +1713,10 @@ transcribe_status run_batch(transcribe_session *          session,
+         st != TRANSCRIBE_OK) {
+         return st;
+     }
++    for (int b = 0; b < n; ++b) {
++        if (valid[b] && trim_repeating_suffix(generated[b])) {
++            truncated[b] = 1;
++        }
++    }
+     const int64_t step_us = step_stats.step_us;
+     const int     n_steps = step_stats.n_steps;

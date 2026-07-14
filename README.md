@@ -194,11 +194,15 @@ Evaluate pinned local speech candidates through the production native runtime:
 ./script/benchmark_speech.sh test
 ./script/benchmark_speech.sh prepare-models whisper-turbo-q8 qwen3-asr-base-q6
 ./script/benchmark_speech.sh prepare-data
+./script/benchmark_speech.sh prepare-english-data
+./script/benchmark_speech.sh prepare-translation-data
+./script/benchmark_speech.sh prepare-noise-data
 ./script/benchmark_speech.sh run whisper-turbo-q8,qwen3-asr-base-q6
 ```
 
 The data, models, and transcript-bearing reports remain in a private cache. See
-[`docs/SPEECH_MODEL_BENCHMARK.md`](docs/SPEECH_MODEL_BENCHMARK.md) for the current Hinglish decision and
+[`docs/SPEECH_MODEL_BENCHMARK.md`](docs/SPEECH_MODEL_BENCHMARK.md) for the current Hinglish, English,
+translation, preprocessing, and noise decisions and
 [`benchmarks/speech/README.md`](benchmarks/speech/README.md) for the complete reproducibility contract.
 
 Run `./run.sh` from a Terminal that has the **Screen-Recording + Accessibility** grants — dev builds are

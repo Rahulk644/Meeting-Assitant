@@ -74,7 +74,15 @@ def prepare(model: dict, cache: Path) -> Path:
     if not destination.exists():
         downloadable = artifact(model)
         if "repo" not in downloadable:
-            raise ValueError(f"{model['id']} is a local conversion; run script/benchmark_speech.sh convert-srota")
+            family = model.get("conversion", {}).get("family")
+            command = (
+                f"convert-whisper {model['id']}"
+                if family == "whisper"
+                else "convert-srota"
+            )
+            raise ValueError(
+                f"{model['id']} is a local conversion; run script/benchmark_speech.sh {command}"
+            )
         destination.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
             [

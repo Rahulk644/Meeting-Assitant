@@ -667,13 +667,9 @@ http.createServer((req, res) => {
       try {
         await ensureWhisper();
         if (!await waitPort("127.0.0.1", WHISPER_PORT, 15000)) throw new Error("transcription engine did not start");
-        // Dictation POSTs only the WAV; inject a language so speech isn't written in the wrong script.
-        // A/B-verified on a real clip: language=auto MIS-detects short Hinglish ("mera naam Rahul hai") as
-        // Tamil ("மேர் நாம்…") — that IS the bug; language=en yields clean "My name is Rahul." Handy pins en
-        // too. Honor an explicit Settings language; default (or "auto") → en for reliable English output.
-        // Pin the language (auto-detect mis-scripts short Hinglish clips as e.g. Tamil) and force the
-        // Transcribe task, not Translate — matches Handy's runtime and gives cleaner English/Hinglish output.
-        const lang = (dictationCfg.language && dictationCfg.language !== "auto") ? dictationCfg.language : "en";
+        // Preserve Automatic language detection. Forcing the English token turns Hindi/Hinglish into a
+        // phonetic English guess and measured far worse than Automatic on the pinned mixed-speech corpus.
+        const lang = dictationCfg.language || "auto";
         const reqBody = injectMultipartFields(buf, ct, {
           language: lang,
           translate: "false",

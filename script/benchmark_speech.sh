@@ -8,7 +8,7 @@ DATASET_DIR="$CACHE_DIR/datasets/coshe-500"
 CORPUS_DIR="$CACHE_DIR/corpora/coshe-500"
 
 usage() {
-  echo "usage: $0 prepare-models MODEL... | prepare-data | convert-srota | run MODEL,MODEL... | test" >&2
+  echo "usage: $0 prepare-models MODEL... | prepare-data | prepare-english-data | prepare-translation-data | prepare-noise-data | convert-whisper MODEL | convert-srota | run MODEL,MODEL... | test" >&2
 }
 
 command="${1:-}"
@@ -33,6 +33,47 @@ case "$command" in
     uv run "$BENCH_DIR/extract_coshe.py" \
       --parquet "$DATASET_DIR/data/eval-00000-of-00001.parquet" \
       --out-dir "$CORPUS_DIR"
+    ;;
+  prepare-translation-data)
+    fleurs_dir="$CACHE_DIR/datasets/fleurs"
+    mkdir -p "$fleurs_dir"
+    hf download google/fleurs \
+      parquet-data/hi_in/validation-00000-of-00001.parquet data/hi_in/dev.tsv data/en_us/dev.tsv README.md \
+      --repo-type dataset \
+      --revision 70bb2e84b976b7e960aa89f1c648e09c59f894dd \
+      --local-dir "$fleurs_dir"
+    uv run "$BENCH_DIR/extract_fleurs_translation.py" \
+      --parquet "$fleurs_dir/parquet-data/hi_in/validation-00000-of-00001.parquet" \
+      --english-tsv "$fleurs_dir/data/en_us/dev.tsv" \
+      --out-dir "$CACHE_DIR/corpora/fleurs-hi-en"
+    ;;
+  prepare-english-data)
+    fleurs_dir="$CACHE_DIR/datasets/fleurs"
+    mkdir -p "$fleurs_dir"
+    hf download google/fleurs \
+      parquet-data/en_us/validation-00000-of-00001.parquet README.md \
+      --repo-type dataset \
+      --revision 70bb2e84b976b7e960aa89f1c648e09c59f894dd \
+      --local-dir "$fleurs_dir"
+    uv run "$BENCH_DIR/extract_fleurs_asr.py" \
+      --parquet "$fleurs_dir/parquet-data/en_us/validation-00000-of-00001.parquet" \
+      --out-dir "$CACHE_DIR/corpora/fleurs-en-asr"
+    ;;
+  prepare-noise-data)
+    source_manifest="$CORPUS_DIR/coshe-500-seed42-n24.jsonl"
+    if [[ ! -f "$source_manifest" ]]; then
+      echo "missing $source_manifest; run prepare-data first" >&2
+      exit 1
+    fi
+    for condition in wind babble; do
+      noisy_dir="$CACHE_DIR/corpora/coshe-${condition}-5db"
+      product_dir="$CACHE_DIR/corpora/coshe-${condition}-5db-product-vad"
+      uv run "$BENCH_DIR/add_noise.py" "$source_manifest" "$noisy_dir" \
+        --condition "$condition" --snr-db 5 --seed 42 --max-samples 12
+      cargo run --quiet --manifest-path "$ROOT_DIR/desktop/src-tauri/Cargo.toml" \
+        --example preprocess_speech_manifest -- \
+        "$noisy_dir/coshe-500-seed42-n24-${condition}-5db.jsonl" "$product_dir"
+    done
     ;;
   convert-srota)
     source_dir="$CACHE_DIR/sources/srota"
@@ -63,6 +104,11 @@ case "$command" in
       "b0e6b1b81bfb2e278431eae81d8ec3fb4fbb7cae26c801f10bd31ec80cd03ac5" ]]
     rm -f "$bf16"
     echo "$q6"
+    ;;
+  convert-whisper)
+    model="${1:-}"
+    if [[ -z "$model" ]]; then usage; exit 2; fi
+    python3 "$BENCH_DIR/convert_whisper.py" "$model" --cache "$CACHE_DIR"
     ;;
   run)
     models="${1:-}"

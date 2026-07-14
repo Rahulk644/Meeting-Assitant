@@ -1175,7 +1175,7 @@ function settingRow(row){
 
   if(row.type==='toggle'){
     let getV,setV,gate=false;
-    if(id==='translate_en'){ getV=()=>store.get('translate',true); setV=v=>{store.set('translate',v);setTranslate(v)}; }
+    if(id==='translate_en'){ getV=()=>store.get('translate',false); setV=v=>{store.set('translate',v);setTranslate(v)}; }
     else if(id==='auto_detect'){ getV=()=>store.get('auto_detect',true); setV=v=>{store.set('auto_detect',v); cfg({autoDetect:v})}; }  // off → only manual start records
     else if(id==='browser_meet'){ getV=()=>store.get('browser_meet',true); setV=v=>{store.set('browser_meet',v); cfg({browserMeet:v})}; }
     else if(id==='unload_model'){ getV=()=>store.get('unload_model',true); setV=v=>{store.set('unload_model',v); cfg({unloadIdle:v})}; }  // off → keep the model hot
@@ -1949,7 +1949,9 @@ async function boot(){
   if(inTauri() && store.get('stealth',false)) setStealth(true);
   setVideoMode(store.get('videoMode','off'));
   setLanguage(store.get('language','auto'));
-  setTranslate(store.get('translate',true));
+  // Turbo is transcription-only. A stale saved translation toggle must not silently request a task the
+  // installed model cannot perform; the release contract re-enables this only with a qualified model.
+  setTranslate(hasCap('translation') && store.get('translate',false));
   cfg({autoDetect:store.get('auto_detect',true), browserMeet:store.get('browser_meet',true), unloadIdle:store.get('unload_model',true), whisperIdleMinutes:store.get('whisper_idle_minutes',10), vocab:vocabPrompt()});
   pushDictation(); initDictation();
   cfg({modules:modules()}); paintNav(); syncDictation(false);

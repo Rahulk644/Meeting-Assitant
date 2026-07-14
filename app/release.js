@@ -57,7 +57,7 @@ const CAPABILITIES = Object.freeze({
   automaticMeetingDetection: { state: "shipped", verification: "recording gate config" },
   deeperMeetingReasoning:    { state: "shipped", verification: "summary request option" },
   transcriptionLanguage:     { state: "shipped", verification: "capture config handler" },
-  translation:               { state: "shipped", verification: "capture config handler" },
+  translation:               { state: "blocked", verification: "translation-capable speech model and FLEURS gate required" },
   videoRecording:            { state: "shipped", verification: "screen-recording mode handler" },
   meetingTemplates:          { state: "shipped", verification: "summary prompt templates" },
   aiProvider:                { state: "shipped", verification: "local and OpenAI-compatible summary path" },

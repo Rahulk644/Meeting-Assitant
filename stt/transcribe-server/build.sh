@@ -31,6 +31,19 @@ git -C "$SRC" submodule status --recursive | awk '$1 ~ /^[-+U]/ { bad=1 } END { 
   exit 1
 }
 
+# The pinned upstream Qwen runtime caps output at 256 tokens, which truncates normal Hinglish utterances.
+# Apply our narrow, reviewable patch fail-closed; a future upstream pin must either accept it cleanly or make
+# the build stop for an explicit re-audit. Reverse-check keeps repeated local/release builds idempotent.
+QWEN_PATCH="$ROOT/patches/qwen3-output-budget.patch"
+if git -C "$SRC" apply --check "$QWEN_PATCH" 2>/dev/null; then
+  git -C "$SRC" apply "$QWEN_PATCH"
+elif git -C "$SRC" apply --reverse --check "$QWEN_PATCH" 2>/dev/null; then
+  : # already applied in this checkout
+else
+  echo "Qwen output-budget patch no longer matches pinned transcribe.cpp" >&2
+  exit 1
+fi
+
 # Drop our server in as an example target (its build already links the transcribe lib + ggml/Metal).
 mkdir -p "$SRC/examples/server"
 cp "$ROOT/transcribe-server.cpp" "$ROOT/httplib.h" "$SRC/examples/server/"

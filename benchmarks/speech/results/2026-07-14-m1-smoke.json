@@ -1,142 +1,120 @@
 {
-  "schemaVersion": 1,
-  "status": "engineering-smoke-not-release-gate",
+  "schemaVersion": 2,
+  "status": "engineering-candidate-qualification-not-release-gate",
   "date": "2026-07-14",
   "host": {
     "platform": "macOS 26.5",
     "machine": "Apple M1 arm64",
     "memoryBytes": 8589934592,
-    "transcribeCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5"
+    "transcribeCommit": "33d5c383e43e6acbd572845866ea75b8c7959fa5",
+    "runtimePatch": "512-token output budget plus repeated-cycle termination"
   },
-  "corpus": {
-    "dataset": "Trelis/CoSHE-500",
-    "revision": "3da116bac98bfe5349f9b454d95a17a43483e1e8",
-    "parquetSha256": "b5201501cde4134b2bcb70151f2b97aa0daf8b0c117b9e6c1dc494c4c230c926",
-    "license": "CC-BY-NC-4.0",
-    "use": "evaluation-only; never training",
-    "referenceStyle": "natural mixed Devanagari and Latin",
-    "selection": {
-      "seed": 42,
-      "count": 24,
-      "totalRows": 500,
-      "audioSeconds": 614.0401
+  "corpora": {
+    "mixed": {
+      "dataset": "Trelis/CoSHE-500",
+      "revision": "3da116bac98bfe5349f9b454d95a17a43483e1e8",
+      "parquetSha256": "b5201501cde4134b2bcb70151f2b97aa0daf8b0c117b9e6c1dc494c4c230c926",
+      "license": "CC-BY-NC-4.0",
+      "use": "evaluation-only; never training",
+      "referenceStyle": "natural mixed Devanagari and Latin",
+      "selection": { "seed": 42, "count": 24, "totalRows": 500, "audioSeconds": 614.0401 }
+    },
+    "romanProxy": {
+      "derivedFrom": "mixed",
+      "tool": "indic-transliteration 2.3.82",
+      "referenceQuality": "machine-derived-proxy",
+      "use": "A/B signal only; not a publishable model-quality score"
+    },
+    "englishTranslation": {
+      "dataset": "google/fleurs",
+      "revision": "70bb2e84b976b7e960aa89f1c648e09c59f894dd",
+      "license": "CC-BY-4.0",
+      "referenceStyle": "human English FLoRes sentence aligned by FLEURS sentence id",
+      "selection": { "seed": 42, "count": 24, "audioSeconds": 275.4 }
+    },
+    "englishAsr": {
+      "dataset": "google/fleurs",
+      "revision": "70bb2e84b976b7e960aa89f1c648e09c59f894dd",
+      "parquetSha256": "7c3eeb11a9597bd52cdc1b0d637e85389fe094cfd8763913e7bf4fdf7a853959",
+      "license": "CC-BY-4.0",
+      "referenceStyle": "human English transcription",
+      "selection": { "seed": 42, "count": 24 }
+    },
+    "syntheticNoise": {
+      "derivedFrom": "first 12 mixed clips",
+      "conditions": ["wind 5 dB", "three-speaker babble 5 dB"],
+      "method": "deterministic-engineering-stress-v1",
+      "caveat": "Synthetic failure-boundary test; not evidence for real cafe, traffic, or outdoor speech."
     }
   },
   "measurement": {
     "warmupRunsPerModel": 1,
-    "wer": "NFC case-folded word error rate preserving Indic combining marks; no transliteration",
-    "memory": "peak resident set size of transcribe-server",
+    "wer": "NFC case-folded word error rate preserving Indic combining marks; no transliteration except the explicitly marked Roman proxy",
+    "characterF2": "character n-gram surface similarity; not a semantic translation metric",
+    "memory": "peak resident set size of transcribe-server only",
     "reportsWithTranscripts": "private benchmark cache only"
   },
-  "results": [
-    {
-      "id": "whisper-turbo-q8",
-      "modelBytes": 886381824,
-      "modelSha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448",
-      "decodeLanguage": "auto",
-      "scoreComparable": true,
-      "scriptSafeWer": 0.599197,
-      "speedup": 8.49,
-      "inferenceSeconds": 72.3239,
-      "loadedRssMiB": 964.2,
-      "peakRssMiB": 1038.0,
-      "truncatedSamples": 0,
-      "emptySamples": 0,
-      "degenerateSamples": 1,
-      "degenerateReasons": {"repetition-loop": 1}
-    },
-    {
-      "id": "whisper-turbo-q8-hi",
-      "modelBytes": 886381824,
-      "modelSha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448",
-      "decodeLanguage": "hi",
-      "scoreComparable": true,
-      "scriptSafeWer": 0.752294,
-      "speedup": 6.61,
-      "inferenceSeconds": 92.8543,
-      "loadedRssMiB": 962.2,
-      "peakRssMiB": 962.2,
-      "truncatedSamples": 0,
-      "emptySamples": 0,
-      "degenerateSamples": 10,
-      "degenerateReasons": {"repetition-loop": 10}
-    },
-    {
-      "id": "apex-hinglish-q8",
-      "modelBytes": 874188075,
-      "modelSha256": "bef6d9d571e9e7bd3cd2ebba8b2d5c9cc4731e210d6750ae6a9c621a87e60d4c",
-      "decodeLanguage": "en",
-      "scoreComparable": false,
-      "rawNonComparableWer": 0.544725,
-      "speedup": 9.41,
-      "inferenceSeconds": 65.2503,
-      "loadedRssMiB": 938.4,
-      "peakRssMiB": 938.4,
-      "truncatedSamples": 0,
-      "emptySamples": 0,
-      "degenerateSamples": 1,
-      "degenerateReasons": {"non-finite-token": 1},
-      "note": "Roman output was compared with mixed-script references; accuracy is intentionally not ranked."
-    },
-    {
-      "id": "qwen3-asr-base-q6",
-      "modelBytes": 690417824,
-      "modelSha256": "3b051f108f03c0c91bbe1a3b2c1ee15e3ed51e4caec2a48751b01f2a21441cc3",
-      "decodeLanguage": "auto",
-      "scoreComparable": true,
-      "scriptSafeWer": 0.308486,
-      "speedup": 8.77,
-      "inferenceSeconds": 70.0299,
-      "loadedRssMiB": 1186.7,
-      "peakRssMiB": 1186.7,
-      "truncatedSamples": 8,
-      "emptySamples": 0,
-      "degenerateSamples": 0
-    },
-    {
-      "id": "srota-hinglish-q6",
-      "modelBytes": 690417824,
-      "modelSha256": "b0e6b1b81bfb2e278431eae81d8ec3fb4fbb7cae26c801f10bd31ec80cd03ac5",
-      "decodeLanguage": "auto",
-      "scoreComparable": true,
-      "scriptSafeWer": 0.467317,
-      "speedup": 10.47,
-      "inferenceSeconds": 58.6388,
-      "loadedRssMiB": 1200.3,
-      "peakRssMiB": 1216.9,
-      "truncatedSamples": 5,
-      "emptySamples": 0,
-      "degenerateSamples": 0
-    },
-    {
-      "id": "srota-hinglish-bf16-control",
-      "modelBytes": 1571490016,
-      "modelSha256": "2658bcc4251631e6a64a842af6d02814de572248f424ff207bacb6311e66aa16",
-      "decodeLanguage": "auto",
-      "scoreComparable": true,
-      "scriptSafeWer": 0.46961,
-      "speedup": 7.01,
-      "inferenceSeconds": 87.5862,
-      "loadedRssMiB": 2406.6,
-      "peakRssMiB": 2406.6,
-      "truncatedSamples": 6,
-      "emptySamples": 0,
-      "degenerateSamples": 0,
-      "note": "Diagnostic control only; near-identical accuracy confirms Q6 conversion did not cause the Srota regression."
-    }
+  "cleanMixedResults": [
+    { "id": "whisper-turbo-q8", "pipeline": "raw", "wer": 0.599197, "speedup": 8.49, "peakRssMiB": 1038.0, "truncated": 0, "degenerate": 1 },
+    { "id": "whisper-turbo-q8", "pipeline": "product-vad-v1", "wer": 0.479931, "speedup": 7.14, "peakRssMiB": 987.3, "truncated": 0, "degenerate": 0 },
+    { "id": "qwen3-asr-base-q6", "pipeline": "raw", "wer": 0.233945, "speedup": 6.89, "peakRssMiB": 1197.0, "truncated": 1, "degenerate": 0 },
+    { "id": "qwen3-asr-base-q6", "pipeline": "product-vad-v1", "wer": 0.248280, "speedup": 6.69, "peakRssMiB": 1188.5, "truncated": 0, "degenerate": 0 },
+    { "id": "qwen-hiacc-hinglish-q6", "pipeline": "raw", "wer": 0.223050, "characterF2": 0.821899, "speedup": 8.68, "peakRssMiB": 1191.7, "truncated": 0, "degenerate": 0 },
+    { "id": "qwen-hiacc-hinglish-q6", "pipeline": "product-vad-v1", "wer": 0.283830, "characterF2": 0.762594, "speedup": 7.06, "peakRssMiB": 1077.9, "truncated": 2, "degenerate": 1 },
+    { "id": "srota-hinglish-q6", "pipeline": "raw", "wer": 0.414564, "speedup": 8.19, "peakRssMiB": 1229.9, "truncated": 0, "degenerate": 0 },
+    { "id": "whisper-medium-q5", "pipeline": "raw", "wer": 0.571674, "characterF2": 0.494523, "speedup": 5.99, "peakRssMiB": 870.0, "truncated": 0, "degenerate": 4 },
+    { "id": "zero-stt-hinglish-q5", "pipeline": "raw", "wer": 0.485665, "characterF2": 0.580730, "speedup": 5.93, "peakRssMiB": 872.0, "truncated": 0, "degenerate": 4 },
+    { "id": "zero-stt-hinglish-q5-hi", "pipeline": "raw", "wer": 0.740252, "characterF2": 0.280570, "speedup": 5.36, "peakRssMiB": 796.6, "truncated": 0, "degenerate": 11 },
+    { "id": "hhs-whisper-small-hinglish-q5", "pipeline": "raw", "wer": 0.604358, "characterF2": 0.4493, "speedup": 12.1, "peakRssMiB": 380.9, "truncated": 0, "degenerate": 0 },
+    { "id": "hhs-whisper-small-hinglish-q5", "pipeline": "product-vad-v1", "wer": 0.624427, "characterF2": 0.4295, "speedup": 10.4, "peakRssMiB": 378.5, "truncated": 0, "degenerate": 1 },
+    { "id": "shuja-whisper-medium-hinglish-q5", "pipeline": "raw", "wer": 0.497133, "characterF2": 0.557329, "speedup": 6.44, "peakRssMiB": 889.7, "truncated": 0, "degenerate": 0 },
+    { "id": "shuja-whisper-medium-hinglish-q5", "pipeline": "product-vad-v1", "wer": 0.539564, "characterF2": 0.527572, "speedup": 5.01, "peakRssMiB": 812.5, "truncated": 0, "degenerate": 3 }
   ],
-  "decision": {
-    "currentDefault": "whisper-turbo-q8",
-    "bestComparableCandidate": "qwen3-asr-base-q6",
-    "candidatePromotion": "blocked",
-    "blockers": [
-      "Qwen Base truncated 8 of 24 clips at the current output-token limit.",
-      "The 24-clip smoke set is too small for a release-quality claim.",
-      "No controlled cafe, traffic, wind, fan, echo, overlap, or silence matrix has run yet."
-    ],
-    "rejectedAsDefault": ["srota-hinglish-q6"],
-    "styleMatchedEvaluationRequired": ["apex-hinglish-q8"],
-    "deferredForDiskSafety": ["trelis-hinglish-q8"]
-  },
-  "coldStartNote": "The first-ever Metal run took about 12.9 seconds while pipelines compiled; subsequent warm starts measured about 0.5 to 1.4 seconds."
+  "romanProxyResults": [
+    { "id": "apex-hinglish-q8", "pipeline": "raw", "proxyWer": 0.377867, "speedup": 9.39, "peakRssMiB": 1003.9, "degenerate": 1 },
+    { "id": "apex-hinglish-q8", "pipeline": "product-vad-v1", "proxyWer": 0.491972, "speedup": 7.42, "peakRssMiB": 939.4, "degenerate": 2 },
+    { "id": "whisper-turbo-q8-en", "pipeline": "raw", "proxyWer": 0.850917, "speedup": 8.89, "peakRssMiB": 963.7, "degenerate": 3 },
+    { "id": "whisper-turbo-q8-en", "pipeline": "product-vad-v1", "proxyWer": 0.557913, "speedup": 7.77, "peakRssMiB": 962.8, "degenerate": 0 }
+  ],
+  "englishTranslationResults": [
+    { "id": "whisper-turbo-q8-translate-en", "wer": 1.134387, "speedup": 4.15, "peakRssMiB": 964.1, "outcome": "invalid control; returned Hindi because Turbo is not translation-trained" },
+    { "id": "whisper-medium-q5-translate-en", "wer": 0.654150, "speedup": 5.75, "peakRssMiB": 860.4, "outcome": "best tested translation option" },
+    { "id": "whisper-medium-q8-translate-en", "wer": 0.660079, "speedup": 6.15, "peakRssMiB": 1109.3, "outcome": "no quality gain over Q5" },
+    { "id": "whisper-large-v3-q5-translate-en", "wer": 0.667984, "characterF2": 0.511978, "speedup": 3.11, "peakRssMiB": 1492.6, "outcome": "no quality gain and materially heavier" }
+  ],
+  "englishAsrResults": [
+    { "id": "whisper-turbo-q8", "wer": 0.047529, "characterF2": 0.9630, "speedup": 4.5, "peakRssMiB": 1047.6 },
+    { "id": "whisper-medium-q5", "wer": 0.047529, "characterF2": 0.9598, "speedup": 4.9, "peakRssMiB": 858.0 },
+    { "id": "apex-hinglish-q8", "wer": 0.096958, "characterF2": 0.9222, "speedup": 4.5, "peakRssMiB": 1009.6 },
+    { "id": "zero-stt-hinglish-q5", "wer": 0.216730, "characterF2": 0.8392, "speedup": 4.4, "peakRssMiB": 887.8 },
+    { "id": "qwen3-asr-base-q6", "wer": 0.047529, "characterF2": 0.9663, "speedup": 13.7, "peakRssMiB": 1090.1 },
+    { "id": "srota-hinglish-q6", "wer": 0.064639, "characterF2": 0.9523, "speedup": 14.8, "peakRssMiB": 1240.2 },
+    { "id": "qwen-hiacc-hinglish-q6", "wer": 0.043726, "characterF2": 0.9608, "speedup": 14.4, "peakRssMiB": 1242.6 },
+    { "id": "hhs-whisper-small-hinglish-q5", "wer": 0.142586, "characterF2": 0.8817, "speedup": 12.6, "peakRssMiB": 378.3 },
+    { "id": "shuja-whisper-medium-hinglish-q5", "wer": 0.117871, "characterF2": 0.907512, "speedup": 3.81, "peakRssMiB": 815.5 }
+  ],
+  "syntheticNoiseResults": [
+    { "condition": "wind-5db", "pipeline": "raw", "id": "whisper-turbo-q8", "wer": 0.756977, "peakRssMiB": 1047.6, "truncated": 0, "degenerate": 0 },
+    { "condition": "wind-5db", "pipeline": "raw", "id": "qwen3-asr-base-q6", "wer": 0.352326, "peakRssMiB": 1175.5, "truncated": 0, "degenerate": 0 },
+    { "condition": "wind-5db", "pipeline": "raw", "id": "qwen-hiacc-hinglish-q6", "wer": 0.334884, "peakRssMiB": 1229.8, "truncated": 1, "degenerate": 0 },
+    { "condition": "wind-5db", "pipeline": "product-vad-v1", "id": "whisper-turbo-q8", "wer": 0.668605, "peakRssMiB": 1052.6, "truncated": 0, "degenerate": 0 },
+    { "condition": "wind-5db", "pipeline": "product-vad-v1", "id": "qwen3-asr-base-q6", "wer": 0.362791, "peakRssMiB": 1243.1, "truncated": 0, "degenerate": 0 },
+    { "condition": "wind-5db", "pipeline": "product-vad-v1", "id": "qwen-hiacc-hinglish-q6", "wer": 0.347674, "peakRssMiB": 1229.6, "truncated": 0, "degenerate": 1 },
+    { "condition": "babble-5db", "pipeline": "raw", "id": "whisper-turbo-q8", "wer": 0.832558, "peakRssMiB": 1046.7, "truncated": 0, "degenerate": 2 },
+    { "condition": "babble-5db", "pipeline": "raw", "id": "qwen3-asr-base-q6", "wer": 0.725581, "peakRssMiB": 1183.5, "truncated": 0, "degenerate": 1 },
+    { "condition": "babble-5db", "pipeline": "raw", "id": "qwen-hiacc-hinglish-q6", "wer": 0.738372, "peakRssMiB": 1229.7, "truncated": 2, "degenerate": 1 },
+    { "condition": "babble-5db", "pipeline": "product-vad-v1", "id": "whisper-turbo-q8", "wer": 1.006977, "peakRssMiB": 987.4, "truncated": 0, "degenerate": 3 },
+    { "condition": "babble-5db", "pipeline": "product-vad-v1", "id": "qwen3-asr-base-q6", "wer": 0.633721, "peakRssMiB": 1187.9, "truncated": 1, "degenerate": 0 },
+    { "condition": "babble-5db", "pipeline": "product-vad-v1", "id": "qwen-hiacc-hinglish-q6", "wer": 0.720930, "peakRssMiB": 1229.6, "truncated": 2, "degenerate": 2 }
+  ],
+  "decisions": {
+    "currentShippedDefault": "whisper-turbo-q8",
+    "bestMixedCandidate": "qwen-hiacc-hinglish-q6 with raw model-specific audio path",
+    "bestRomanCandidate": "apex-hinglish-q8; proxy evidence only until human Roman references exist",
+    "englishRegressionGate": "qwen-hiacc passes this 24-clip smoke control; Apex, Shuja Medium, Hhs Whisper Small, and Zero STT regress",
+    "bestEnglishTranslationCandidate": "whisper-medium-q5-translate-en",
+    "translationCapability": "blocked until a separate translation-capable model can be installed and routed",
+    "preprocessing": "model-specific policy required; product-vad-v1 must not be applied globally",
+    "promotion": "blocked pending full-set, repeated-run, real-noise, long-form, and product-lifecycle gates"
+  }
 }

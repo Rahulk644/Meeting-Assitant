@@ -89,8 +89,10 @@ These were expensive to learn. Do not re-litigate them.
    wrong script. **This was never a Whisper-config problem.** Verified by A/B against Handy's own WAVs:
    on whole utterances the output is clean and identical to Handy.
 2. **Language and translate are two independent knobs.** `language` = *detection* (default `auto`, because
-   the primary user speaks Hindi + English); `translate` = *output* (default on → English). Default
-   behavior: auto-detect → English. Both are live-configurable in Settings.
+   the primary user speaks Hindi + English); `translate` = a separate decoder task. Automatic is preserved
+   end-to-end and must never be rewritten to English. Translation defaults off and is blocked in production
+   while Turbo is the installed model because Turbo was not trained for translation. Re-enable it only when
+   a qualified translation-capable model has its own install/routing/removal lifecycle.
 3. **Anti-hallucination is temperature-0, not a VAD prefilter.** A Silero VAD prefilter was removed — it
    *degraded* clean speech (dropped onsets, stripped punctuation) and only ever masked the chunking bug.
    The fluent garbage on noise/silence comes from Whisper's **temperature fallback** escalating on
@@ -100,11 +102,13 @@ These were expensive to learn. Do not re-litigate them.
    utterances give context; temperature-0 handles what's left. Verified on a silence/noise/transient/speech
    matrix. (A per-token confidence gate is **not possible** with this whisper GGUF — it exposes zero
    tokens; don't retry that approach.)
-   **Dictation is the exception — and not a contradiction.** This rule governs the *meeting* path: whole,
+   **Current Whisper dictation is the exception — and not a contradiction.** This rule governs the *meeting* path: whole,
    already-energy-gated utterances, where a VAD prefilter only clipped clean speech. **Dictation feeds
    *short push-to-talk clips*** with silence a user leaves around a phrase, so it *does* run **Silero VAD**
    (in the app, on the `cpal` buffer) to strip that silence — otherwise Whisper loops on a long/idle
-   recording. Two different inputs, two different answers; don't collapse them back into one rule.
+   recording. This VAD is not a provider invariant: exact-pipeline benchmarks show that it damages Apex and
+   Qwen HiACC. Every new speech provider must pass raw-versus-product preprocessing A/B tests and may select
+   a different silence/denoise policy. Different inputs and models need different answers.
 
 ## macOS permissions & code-signing — the biggest trap
 

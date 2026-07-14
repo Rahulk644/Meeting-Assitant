@@ -1,82 +1,198 @@
-# Hinglish speech-model benchmark
+# Speech model qualification: Hinglish, English, translation, and noise
 
-**Status:** engineering smoke result, not a release-quality model claim
+**Status:** engineering candidate qualification, not a release-quality accuracy claim
 
-**Measured:** 14 July 2026 on an Apple M1 Mac with 8 GB memory and macOS 26.5
+**Measured:** 14 July 2026, Apple M1 / 8 GB / macOS 26.5
 
-**Machine-readable evidence:**
+**Aggregate evidence:**
 [`benchmarks/speech/results/2026-07-14-m1-smoke.json`](../benchmarks/speech/results/2026-07-14-m1-smoke.json)
 
-## Decision
+This document is the durable speech-model decision. Transcript-bearing reports, weights, and evaluation
+audio stay in `~/.cache/my-assistant-bench`; they are intentionally not committed.
 
-Keep Whisper Large v3 Turbo Q8 as the shipped default for now. Qwen3-ASR 0.6B Base Q6 is the strongest
-mixed-script Hinglish candidate in this smoke test, but it truncated 8 of 24 clips at the native runtime's
-current output-token limit. Do not expose a model picker or silently change Automatic until that limit is
-fixed and the candidate passes the full and noisy-audio gates.
+## Product decision
 
-- **Advance:** Qwen3-ASR Base Q6, after the truncation/chunking fix. It scored 30.85% script-safe WER.
-- **Do not use forced Hindi for the current Whisper:** it regressed from 59.92% to 75.23% WER and produced
-  many repetition loops. Automatic language detection remains safer for Hinglish.
-- **Do not promote Srota as the Hinglish default:** Q6 scored 46.73% WER with substantially more deletions.
-  A BF16 control scored 46.96%, so quantization or conversion did not cause the regression.
-- **Do not rank Apex yet:** it emits Roman Hinglish while CoSHE uses natural mixed Devanagari/Latin
-  references. Its raw WER is not comparable. It needs a human-reviewed Roman-reference corpus.
-- **Defer Trelis preview conversion:** its source weights are about 6.2 GB before conversion. The current
-  machine did not have a safe amount of free disk for source, intermediate, and quantized copies together.
+Keep Whisper Large v3 Turbo Q8 as the shipped default until the product has a safe model catalog,
+model-specific audio routing, downloader/removal/rollback, and the full acceptance gate. The benchmark does
+**not** say that Whisper variants are bad. It says different variants solve different jobs:
 
-## Measurements
+- **Mixed-script Hinglish:** Qwen3-ASR HiACC Q6 is the leading runnable candidate at 22.31% WER with zero
+  truncations on 24 clean clips. Qwen Base is close at 23.39%. Neither is ready to ship because the current
+  concatenating VAD damages their accuracy and real-noise/full-set tests remain.
+- **Roman Hinglish:** Apex Q8 is the leading tested candidate. It scores 37.79% against a deterministic
+  transliteration proxy versus 85.09% for stock Turbo forced to English. This is a strong A/B signal, not a
+  publishable accuracy number; promotion requires human Roman references.
+- **Ordinary English transcription:** HiACC (4.37% WER), Whisper Turbo (4.75%), Whisper Medium (4.75%), and
+  Qwen Base (4.75%) all pass this 24-clip smoke control. Apex regresses to 9.70%, synthetic-trained Shuja
+  Medium to 11.79%, lightweight Hhs Whisper Small to 14.26%, and Zero STT materially to 21.67%.
+- **Hindi speech translated to English:** the shipped Turbo model is not a translation model and returned
+  Hindi. Whisper Medium Q5 was the best tested option. Translation stays hidden until a separate
+  translation-capable model can be installed and routed.
+- **Noisy audio:** Qwen/HiACC are materially stronger than Turbo in the synthetic wind case. Severe competing
+  speech remains unsolved for every tested model. Synthetic tests locate failure boundaries; they do not
+  establish real café or outdoor quality.
 
-The 24 deterministic clips contain 614.04 seconds of natural conversational Hinglish. Each model received
-one warm-up request and then ran through the exact pinned `transcribe-server` used by the product.
+## Fair evaluation tracks
 
-| Candidate | Comparable WER | Speed vs real time | Peak server RSS | Truncated | Degenerate | Outcome |
-|---|---:|---:|---:|---:|---:|---|
-| Whisper Turbo Q8, auto | 59.92% | 8.49x | 1,038.0 MiB | 0/24 | 1/24 | shipped baseline |
-| Whisper Turbo Q8, forced Hindi | 75.23% | 6.61x | 962.2 MiB | 0/24 | 10/24 | reject configuration |
-| Apex Hinglish Q8 | not comparable | 9.41x | 938.4 MiB | 0/24 | 1/24 | build Roman test set |
-| Qwen3-ASR Base Q6 | **30.85%** | 8.77x | 1,186.7 MiB | **8/24** | 0/24 | best candidate; blocked |
-| Srota Hinglish Q6 | 46.73% | **10.47x** | 1,216.9 MiB | 5/24 | 0/24 | do not promote |
-| Srota Hinglish BF16 control | 46.96% | 7.01x | 2,406.6 MiB | 6/24 | 0/24 | diagnostic only |
+One WER cannot fairly rank these jobs, so the harness keeps four tracks separate:
 
-WER preserves Indic combining marks, does not transliterate, and is comparable only when output and
-reference script styles match. RSS is the native server process, not total app memory. The very first Metal
-launch took about 12.9 seconds while pipelines compiled; subsequent warm starts were about 0.5–1.4 seconds.
+1. **Natural mixed script:** 24 deterministic CoSHE-500 clips, 614.04 seconds, human mixed
+   Devanagari/Latin references.
+2. **Roman Hinglish proxy:** the same clips with references deterministically transliterated by pinned
+   `indic-transliteration==2.3.82`. This is explicitly `machine-derived-proxy` and only supports A/B decisions.
+3. **English ASR:** 24 deterministic `en_us` FLEURS validation clips with human English transcripts.
+4. **English translation:** 24 Hindi FLEURS recordings aligned by sentence ID to their human English FLoRes
+   sentences. Translation WER is strict; character-F2 adds surface similarity, not semantic judgment.
 
-## Production defects exposed and fixed
+CoSHE is CC-BY-NC-4.0 and evaluation-only. FLEURS is CC-BY-4.0. Neither dataset is training material for
+this project or part of an app release.
 
-The benchmark found two native-wrapper problems rather than hiding them in the scorer:
+## Clean mixed-script Hinglish
 
-1. `transcribe.cpp` can return a valid partial transcript with `TRANSCRIBE_ERR_OUTPUT_TRUNCATED`. The wrapper
-   previously discarded that text and returned an empty result. It now keeps the partial transcript and marks
-   the response `"truncated": true`.
-2. A byte-limited partial result can end inside a UTF-8 code point. JSON escaping now validates UTF-8,
-   preserves valid Hindi text, and replaces malformed trailing bytes with U+FFFD rather than returning
-   invalid JSON.
+Each model ran through the pinned native `transcribe-server`. `product VAD` means the exact Rust
+`resample_16k` and `vad_extract_speech` functions used by dictation—not a benchmark reimplementation.
 
-The native build now runs a self-test covering Hindi, JSON metacharacters, and malformed trailing UTF-8.
-These source fixes require a fresh app/DMG build before they exist in a distributable artifact.
+| Candidate | Audio path | WER | Speed | Peak server RSS | Truncated / degenerate | Decision |
+|---|---|---:|---:|---:|---:|---|
+| Whisper Turbo Q8 | raw | 59.92% | 8.49x | 1,038 MiB | 0 / 1 | shipped baseline control |
+| Whisper Turbo Q8 | product VAD | 47.99% | 7.14x | 987 MiB | 0 / 0 | VAD helps this model |
+| Qwen Base Q6 | raw + guarded 512 budget | 23.39% | 6.89x | 1,197 MiB | 1 / 0 | strong candidate |
+| Qwen Base Q6 | product VAD | 24.83% | 6.69x | 1,189 MiB | 0 / 0 | safer but slightly less accurate |
+| **Qwen HiACC Q6** | **raw** | **22.31%** | **8.68x** | 1,192 MiB | **0 / 0** | best mixed candidate |
+| Qwen HiACC Q6 | product VAD | 28.38% | 7.06x | 1,078 MiB | 2 / 1 | VAD destroys its advantage |
+| Srota Q6 | raw + 512 budget | 41.46% | 8.19x | 1,230 MiB | 0 / 0 | do not promote |
+| Whisper Medium Q5 | raw | 57.17% | 5.99x | 870 MiB | 0 / 4 | base control |
+| Zero STT Q5 | raw | 48.57% | 5.93x | 872 MiB | 0 / 4 | real Hinglish gain, English regression |
+| Zero STT Q5 | forced Hindi | 74.03% | 5.36x | 797 MiB | 0 / 11 | reject configuration |
+| Hhs Whisper Small Q5 | raw | 60.44% | **12.1x** | **381 MiB** | 0 / 0 | reject; small but inaccurate |
+| Hhs Whisper Small Q5 | product VAD | 62.44% | 10.4x | **379 MiB** | 0 / 1 | VAD also worsens it |
+| Shuja Whisper Medium Q5 | raw | 49.71% | 6.44x | 890 MiB | 0 / 0 | synthetic fine-tune gain, still weak |
+| Shuja Whisper Medium Q5 | product VAD | 53.96% | 5.01x | 813 MiB | 0 / 3 | VAD worsens it |
 
-## What this benchmark does not prove
+The clean product VAD retained 84.74% of audio on average, but only 39.93% for the most aggressively cut
+clip. Its effect is model-dependent. No future provider may inherit this VAD merely because Whisper uses it.
 
-CoSHE is conversational but is not a controlled noise suite. This result does not yet answer café, wind,
-traffic, fan, room echo, overlapping speaker, or microphone-distance performance. It also does not represent
-all Indian accents, age groups, devices, or regional code-switching patterns. The CC-BY-NC-4.0 dataset is
-evaluation-only and must never be used for training or included in a release.
+## Roman Hinglish
 
-## Promotion gate and next engineering work
+| Candidate | Audio path | Proxy WER | Speed | Peak server RSS | Degenerate | Meaning |
+|---|---|---:|---:|---:|---:|---|
+| **Apex Q8** | **raw** | **37.79%** | 9.39x | 1,004 MiB | 1 | best Roman A/B candidate |
+| Apex Q8 | product VAD | 49.20% | 7.42x | 939 MiB | 2 | do not use current VAD |
+| Stock Turbo, forced English | raw | 85.09% | 8.89x | 964 MiB | 3 | poor Roman control |
+| Stock Turbo, forced English | product VAD | 55.79% | 7.77x | 963 MiB | 0 | improved but still behind Apex |
 
-1. Raise or segment the Qwen output budget without losing words; require zero truncations on this set.
-2. Run all candidates on the full 500-clip pinned CoSHE set, three times, and report variance.
-3. Build a consented product corpus with clean and controlled café, traffic, wind, fan, echo, overlap,
-   silence, short dictation, and long meeting fixtures.
-4. Add a human-reviewed Roman Hinglish reference track before scoring Apex or another Roman-output model.
-5. Test adaptive noise cleanup as a separate A/B layer; never force denoising on clean audio without proof.
-6. Verify model and dataset licensing, provenance, runtime compatibility, and memory on 8/16/32 GB Macs.
-7. Only then implement the signed model catalog, resumable downloader, hardware routing, removal, rollback,
-   and user-facing Automatic / On this Mac / Cloud Speech picker.
+Roman output is desirable for the primary Hinglish typing use case. The current proxy is enough to keep
+Apex in the shortlist, but not enough to market an accuracy percentage. A consented, human-reviewed Roman
+test set is required.
+
+## Ordinary English transcription
+
+| Candidate | WER | Character-F2 | Speed | Peak server RSS | Decision |
+|---|---:|---:|---:|---:|---|
+| **Qwen HiACC Q6** | **4.37%** | 96.08 | 14.4x | 1,243 MiB | passes smoke regression gate |
+| Whisper Turbo Q8 | 4.75% | 96.30 | 4.5x | 1,048 MiB | passes; shipped control |
+| Whisper Medium Q5 | 4.75% | 95.98 | 4.9x | **858 MiB** | passes |
+| Qwen Base Q6 | 4.75% | **96.63** | 13.7x | 1,090 MiB | passes |
+| Srota Q6 | 6.46% | 95.23 | **14.8x** | 1,240 MiB | mild regression |
+| Apex Q8 | 9.70% | 92.22 | 4.5x | 1,010 MiB | meaningful English tradeoff |
+| Shuja Whisper Medium Q5 | 11.79% | 90.75 | 3.81x | 816 MiB | English regression; one degenerate |
+| Hhs Whisper Small Q5 | 14.26% | 88.17 | 12.6x | **378 MiB** | lightweight but unacceptable regression |
+| Zero STT Q5 | 21.67% | 83.92 | 4.4x | 888 MiB | reject as automatic default |
+
+This is a clean 24-clip smoke gate, not a general English benchmark. It does prove that HiACC's Hinglish
+gain did not come with an obvious clean-English regression on the same deterministic selection.
+
+## Hindi speech to English translation
+
+| Candidate | Strict WER | Speed | Peak server RSS | Decision |
+|---|---:|---:|---:|---|
+| Turbo Q8 `translate=true` | 113.44% | 4.15x | 964 MiB | invalid product path; returned Hindi |
+| **Whisper Medium Q5** | **65.42%** | 5.75x | **860 MiB** | best tested translation option |
+| Whisper Medium Q8 | 66.01% | **6.15x** | 1,109 MiB | no quality gain over Q5 |
+| Whisper Large v3 Q5 | 66.80% | 3.11x | 1,493 MiB | heavier and no gain on this set |
+
+OpenAI's [Whisper documentation](https://github.com/openai/whisper) states that Turbo is not trained for
+translation and should return the original language; Medium or Large must be used for translation. The old
+UI exposed an English-translation toggle while only Turbo was installed. The capability now fails closed and
+requires a separately qualified model before it can reappear.
+
+## Synthetic 5 dB stress tests
+
+The first 12 CoSHE clips were mixed deterministically with either modulated low-frequency noise (`wind`) or
+three other speech clips (`babble`). The manifest stores the method, seed, SNR, source hashes, and mix gain.
+
+| Condition | Audio path | Turbo | Qwen Base | HiACC |
+|---|---|---:|---:|---:|
+| wind 5 dB | raw | 75.70% | 35.23% | **33.49%** |
+| wind 5 dB | product VAD | 66.86% | 36.28% | **34.77%** |
+| babble 5 dB | raw | 83.26% | **72.56%** | 73.84% |
+| babble 5 dB | product VAD | 100.70% | **63.37%** | 72.09% |
+
+The VAD helps Turbo under wind, hurts both Qwen variants under wind, helps Qwen Base under babble, and
+catastrophically hurts Turbo under babble. The engineering conclusion is model-specific preprocessing and a
+separate denoiser A/B—not “always enable more cleanup.” Real consented café, traffic, wind, fan, echo,
+distance, overlap, and silence fixtures remain mandatory.
+
+## Candidate universe and qualification status
+
+This is a high-signal Hugging Face/GitHub discovery snapshot, not a claim that every uploaded checkpoint on
+the internet has been executed. Candidates were filtered by task relevance, license/provenance, available
+weights, and product runtime feasibility.
+
+| Family / candidate | Status | Evidence / blocker |
+|---|---|---|
+| Whisper Turbo, Medium, Large v3 | tested | controls for mixed, English, and translation |
+| Apex Whisper Hinglish | tested | strong Roman proxy; needs human Roman set |
+| Zero STT Whisper Medium fine-tune | tested | improves mixed Hinglish over Medium, but badly regresses English |
+| Trelis Whisper Large v3 fine-tune | deferred safely | source weights are about 6.2 GB and the catalog requires a 12 GB free-disk safety floor for source, reference, and quantized copies |
+| Hhsjsnns Whisper Small fine-tune | tested | only 194 MB on disk / about 381 MB peak server RSS, but 60.44% mixed and 14.26% English WER; reject |
+| Shuja Whisper Medium fine-tune | tested | improves base Medium from 57.17% to 49.71% mixed WER, but is nowhere near its synthetic card claim, regresses English to 11.79%, and worsens with VAD |
+| Qwen Base, Srota, HiACC | tested | HiACC wins clean mixed track; model-specific no-VAD path required |
+| addyo07 noisy Qwen ONNX | integration required | custom ONNX path, not the shipped runtime; needs an isolated adapter and independent evaluation |
+| addyo07 Nemotron RNNT ONNX | integration required | exported encoder/decoder lack a production streaming feature/cache/RNNT runner; author scores are not independent |
+| Hinglish Conformer CTC GGUF | runtime incompatible | the pinned production server rejects the file at model load; upstream NVIDIA terms also need review |
+| WhissleAI ONNX | excluded from OSS catalog | gated/custom licensing is incompatible with the intended open model catalog |
+| incomplete Wav2Vec uploads | excluded pending provenance | missing tokenizer/runtime/provenance prevents reproducible qualification |
+
+The catalog pins every downloaded or converted production-runtime artifact by source revision, size, and
+SHA-256. A model card claim is never copied into the measured-results table as if it were our result.
+
+## Product defects exposed and fixed
+
+1. **Automatic dictation was secretly forced to English.** The Rust proxy and legacy developer harness now
+   preserve `language=auto`; a regression test prevents this from returning.
+2. **Turbo translation was exposed despite being unsupported.** Translation defaults off, stale saved state
+   cannot re-enable it, the server release contract forces it off, and the release matrix marks it blocked.
+3. **Qwen output handling was too short.** The pinned native patch raises the output budget from 256 to 512
+   tokens and terminates repeated token cycles. Qwen Base improved from 30.85% with 8 truncations to 23.39%
+   with one recovered/truncated sample; a 1,024-token experiment was worse because a loop ran longer.
+4. **The benchmark mislabeled clean English as a script mismatch.** English references are now comparable
+   for mixed/roman-capable multilingual models; mixed-script and Roman Hinglish still require separate refs.
+5. **Preprocessing was previously inferred rather than exact.** The Rust audio functions now live in a small
+   shared module and the benchmark example calls the same code as dictation.
+6. Existing partial-transcript and UTF-8 protections remain: valid partial text survives native truncation,
+   and malformed trailing bytes cannot create invalid JSON.
+
+These are source fixes. They require a new app/DMG build and release audit before they exist in a shareable
+artifact.
+
+## Promotion gate
+
+1. Build the human Roman Hinglish corpus and a consented real-noise product corpus.
+2. Run the full 500-clip CoSHE set and larger English/translation sets three times; report variance and
+   statistical uncertainty.
+3. Add long-form dictation and meeting fixtures, silence/hallucination rate, multi-speaker overlap, names,
+   numbers, punctuation, and paste-format checks.
+4. Implement per-model audio policy: current Whisper VAD, raw/alternative silence handling for Qwen/HiACC
+   and Apex, and an independently benchmarked optional denoiser.
+5. Prototype Nemotron/noisy-Qwen adapters out of process; only retain them if they beat the leaders under the
+   same references without unacceptable RAM, startup, energy, licensing, or crash costs.
+6. Verify model/dataset licenses and provenance, then implement a signed catalog, resumable downloads,
+   hardware routing, deletion, rollback, and disk/RAM warnings.
+7. Only after those gates expose Automatic / Roman Hinglish / Natural Script / Translate to English in the
+   UI. Never silently force the decoder language or translation task.
 
 ## Reproduce
 
-Use [`benchmarks/speech/README.md`](../benchmarks/speech/README.md). Models, audio, logs, and transcript-bearing
-reports stay under `~/.cache/my-assistant-bench` by default; only aggregate, non-transcript evidence belongs
-in Git.
+Follow [`benchmarks/speech/README.md`](../benchmarks/speech/README.md). Raw reports contain transcripts and
+stay private; only aggregate, non-transcript evidence belongs in Git.

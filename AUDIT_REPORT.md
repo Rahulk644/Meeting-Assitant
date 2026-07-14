@@ -15,9 +15,9 @@ defects. No real private meeting was recorded during verification.
 | Item | Final value |
 |---|---|
 | DMG | `desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` |
-| SHA-256 | `ce7672606efe71cad8e5ddc6650aab037ae2b10c973fce6cb82eb771f9e63e52` |
-| DMG size | 14,593,923 bytes (13.9 MiB) |
-| Installed app | 28,320 KiB (27.7 MiB) |
+| SHA-256 | `b1bcb51a3a126f9d7463f575db82f7fca5045d71af116197d2190dcc7f27709a` |
+| DMG size | 14,560,334 bytes (13.9 MiB) |
+| Installed app | 28,200 KiB (27.5 MiB) |
 | Target | Apple Silicon, macOS 14.4+ |
 | Signing | self-signed, hardened runtime, no Apple Team ID or notarization |
 
@@ -28,12 +28,12 @@ beta install guide. Deep app signing and all nested helper signatures pass `code
 
 | Final settled background process | Physical footprint |
 |---|---:|
-| Rust/Tauri app | 32.6 MiB |
-| `meeting-tap` | 5.1 MiB |
+| Rust/Tauri app | 33.0 MiB |
+| `meeting-tap` | 4.9 MiB |
 | `meeting-state` | 2.2 MiB |
-| **Aggregate** | **39.9 MiB** |
+| **Aggregate** | **40.1 MiB** |
 
-The final hidden-window pass also reported 113,216 KiB (110.6 MiB) aggregate RSS. RSS includes shared and
+The final hidden-window pass also reported 109,072 KiB (106.5 MiB) aggregate RSS. RSS includes shared and
 mapped WebKit pages, so macOS `vmmap` physical footprint is the more useful memory-pressure measure. A cold
 visible-window pass can briefly be higher while WebKit initializes. `transcribe-server`, Whisper, and
 LiteRT-LM were not resident at idle. Whisper unload remains user-configurable and defaults to 10 minutes.
@@ -62,6 +62,10 @@ AppKit panel, not a hidden WebView.
   open Zoom/Teams process does not qualify.
 - Existing valid speech models are adopted into private Application Support so replacing a build does not
   force another 845 MB download.
+- Automatic speech language now reaches the decoder unchanged rather than being silently forced to English.
+  Translation fails closed in production because the shipped Turbo model is transcription-only.
+- The Qwen research runtime uses a bounded 512-token budget with repeated-cycle termination; this is
+  benchmark infrastructure, not a silent change to the shipped Whisper default.
 
 ## Security and privacy posture
 
@@ -102,17 +106,24 @@ provider are supported for meeting intelligence. These are LLM providers, not cl
 
 ## Verification completed
 
-- Rust tests: **15 passed**.
+- Rust tests: **19 passed**.
 - Node product/release tests: **25 passed**.
-- Both Swift helpers type-check; transcribe-server rebuilt from its pinned checkout.
+- Speech benchmark unit tests: **8 passed**; catalog/result JSON, Python syntax, shell syntax, and diff hygiene passed.
+- Both Swift helpers compiled and passed self-tests; transcribe-server rebuilt from its pinned checkout and
+  passed its protocol self-test.
 - `npm audit --omit=dev` and full `npm audit`: **0 vulnerabilities**.
 - Full optimized release build and stable self-signing: passed.
-- DMG mount/layout, app signature, nested signatures, and bundle inventory: passed.
+- DMG read-only mount/layout, app signature, nested signatures, production capability payload, and bundle
+  inventory: passed. Production contains Dictation and Meetings, blocks Translation, and contains no model,
+  benchmark, transcript manifest, or source-weight artifacts.
 - Deliberately restored stale WebKit cache: final per-launch URL loaded all core navigation.
 - Unauthenticated API, forged Host, and occupied-port behavior: 401, 403, and clean fail-closed exit.
 - Final packaged UI: Dictation, Meetings Beta, Settings, and Right Command visible.
 - Native pill listening state: visually inspected on the desktop.
 - Settled idle process/RSS inventory: captured above; no speech or local-LLM server resident.
+- Mixed-script Hinglish, Roman proxy, ordinary English, Hindi-to-English translation, exact product-VAD,
+  and deterministic synthetic wind/babble tracks completed. See `docs/SPEECH_MODEL_BENCHMARK.md`; these are
+  candidate-engineering results, not marketing accuracy claims.
 
 ## Remaining acceptance work
 

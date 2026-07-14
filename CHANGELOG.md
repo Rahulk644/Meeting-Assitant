@@ -17,8 +17,9 @@ versions will use semantic versioning once the first public beta tag is cut.
 - Conservative browser and communication-app call detection using active per-app audio plus meeting-window
   evidence; universal manual recording remains available for any platform.
 - Native first-frame meeting thumbnails and installed-app icon/platform-tile fallbacks.
-- Reproducible, revision- and hash-pinned Hinglish speech benchmark with private-cache data boundaries and
-  aggregate OSS evidence.
+- Reproducible, revision- and hash-pinned speech qualification across mixed-script Hinglish, Roman Hinglish,
+  ordinary English, Hindi-to-English translation, exact product preprocessing, and deterministic synthetic
+  noise, with private-cache data boundaries and aggregate OSS evidence.
 
 ### Changed
 
@@ -31,6 +32,8 @@ versions will use semantic versioning once the first public beta tag is cut.
 - Scheduled/calendar titles now outrank meeting-window titles; unscheduled calls are labelled
   `Impromptu meeting` instead of guessing a title from transcript text.
 - The DMG start-here guide now documents the current macOS Privacy & Security → Open Anyway flow.
+- Translation is hidden in production until a translation-capable model can be installed; the shipped Turbo
+  model remains transcription-only.
 
 ### Fixed
 
@@ -42,6 +45,9 @@ versions will use semantic versioning once the first public beta tag is cut.
   unreachable background process.
 - Native transcription now preserves valid partial output when a model reaches its token limit, reports the
   truncation, and guarantees valid UTF-8 JSON for byte-limited Hindi text.
+- Automatic dictation language now reaches the decoder unchanged instead of being silently forced to English.
+- Qwen decoding now uses a bounded 512-token budget with repeated-cycle termination, preventing runaway
+  loops while retaining valid partial speech.
 
 ### Security
 

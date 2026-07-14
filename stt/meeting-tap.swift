@@ -576,7 +576,8 @@ func writeWav16(_ samples: [Float], to url: URL) {
 // probability per word; averaged, it separates real speech (~0.9) from noise/hallucination (low).
 func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
     // Two independent knobs: `language` = DETECTION (default `auto` — Rahul speaks Hindi + English, so let
-    // Whisper detect per utterance), `translate` = OUTPUT (default on → English). The old "auto hallucinates
+    // Whisper detect per utterance), `translate` = OUTPUT (off for the shipped Turbo model, which OpenAI did
+    // not train for translation). The old "auto hallucinates
     // a wrong script" (کن کن کن) was really our 4 s fragments starving detection — on whole utterances `auto`
     // is accurate (A/B-verified against Handy's own WAVs). Both overridable in Settings → Meetings.
     var args = ["-s", whisperURL]
@@ -754,7 +755,7 @@ func postRecording(_ file: String, _ startedAt: Int) {
 
 let cap = Capture()
 var curModuleMeetings = false   // Meetings opt-in — gates Screen-Recording detection + capture (no opt-in ⇒ no prompt)
-var wasInCall = false, wasApp = "", wasTitle = "", curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = true, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curBrowserMeet = true, curVocab = ""
+var wasInCall = false, wasApp = "", wasTitle = "", curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = false, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curBrowserMeet = true, curVocab = ""
 var configFetchInFlight = false
 var parentExitScheduled = false
 
@@ -780,7 +781,7 @@ func fetchConfig() {
                 if let m = o["modules"] as? [String: Any] { curModuleMeetings = (m["meetings"] as? Bool) ?? false }
                 curSharing = (o["sharing"] as? Bool) ?? false
                 curVideoMode = (o["videoMode"] as? String) ?? VIDEO_MODE0
-                curTranslate = (o["translate"] as? Bool) ?? true
+                curTranslate = (o["translate"] as? Bool) ?? false
                 curLanguage = (o["language"] as? String) ?? "auto"
                 curManual = (o["manual"] as? String) ?? "auto"
                 curAutoDetect = (o["autoDetect"] as? Bool) ?? true
