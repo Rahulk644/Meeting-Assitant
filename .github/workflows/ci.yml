@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
 
 jobs:
@@ -17,16 +16,30 @@ jobs:
       - name: Run tests
         working-directory: app
         run: npm test
+      - name: Audit desktop JavaScript dependencies
+        working-directory: desktop
+        run: npm audit
 
   desktop-check:
     name: Desktop compile check (cargo)
     runs-on: macos-latest # links Core Audio / CoreGraphics / AppKit — macOS only
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
+      - name: Install deterministic desktop build tooling
+        working-directory: desktop
+        run: npm ci
+      - name: Prepare packaged WebView assets
+        run: ./script/prepare_web_assets.sh
+      - name: cargo fmt
+        working-directory: desktop/src-tauri
+        run: cargo fmt --check
       - name: cargo check
         working-directory: desktop/src-tauri
         run: cargo check --locked
@@ -35,13 +48,19 @@ jobs:
         run: cargo test --locked
       - name: Type-check Swift helpers
         run: |
-          xcrun swiftc -typecheck meeting-state/meeting-state.swift
-          xcrun swiftc -typecheck stt/meeting-tap.swift
+          xcrun swiftc -typecheck meeting-state/meeting-state.swift \
+            -framework AppKit -framework ApplicationServices
+          xcrun swiftc -typecheck stt/meeting-tap.swift \
+            -framework CoreAudio -framework AudioToolbox -framework AVFoundation \
+            -framework ScreenCaptureKit -framework CoreGraphics -framework CoreImage \
+            -framework AppKit -framework ApplicationServices
       - name: Run native helper self-tests
         run: |
-          xcrun swiftc -O meeting-state/meeting-state.swift -o "$RUNNER_TEMP/meeting-state"
+          xcrun swiftc -O meeting-state/meeting-state.swift -o "$RUNNER_TEMP/meeting-state" \
+            -framework AppKit -framework ApplicationServices
           xcrun swiftc -O stt/meeting-tap.swift -o "$RUNNER_TEMP/meeting-tap" \
-            -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia \
-            -framework CoreAudio -framework CoreImage
+            -framework CoreAudio -framework AudioToolbox -framework AVFoundation \
+            -framework ScreenCaptureKit -framework CoreGraphics -framework CoreImage \
+            -framework AppKit -framework ApplicationServices
           "$RUNNER_TEMP/meeting-state" --selftest
           "$RUNNER_TEMP/meeting-tap" --selftest
