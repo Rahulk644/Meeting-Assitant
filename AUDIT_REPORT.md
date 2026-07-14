@@ -128,8 +128,9 @@ no claim that executable code is impossible to reverse engineer.
    thermal, and clean download/cancel/switch/delete measurements.
 7. Generate and automate an SBOM, dependency policy, and complete third-party attribution review.
 8. Design an offline updater signing key, rollback protection, and release channels before enabling updates.
-9. Move the verified branch through review to the default branch, then create the first signed/tagged GitHub
-   beta release. The repository is still private and currently has no PR, tag, or GitHub release.
+9. Review and merge draft PR [#1](https://github.com/Rahulk644/Meeting-Assitant/pull/1) into the default branch,
+   then create the first signed/tagged GitHub beta release. The repository is still private and has no tag or
+   GitHub release.
 
 Until the physical matrices close, describe Dictation as the primary beta and Meetings as Beta—never as
 zero-bug, notarized, or universally verified.

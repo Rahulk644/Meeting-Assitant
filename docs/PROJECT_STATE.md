@@ -124,8 +124,10 @@ background updates cannot be made trustworthy until a separate updater signing-k
    fallback, and separate future cloud Speech providers from meeting-note Intelligence providers.
 9. Add an in-app local Intelligence install/status/remove flow; until then, clean beta testers use BYOK for
    meeting notes even though dictation and transcription remain fully local.
-10. The verified branch is ahead of `main` and the private repository has no PR, tag, or GitHub release.
-    Review/merge it before treating GitHub's default branch or community profile as current OSS truth.
+10. The verified branch is ahead of `main`; draft PR
+    [#1](https://github.com/Rahulk644/Meeting-Assitant/pull/1) is open. Review/merge it before treating the
+    private repository's default branch or community profile as current OSS truth, then create the first tag
+    and GitHub beta release.
 
 ## Resume protocol
 
