@@ -91,7 +91,8 @@ background updates cannot be made trustworthy until a separate updater signing-k
    platform/version acceptance matrix for every advertised native/browser/chat adapter.
 5. Generate a dependency SBOM and complete third-party notice packaging.
 6. Add signed update manifests only after an offline update-key and rollback design is documented and tested.
-7. Benchmark curated Speech engines and separate Speech providers from Intelligence providers in the UI.
+7. Add and benchmark macOS 26 SpeechAnalyzer as the first new system Speech adapter, retain Whisper fallback,
+   then evaluate Parakeet/Nemotron and separate Speech providers from Intelligence providers in the UI.
 
 ## Resume protocol
 

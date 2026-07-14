@@ -73,6 +73,8 @@ passing the production-surface contract tests. “Designed” and “shipped” 
 | Capability key | Surface | State | Production | Preview | Support | Known limitation | Required verification / reopening condition |
 |---|---|---:|---:|---:|---|---|---|
 | `dictationSystem` | System-wide dictation and enable control | shipped | Yes | Yes | Native recorder, global shortcut, paste | Apple Silicon/macOS target | Native smoke test |
+| `appleSpeechAnalyzer` | Apple Speech — System engine | blocked | No | No | Architecture decision and public implementation research only | Requires macOS 26+, a supported locale and OS-managed assets; not yet connected to the provider contract | Add SDK/runtime stub bridge, asset progress/cancel, Whisper fallback, formatting tests, and product-specific quality/performance benchmarks |
+| `curatedSpeechPicker` | Automatic / On this Mac / Cloud Speech picker | blocked | No | No | Strategy and provider contract only | Current beta has one bundled local speech path | Implement provider registry, hardware/locale routing, safe model lifecycle, and production-surface tests |
 | `customVocabulary` | Custom vocabulary | shipped | Yes | Yes | Shared transcription prompt | Prompt-size cap | Config application test |
 | `languagePunctuation` | Language and punctuation | shipped | Yes | Yes | Server applies both | Short mixed speech defaults to English for reliability | Dictation request test |
 | `clipboardBehavior` | Clipboard behavior | shipped | Yes | Yes | Native restore/retain paths | Paste target controls final formatting | Native behavior test |

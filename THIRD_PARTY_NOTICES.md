@@ -20,9 +20,11 @@ terms continue to apply.
   terms apply to the user's installation.
 - **FFmpeg:** invoked from the host system for thumbnails when present; it is not bundled.
 
-Wispr Flow, Fathom, Fireflies, Snaply, Handy, and Meetily product assets or proprietary implementations are
-not included. Competitive study is behavioural and clean-room. Open-source code may be adopted only after
-its exact license and attribution obligations are recorded here.
+Wispr Flow, Fathom, Fireflies, Snaply, Handy, FluidVoice, and Meetily product assets or proprietary
+implementations are not included. FluidVoice's current code is GPLv3 and has not been copied into this MIT
+project. Competitive study is behavioural and clean-room. Open-source code may be adopted only after its
+exact license and attribution obligations are recorded here; the researched Handy SpeechAnalyzer draft is
+MIT-licensed but is not currently part of the app.
 
 A generated SBOM and consolidated dependency-license bundle are required before the first public release;
 this human-readable inventory does not replace that release gate.

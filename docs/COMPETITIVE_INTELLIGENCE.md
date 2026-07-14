@@ -2,7 +2,8 @@
 
 **Observed:** 14 July 2026
 
-**Scope:** Wispr Flow, Handy, Fathom, Fireflies, Meetily, and Snaply
+**Scope:** Wispr Flow, Handy, FluidVoice, Fathom, Fireflies, Meetily, Snaply, and Apple SpeechAnalyzer
+
 **Authority:** This document informs product decisions. `PRODUCT_RELEASE_MATRIX.md` remains the authority for what is actually shipped.
 
 ## Executive decision
@@ -11,6 +12,7 @@ My Assistant should not become a clone of any one competitor. The winning combin
 
 - **Wispr Flow's dictation interaction quality:** a transient status surface, contextual formatting, recoverable history, and voice-driven text transforms;
 - **Handy's local speech engine discipline:** one native process, on-demand model loading, explicit model lifecycle controls, and a simple system-wide shortcut;
+- **FluidVoice's language-first engine onboarding:** recommend one engine for the user's language, keep system-owned models separate from downloads, and expose alternatives without making every user understand model internals;
 - **Fathom's meeting journey:** calendar awareness, per-meeting capture choices, clear detection notifications, live notes plus scratchpad, automatic post-call processing, and consent-aware recording;
 - **Fireflies' coverage and live-assist model:** bot and no-bot modes, broad call-app detection, a useful live pane, and search/Ask across meeting history;
 - **Meetily's local resilience:** incremental transcript persistence, audio checkpoints, recovery after a crash, background model downloads, and local summary options.
@@ -22,7 +24,7 @@ The architecture should remain Rust/Tauri with narrowly scoped native macOS help
 This was a clean-room product study using:
 
 1. official product documentation and public release notes;
-2. public open-source repositories for Handy and Meetily;
+2. public open-source repositories for Handy, FluidVoice, and Meetily;
 3. installed app metadata, code-signing metadata, process inventory, memory readings, and accessibility-exposed UI;
 4. reversible black-box use of the installed apps.
 
@@ -98,6 +100,60 @@ Decision for My Assistant:
 
 Open-source reference: [Handy repository](https://github.com/cjpais/Handy).
 
+### Apple SpeechAnalyzer and FluidVoice: highest-priority system-engine research
+
+Apple's new `SpeechAnalyzer` / `SpeechTranscriber` path is a materially different option from a bundled
+model. On macOS 26+, the OS owns the per-locale assets, downloads and updates them, and runs inference
+outside the app's memory space. Apple explicitly positions the model for live and recorded long-form,
+distant, meeting, and conversational audio, with volatile and finalized results plus sample-accurate time
+ranges. That makes it unusually attractive for app size, memory pressure, live transcript UX, and
+word/audio alignment.
+
+A public third-party LibriSpeech run measured SpeechAnalyzer at 2.12% WER on `test-clean` and 4.56% on
+`test-other`, versus 3.74% / 7.95% for Whisper Small. This is useful evidence, not a universal victory:
+it used English read speech on one M2 Pro, did not test Whisper Large v3 Turbo, Parakeet, code-switching,
+accents, meetings, or diarization, and normalized punctuation out of the score. My Assistant must reproduce
+the comparison on its own dictation and two-channel meeting fixtures before changing Automatic routing.
+
+A local capability probe on this development Mac (macOS/SDK 26.5) confirmed that `SpeechTranscriber` is
+available using the installed Command Line Tools and currently reports 30 supported locales. Those include
+`en-IN` but not Hindi. This proves that an adapter can be prototyped now; it also proves that the Apple path
+cannot replace Whisper's worldwide and Hindi/code-switching role.
+
+Handy discussion #1031 now contains an MIT-licensed draft Rust/Swift bridge, inspected on the contributor's
+`feat/apple-speech` branch at commit `fe9db08530795e8d35f2f854589702d302828d80`. Its contributor reported very
+fast startup and inference on one short recording, and the Handy maintainer invited a PR. The draft also
+documents practical integration details: Xcode 26 SDK detection with an older-SDK stub, OS-managed locale
+assets, mandatory analyzer finalization, and a tested sentence-capitalization pass. This is an implementation
+lead, not reviewed upstream code yet.
+
+FluidVoice already exposes Apple SpeechAnalyzer beside Parakeet, Nemotron, Cohere, and Whisper through one
+provider contract. Its strongest product lesson is the language-first onboarding flow: show a recommended
+engine, a built-in zero-download alternative where available, and tuck the full catalog behind an explicit
+choice. Its current meeting surface is file transcription, not Fathom-style automatic meeting capture, so
+it does not replace My Assistant's meeting architecture.
+
+Licensing boundary: FluidVoice's current source is GPLv3 and must not be copied into this MIT project.
+Behavioural lessons and Apple API documentation are safe research inputs. If implementation code is reused,
+prefer the MIT Handy bridge after review, retain attribution, and record the exact commit and modifications.
+
+Decision for My Assistant:
+
+- Add **Apple Speech — System** as the first new local adapter, available only when runtime and locale checks
+  pass on macOS 26+; preserve Whisper as the transparent fallback.
+- Put it under a **System model** label rather than pretending it is a zero-byte app-managed download.
+- Treat volatile results as preview text and persist only finalized segments; always finish or cancel the
+  analyzer explicitly.
+- Benchmark recognition, punctuation/casing, first-result latency, final latency, energy, mixed Hindi-English,
+  accents, far-field speech, long dictation, and real meeting audio before making it Automatic.
+- Keep Parakeet as the likely English streaming/accuracy specialist and Whisper as the worldwide fallback.
+
+Primary references: [Apple WWDC SpeechAnalyzer session](https://developer.apple.com/videos/play/wwdc2025/277/),
+[public LibriSpeech benchmark and raw outputs](https://get-inscribe.com/blog/apple-speech-api-benchmark.html),
+[Handy discussion #1031](https://github.com/cjpais/Handy/discussions/1031), and
+[FluidVoice repository](https://github.com/altic-dev/FluidVoice) at inspected commit
+`dc30a0484ef60af292edf9081817c240360da5bb`.
+
 ### Fathom: meeting workflow benchmark
 
 The installed 3.3.3 app exposes the product model the user described:
@@ -170,15 +226,20 @@ The simple picker should expose jobs, not a wall of model names:
 
 | User-facing job | Initial engine | Status before shipping |
 |---|---|---|
-| Automatic (recommended) | chooses from installed models using language, memory, latency, and power | hardware profiler plus benchmark required |
+| Automatic (recommended) | chooses using OS, locale, measured quality, memory, latency, and power | hardware profiler plus benchmark required |
+| System — Fast and light | Apple SpeechAnalyzer on macOS 26+ | implement availability/asset/fallback bridge; pass our dictation and meeting benchmark |
 | Worldwide balanced | Whisper Large v3 Turbo | current baseline; preserve |
 | Live English | Parakeet Unified EN 0.6B | integrate and benchmark on supported Macs |
 | Live multilingual | Nemotron 3.5 ASR Streaming 0.6B | integrate as preview; benchmark languages and thermal cost |
 | Highest accuracy | Whisper Large v3 | powerful-Mac option; require a measured quality gain |
 
-Whisper remains the worldwide safety net because it covers 99 languages. Parakeet Unified is an English streaming specialist. Nemotron 3.5 is the promising multilingual streaming path, but its macOS runtime, language quality, memory, and battery cost must pass our own test set before it can replace Whisper automatically.
+SpeechAnalyzer becomes the first candidate on supported macOS 26 machines because it adds no model weight to
+the app and runs outside its memory space. Whisper remains the worldwide and older-OS safety net because it
+covers 99 languages. Parakeet Unified is an English streaming specialist. Nemotron 3.5 is the promising
+multilingual streaming path, but its macOS runtime, language quality, memory, and battery cost must pass our
+own test set before it can replace Whisper automatically.
 
-Primary model references: [Whisper Large v3 Turbo](https://huggingface.co/openai/whisper-large-v3-turbo), [Parakeet Unified EN](https://huggingface.co/nvidia/parakeet-unified-en-0.6b), [Nemotron 3.5 ASR](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b), and [Parakeet TDT v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3).
+Primary model references: [Apple SpeechAnalyzer](https://developer.apple.com/documentation/speech/speechanalyzer), [Whisper Large v3 Turbo](https://huggingface.co/openai/whisper-large-v3-turbo), [Parakeet Unified EN](https://huggingface.co/nvidia/parakeet-unified-en-0.6b), [Nemotron 3.5 ASR](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b), and [Parakeet TDT v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3).
 
 ## Ordered adoption backlog
 
@@ -207,12 +268,16 @@ shipped/preview truth remains in `PRODUCT_RELEASE_MATRIX.md`.
 
 ### P2 — curated models and provider platform
 
-1. Implement signed model manifests, verified resumable downloads, removal, and disk/RAM warnings.
-2. Add Parakeet Unified EN and Nemotron 3.5 behind benchmark gates.
-3. Implement Speech providers separately from Intelligence providers.
-4. Launch Speech BYOK with Groq and OpenAI first; add a specialist such as Deepgram only after the contract is proven.
-5. Launch Intelligence BYOK with OpenAI, Anthropic, Gemini, Groq, Cerebras, and custom OpenAI-compatible HTTPS/loopback endpoints.
-6. Keep every key in Keychain and expose Test / Disconnect / What leaves this Mac for each provider.
+1. Add the macOS 26 SpeechAnalyzer adapter with runtime/locale detection, OS-asset progress, cancellation,
+   finalized-result handling, and a transparent Whisper fallback.
+2. Build a versioned benchmark corpus for short dictation, punctuation/casing, accents, code-switching,
+   far-field speech, long files, and consented two-participant meeting audio.
+3. Implement signed model manifests, verified resumable downloads, removal, and disk/RAM warnings.
+4. Add Parakeet Unified EN and Nemotron 3.5 behind benchmark gates.
+5. Implement Speech providers separately from Intelligence providers.
+6. Launch Speech BYOK with Groq and OpenAI first; add a specialist such as Deepgram only after the contract is proven.
+7. Launch Intelligence BYOK with OpenAI, Anthropic, Gemini, Groq, Cerebras, and custom OpenAI-compatible HTTPS/loopback endpoints.
+8. Keep every key in Keychain and expose Test / Disconnect / What leaves this Mac for each provider.
 
 ### P3 — differentiation
 

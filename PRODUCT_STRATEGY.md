@@ -36,10 +36,17 @@ The initial curated local catalog is deliberately small:
 
 | Product label | Model family | Job | Release position |
 |---|---|---|---|
+| System — Fast and light | Apple SpeechAnalyzer / SpeechTranscriber | OS-managed on-device engine for supported locales on macOS 26+ | first new adapter; benchmark-gated Automatic candidate |
 | Global — Balanced | Whisper Large v3 Turbo, quantized | multilingual default, good speed/accuracy | current baseline |
 | Global — Most accurate | Whisper Large v3, quantized | difficult accents/audio on higher-spec Macs | benchmark before release |
 | Europe — Fast | NVIDIA Parakeet TDT 0.6B v3, int8 | fast transcription across its 25 European languages | next local adapter |
 | Live multilingual | NVIDIA Nemotron 3.5 ASR Streaming 0.6B | low-latency research track | do not ship on Mac until a supported, measured runtime exists |
+
+SpeechAnalyzer adds no model weight to the app, runs outside its memory space, and receives OS-managed model
+updates. It should be tried first by Automatic on macOS 26+ only after it passes our own dictation, accent,
+code-switching, long-form, and meeting-audio benchmark for the selected locale. Runtime/locale failure falls
+back to Whisper without losing the captured audio. The current public English benchmark beats Whisper Small,
+not Whisper Large v3 Turbo or Parakeet, and must not be generalized beyond its test set.
 
 Parakeet is not the global default: its official v3 card covers 25 European languages. NVIDIA's current
 Nemotron 3.5 card reports training across 40 language-locales, but its supported production integration is
@@ -209,6 +216,8 @@ Do not paywall bug fixes, privacy controls, updates, export, or a user's own API
 ### P1 — curated engines
 
 - separate Speech and Intelligence settings/providers;
+- add the macOS 26 SpeechAnalyzer system adapter, benchmark it, and retain Whisper fallback on unsupported
+  systems/locales or failed system-asset preparation;
 - add the model manifest, download manager, hardware scorer, resource coordinator, and benchmarks;
 - ship Groq/OpenAI Speech and curated local Whisper choices;
 - ship E2B/E4B local Intelligence recommendations and the first cloud Intelligence adapters;
@@ -247,6 +256,11 @@ preview channel rather than being deleted or falsely advertised. See `PRODUCT_RE
 
 ## Primary references
 
+- Apple SpeechAnalyzer: <https://developer.apple.com/documentation/speech/speechanalyzer>
+- Apple WWDC SpeechAnalyzer session: <https://developer.apple.com/videos/play/wwdc2025/277/>
+- Public SpeechAnalyzer/Whisper benchmark: <https://get-inscribe.com/blog/apple-speech-api-benchmark.html>
+- Handy native Apple Speech discussion: <https://github.com/cjpais/Handy/discussions/1031>
+- FluidVoice: <https://github.com/altic-dev/FluidVoice>
 - Groq Speech to Text: <https://console.groq.com/docs/speech-to-text>
 - OpenAI diarized transcription: <https://developers.openai.com/api/docs/models/gpt-4o-transcribe-diarize>
 - NVIDIA Parakeet TDT v3: <https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3>
