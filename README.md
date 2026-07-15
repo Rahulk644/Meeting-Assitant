@@ -325,7 +325,10 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 - [x] **Portable `.app` + `.dmg`** — bundles the web app + native helpers, keeps data + models in Application Support, and **asks the user to choose a model** on first run; drag-to-install DMG via `make-dmg.sh`
 - [x] **Rust-native packaged server** — no bundled Node runtime/process; authenticated local routes, Keychain-backed provider secrets, private transient audio, and checksum-verified model download
 - [x] **Native low-overhead status pill** — the compact AppKit panel is created only on first use, appears across full-screen spaces without stealing focus, and leaves no hidden pill WebView resident while idle
-- [x] **Agents foundation** — explicit on-demand, read-only Accessibility context with bounded opaque element IDs, secure-field redaction, no screenshot/network/persistence, and no idle helper process
+- [x] **Agents foundation and compute setup** — explicit on-demand, read-only Accessibility context plus Local,
+  Keychain BYOK, and ChatGPT account/Codex configuration. The official Codex runtime is detected externally,
+  verified, isolated, and started only on demand; it is not bundled in the DMG. Draft planning and the Agent
+  shortcut remain preview-only and cannot mutate another app.
 
 **Next**
 
@@ -334,7 +337,11 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 - [ ] Measure every shipped speech model on representative Apple-silicon memory/latency/thermal profiles.
 - [ ] Add cloud Speech as a separate provider contract, beginning with Groq and OpenAI.
 - [ ] Add calendar sync and hardened platform adapters before Live Coach or cross-platform expansion.
-- [ ] Verify Agent context across the app matrix, then add the global shortcut and draft/replace/undo before wake phrase or multi-step actions.
+- [ ] Pass the synthetic Agent matrix across Gmail, Slack, LinkedIn, Docs, Notes, Slides, Terminal, secure
+  fields, prompt injection, provider failures, and the physical preview shortcut. Then build a native
+  draft/replace/undo executor with fresh-snapshot revalidation; keep Send and multi-step actions out.
+- [ ] Benchmark external Porcupine against lightweight Rustpotter with explicit opt-in, real accents/noise,
+  false-accept, latency, CPU/RAM, energy, suspension, privacy, and licensing evidence before adopting either.
 
 The ordered, compaction-safe backlog is maintained in
 [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md#known-release-blockers-and-follow-ups), not duplicated here.

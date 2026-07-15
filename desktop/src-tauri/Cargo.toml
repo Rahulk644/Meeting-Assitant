@@ -34,6 +34,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["N
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSBitmapImageRep", "NSBox", "NSColor", "NSControl", "NSFont", "NSGraphics", "NSImage", "NSImageRep", "NSPanel", "NSResponder", "NSScreen", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
 cpal = "0.15"                               # record the mic IN-PROCESS (like Handy) — no meeting-tap spawn, so no ~300ms start lag
 hound = "3.5"                               # encode the captured audio to a 16-bit PCM WAV for the STT server
+libc = "0.2"                                # validate ownership of an optional user-installed Codex executable
 voice_activity_detector = "0.2"             # Silero VAD (same model family Handy bundles) — strips non-speech before Whisper so silence can't hallucinate; statically links onnxruntime via `ort`, so the binary stays self-contained
 tiny_http = "0.12"                          # in-process loopback API/UI server; replaces the 108 MB bundled Node runtime
 security-framework = "3"                    # store optional cloud-provider API keys in the macOS Keychain

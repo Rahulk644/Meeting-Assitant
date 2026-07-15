@@ -26,10 +26,17 @@ Agent context is a separate, on-demand read-only path:
 
 ```
 Agents view → authenticated POST /api/agent/context → agent-context (Swift, Accessibility) → bounded JSON
+
+preview planner (no executor)
+  ├─ API key → Keychain credential → selected OpenAI-compatible provider/model
+  └─ ChatGPT account → verified external Codex → isolated App Server profile/model list
 ```
 
 The helper exits after one snapshot, adds no idle memory, redacts secure fields, and performs no screenshot,
-network call, persistence, or computer action. The future observe-plan-confirm-act-verify design is specified
+network call, persistence, or computer action. Production may configure compute. The planner and global
+shortcut are preview-gated, and the planner can only display a validated draft/replace/no-op object: it has
+no Apply/Send or Accessibility mutation path. Codex is detected externally and run on demand; it is not
+copied into the app or DMG. The future observe-plan-confirm-act-verify executor is specified
 in [`docs/AGENTS_ARCHITECTURE.md`](docs/AGENTS_ARCHITECTURE.md).
 
 Every component is on-device. No bot joins the call; no audio leaves the machine unless the user explicitly
@@ -66,6 +73,13 @@ second always-on server process is shipped.
   timeout (transcription is user-configurable, 10 min default; LLM ~5 min), so nothing heavy must sit
   resident indefinitely between calls.
   This mirrors Handy's `model_unload_timeout`.
+- **External Codex, never a bundled Node/package runtime.** The ChatGPT account lane verifies an official
+  native Codex binary from a standard installed ChatGPT/Codex/CLI location, creates a private isolated
+  `CODEX_HOME`, and starts App Server only after the user opens the ChatGPT · Codex lane for status,
+  sign-in/out, or preview planning. The official runtime
+  owns OAuth tokens. The UI receives sanitized plan/model capability data, not account email or tokens.
+  During device-code sign-in, status polling does not launch competing App Server processes. The core DMG
+  therefore keeps its idle footprint and does not absorb the roughly 300 MB optional Codex distribution.
 
 ## transcribe-server
 

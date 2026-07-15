@@ -11,6 +11,10 @@ const CAPABILITIES = Object.freeze({
   agents:                    { state: "preview", verification: "agent runtime required" },
   agentFoundation:           { state: "shipped", verification: "honest read-only Agents foundation surface" },
   agentContextInspector:     { state: "shipped", verification: "bounded on-demand native Accessibility snapshot and helper self-test" },
+  agentComputeConfig:        { state: "shipped", verification: "external Codex detection, isolated profile, device-code auth, and provider model discovery tests" },
+  agentDraftPreview:         { state: "preview", verification: "structured read-only Codex preview requires real-app acceptance before production" },
+  agentGlobalShortcut:       { state: "preview", verification: "native registration, conflict, relaunch, and focus acceptance required" },
+  wakeWord:                  { state: "blocked", verification: "explicit opt-in, real-noise accuracy, resource, suspension, privacy, and licensing gates required" },
   feedbackSupport:           { state: "hidden", verification: "working destinations required" },
   guide:                     { state: "hidden", verification: "published guide required" },
   shareFriend:               { state: "hidden", verification: "working share destination required" },
@@ -145,6 +149,7 @@ const SETTING_CAPABILITY = Object.freeze({
   screen_rec: "videoRecording", audio_storage: "storageLimits", templates: "meetingTemplates", mtg_model: "aiProvider",
   mtg_shortcut: "meetingShortcut", unload_model: "unloadModel", whisper_idle_minutes: "unloadModel", whats_new: "whatsNew",
   support_creator: "supportCreator", copilot: "experimental", browser_meet: "experimental", agents_exp: "experimental",
+  agent_shortcut: "agentGlobalShortcut",
 });
 
 const PANEL_CAPABILITY = Object.freeze({

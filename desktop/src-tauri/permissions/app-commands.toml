@@ -7,6 +7,7 @@ identifier = "allow-app-commands"
 description = "Allow the main window's dictation, tray and privacy commands from the authenticated in-process UI origin."
 commands.allow = [
     "set_dictation",
+    "set_agent_shortcut",
     "dictation_stop",
     "set_tray_visible",
     "set_tray_recording",

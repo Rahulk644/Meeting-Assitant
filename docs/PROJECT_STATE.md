@@ -19,12 +19,14 @@ chronological work log.
   additionally require meeting-window evidence. Calls are captured without a bot, transcribed locally,
   stored on-device, and summarized with a configured local or cloud model. Manual capture works universally.
 - **Writing Assistant:** design-preview only. It is not a production promise.
-- **Agents:** the production surface now exposes only a foundation preview: an explicit, on-demand,
-  read-only Accessibility snapshot with secure-field redaction and no screenshot, model call, network use,
-  persistence, or computer action. The autonomous runtime and wake phrase remain preview-only.
+- **Agents:** production exposes the on-demand read-only Accessibility inspector plus honest Local, API-key,
+  and ChatGPT account/Codex compute configuration. API keys go directly to Keychain. Codex is a verified
+  external runtime with an isolated profile and live account model controls; it is not bundled. The
+  structured draft planner and global Agent shortcut are preview-only, nothing can apply/send, and wake word
+  remains blocked.
 - **Local speech models:** shipped as an explicit model library shared by dictation and meetings. Downloads
   are separate from the app and the active model controls languages, translation, output, and preprocessing.
-- **Cloud speech, calendar sync, updates, accounts, teams, sharing, and billing:**
+- **Cloud speech, calendar sync, updates, My Assistant accounts, teams, sharing, and billing:**
   not shipped.
 - **Meeting Intelligence:** Groq, OpenAI, Cerebras, and custom OpenAI-compatible BYOK paths are shipped.
   The optional local Gemma/LiteRT-LM runtime works when installed by source setup, but the DMG has no in-app
@@ -44,6 +46,7 @@ AppKit/Tauri shell
   ├─ meeting-tap (Swift): real-call detection, system audio, mic, optional video
   ├─ meeting-state (Swift): Accessibility-derived speaker/mute/share evidence
   ├─ agent-context (Swift, on demand): bounded read-only Accessibility snapshot
+  ├─ codex_runtime (Rust, on demand): verified external Codex App Server, isolated auth/model/preview lane
   └─ transcribe-server (C++): on-demand transcribe.cpp/selected local speech model
 ```
 
@@ -87,22 +90,28 @@ macOS Keychain.
   and guarantees valid UTF-8 JSON.
 - API keys never belong in JSON, SQLite, logs, process arguments, temporary files, or WebView state.
 - Agent context is captured only after an explicit user request, bounded by node/depth/child/time limits,
-  uses opaque request-local element IDs, redacts secure fields, and is neither persisted nor sent to a
-  provider. Screen-derived text must be treated as untrusted input in every future model prompt.
+  uses opaque request-local element IDs, and redacts secure fields. Inspection alone is neither persisted nor
+  sent to a provider. A preview request explicitly sends the instruction and fresh bounded snapshot only to
+  the selected API/Codex lane; screen text is untrusted and output is reduced to draft/replace/no-op display
+  data. There is no executor.
+- External Codex is accepted only from standard installed locations after strict signature verification of
+  OpenAI Team ID `2DC432GLL2`. It is not touched during ordinary app launch: opening Agents with the
+  ChatGPT · Codex lane selected triggers on-demand status, isolated device-code sign-in/out, model discovery,
+  or a preview. Login polling cannot create competing processes, and no Codex process remains resident afterward.
 
 ## Release status
 
 The current automated-verified artifact is
-`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,626,990 bytes), SHA-256
-`45bcb951072f1b72dee742fa45a9e0dec67a71898ad6134663e1422195c45787`. The app bundle is 28,380 KiB.
+`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,689,064 bytes), SHA-256
+`17dcbf330da329fc0d01ea06d86c5346fea10761a1b5c4101107b7190656c4fd`. The app bundle is 28,508 KiB.
 After the packaged launch settled, the app plus the two meeting helpers measured about 43.1 MiB aggregate
-physical footprint and 59,792 KiB aggregate RSS; the on-demand Agent context helper was not resident and no
-Speech or LLM process was resident. Verification is 29/29 Node product/release/parity tests, 26/26 Rust
+physical footprint and 40,048 KiB aggregate RSS; the on-demand Agent context helper was not resident and no
+app-owned Speech, LLM, or Codex process was resident. Verification is 30/30 Node product/release/parity tests, 34/34 Rust
 tests, warnings-denied Clippy, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, zero desktop npm
 vulnerabilities, and passing transcribe-server, meeting-tap, meeting-state, and agent-context self-tests. All
 12 revision-pinned model endpoints returned the exact catalog content length.
 The DMG passed checksum and deep signature verification, carries the production model picker and
-capability-gated Translation payload, contains no model/benchmark/transcript/source artifact, launched
+capability-gated Translation/Agent-compute payload, contains no Codex, Node, model, benchmark, transcript, or source artifact, launched
 successfully, kept unauthenticated loopback access at 401, and rejected a forged Host at 403.
 
 This is suitable for a small explicitly informed beta group, subject to the documented **Privacy & Security
@@ -132,12 +141,15 @@ background updates cannot be made trustworthy until a separate updater signing-k
    fallback, and separate future cloud Speech providers from meeting-note Intelligence providers.
 9. Add an in-app local Intelligence install/status/remove flow; until then, clean beta testers use BYOK for
    meeting notes even though dictation and transcription remain fully local.
-10. Complete the Agent context acceptance matrix across native, browser, Electron, secure-field, permission,
-    full-screen, and multi-display cases before adding the global shortcut or any mutation capability.
-11. The verified branch is ahead of `main`; draft PR
-    [#1](https://github.com/Rahulk644/Meeting-Assitant/pull/1) is open. Review/merge it before treating the
-    private repository's default branch or community profile as current OSS truth, then create the first tag
-    and GitHub beta release.
+10. Complete the synthetic/test-account `agent-context` matrix across Gmail, Slack, LinkedIn, Docs, Notes,
+    Slides, Terminal, secure fields, permission recovery, prompt injection, providers, full-screen, and
+    displays. Physically accept the preview global shortcut; then implement native draft/replace/undo with
+    fresh snapshot revalidation. Do not add Send or multi-step mutation yet.
+11. Run the explicit Porcupine-versus-Rustpotter wake-word suite. Adopt neither until real accents/noise,
+    false accepts, latency, CPU/RAM, energy, suspension, privacy, and licensing gates pass.
+12. The verified work is a stacked branch chain ahead of `main`; review and merge the open draft PRs in
+    dependency order before treating the private repository's default branch or community profile as current
+    OSS truth, then create the first tag and GitHub beta release.
 
 ## Resume protocol
 

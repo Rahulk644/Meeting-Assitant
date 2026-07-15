@@ -189,6 +189,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .agent-stat.muted b i{background:var(--ink-3)}
   .agent-grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(250px,.7fr);gap:14px;margin-top:14px}
   .agent-card{border:1px solid var(--line);border-radius:16px;background:var(--surface);padding:20px}
+  .agent-card.wide{grid-column:1 / -1}
   .agent-card-top{display:flex;align-items:flex-start;gap:13px}
   .agent-card-icon{width:39px;height:39px;flex:0 0 auto;border-radius:11px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center}
   .agent-card-icon svg{width:20px;height:20px}
@@ -212,7 +213,29 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .agent-step .n{width:25px;height:25px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);color:var(--ink-2);font-size:10.5px;font-weight:700;z-index:1}
   .agent-step b{display:block;color:var(--ink);font-size:12.5px;font-weight:620;margin-top:2px}
   .agent-step span{display:block;color:var(--ink-3);font-size:11.5px;line-height:1.4;margin-top:2px}
+  .agent-compute-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap}
+  .agent-lanes{display:flex;gap:4px;padding:3px;border-radius:10px;background:var(--surface-2)}
+  .agent-lanes button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:11.5px;font-weight:620;padding:7px 10px;border-radius:8px;cursor:pointer}
+  .agent-lanes button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .agent-compute-body{margin-top:16px;border-top:1px solid var(--line);padding-top:16px}
+  .agent-config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .agent-config-field{min-width:0}
+  .agent-config-field label{display:block;font-size:10.5px;font-weight:680;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);margin-bottom:6px}
+  .agent-config-field .selp,.agent-config-field .inp{width:100%;min-width:0!important}
+  .agent-config-line{display:flex;gap:8px;align-items:center}
+  .agent-config-line .inp,.agent-config-line .selp{flex:1;min-width:0!important}
+  .agent-runtime{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:12px;color:var(--ink-2)}
+  .agent-runtime .state{width:8px;height:8px;border-radius:50%;background:var(--ink-3)}
+  .agent-runtime.ready .state{background:var(--ok)}
+  .agent-runtime .tag{padding:3px 7px;border-radius:999px;background:var(--surface-2);font-size:10.5px}
+  .agent-code{font:650 14px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;color:var(--ink);padding:8px 10px;background:var(--surface-2);border-radius:8px}
+  .agent-preview-input{width:100%;min-height:78px;resize:vertical;margin-top:14px}
+  .agent-preview-box{margin-top:14px;padding:14px;border-radius:12px;background:var(--surface-2)}
+  .agent-preview-box b{display:block;font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}
+  .agent-preview-box .draft{font-size:13px;line-height:1.55;color:var(--ink);white-space:pre-wrap;margin-top:7px}
+  .agent-preview-box .why{font-size:11.5px;line-height:1.45;color:var(--ink-2);margin-top:8px}
   @media(max-width:760px){.agent-status{grid-template-columns:1fr}.agent-grid{grid-template-columns:1fr}}
+  @media(max-width:760px){.agent-config-grid{grid-template-columns:1fr}.agent-card.wide{grid-column:auto}}
 
   /* feedback grid */
   .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:26px}
@@ -751,6 +774,20 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
               <div class="agent-step"><span class="n">4</span><div><b>Apply with control</b><span>Revalidate, confirm risky steps, verify the result.</span></div></div>
             </div>
           </div>
+          <div class="agent-card wide" id="agentComputeCard">
+            <div class="agent-compute-head">
+              <div><h3>Choose how Agents think</h3><p>Local, your own API key, or your ChatGPT account through the official Codex runtime. Nothing extra is bundled in the DMG.</p></div>
+              <div class="agent-lanes" id="agentComputeLanes" aria-label="Agent compute source"></div>
+            </div>
+            <div class="agent-compute-body" id="agentComputeBody" aria-live="polite"></div>
+          </div>
+          <div class="agent-card wide" id="agentPreviewCard" hidden>
+            <h3>Read-only draft experiment</h3>
+            <p>Describe a draft for the app behind My Assistant. The model receives one bounded Accessibility snapshot and can only return a preview—there is no Apply or Send action.</p>
+            <textarea class="inp agent-preview-input" id="agentDraftInput" maxlength="2000" placeholder="For example: Reply that Friday works, keep it warm, and do not send."></textarea>
+            <div class="agent-action"><button class="obtn solid" id="agentDraftButton">Prepare preview</button><div class="agent-privacy">Fresh context is captured on click. Screen text is treated as untrusted data.</div></div>
+            <div class="agent-preview-box" id="agentDraftResult" hidden aria-live="polite"></div>
+          </div>
         </div>
       </div></div>
     </section>
@@ -881,6 +918,7 @@ function setView(name){
   $('#appTitle').textContent=TITLES[name]||'';
   $('#docLink').hidden=!hasCap('documentationLink')||!(name==='dictation'||name==='writing');
   if(name==='settings') renderSettings();
+  if(name==='agents') ensureAgentRuntime();
   try{localStorage.setItem('route',name);mirror('route',name)}catch{}
 }
 document.querySelectorAll('.nav[data-view]').forEach(n=>{
@@ -952,11 +990,11 @@ const AI_PROVIDERS={
   cerebras:{label:'Cerebras', base:'https://api.cerebras.ai/v1',     model:'llama-3.3-70b',           needsKey:true, keyUrl:'cloud.cerebras.ai'},
   custom:  {label:'Custom · OpenAI-compatible',        base:'',                          model:'',                      needsKey:true},
 };
-function aiCfg(){return store.get('aiModel',{provider:'local',key:'',model:'',base:''})}
+function aiCfg(){return store.get('aiModel',{provider:'local',model:'',base:'',keySaved:false})}
 function setAiCfg(patch){store.set('aiModel',Object.assign(aiCfg(),patch))}
 function resolveLLM(){
   const c=aiCfg(),p=AI_PROVIDERS[c.provider]||AI_PROVIDERS.local;
-  return {base:(c.provider==='custom'?c.base:p.base)||p.base, key:p.needsKey?(c.key||''):'', model:c.model||p.model};
+  return {base:(c.provider==='custom'?c.base:p.base)||p.base, key:'', model:c.model||p.model};
 }
 
 /* ---------- meeting-note templates (shape the post-call summary prompt) ---------- */
@@ -1085,6 +1123,7 @@ const DEFAULTS={
   mtg_source:'Local', live_indicator:true, auto_detect:true, browser_meet:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, mtg_shortcut:'Not set',
   unload_model:true, whisper_idle_minutes:10, whats_new:true,
   copilot:false, agents_exp:false,
+  agent_shortcut:'Not set',
 };
 const SCHEMA={
   general:[
@@ -1175,6 +1214,7 @@ const SCHEMA={
   ],
   experimental:[
     {label:'EARLY ACCESS', note:'These features are in progress and may change.', rows:[
+      {id:'agent_shortcut',title:'Open Agents',desc:'Bring My Assistant forward and focus the Agent request field.',type:'shortcut'},
       {id:'copilot',title:'Real-time Copilot',desc:'In-call coaching in an always-on, screen-share-safe overlay.',type:'toggle'},
       {id:'agents_exp',title:'Agents',desc:'Background automations that run your repetitive work.',type:'toggle'},
     ]},
@@ -1391,8 +1431,11 @@ function renderAIModel(body,row){
   c.append(sel); body.append(r);
   if(!p.needsKey) return;
   if(c0.provider==='custom') body.append(subRow('Base URL','OpenAI-compatible endpoint',aiInput('text',c0.base,'https://…/v1',v=>setAiCfg({base:v}))));
-  body.append(subRow('API key',(p.keyUrl?`Stored in macOS Keychain · get one at ${p.keyUrl}`:'Stored in macOS Keychain'),aiInput('password','',c0.keySaved?'Saved securely — type to replace':'sk-…',v=>setAiCfg({key:v}))));
-  body.append(subRow('Model name',(p.model?`Default: ${p.model}`:''),aiInput('text',c0.model,p.model||'model',v=>setAiCfg({model:v}))));
+  const keyLine=el('div','agent-config-line'),key=aiInput('password','',c0.keySaved?'Saved securely — type to replace':'Paste API key',()=>{}),save=el('button','abtn',c0.keySaved?'Replace':'Save');
+  save.type='button'; save.onclick=async()=>{const value=key.value.trim();if(!value)return toast('Paste the API key first.');save.disabled=true;try{const response=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:c0.provider,key:value})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not save key');key.value='';setAiCfg({keySaved:true});save.textContent='Saved';toast('API key saved in macOS Keychain.')}catch(error){toast(String(error.message||error))}finally{save.disabled=false}}; keyLine.append(key,save);
+  body.append(subRow('API key',(p.keyUrl?`Stored in macOS Keychain · get one at ${p.keyUrl}`:'Stored in macOS Keychain'),keyLine));
+  const models=agentProviderModels[c0.provider]||[],modelLine=el('div','agent-config-line'),model=aiInput('text',c0.model,p.model||'Choose or enter a model',v=>setAiCfg({model:v})),list=el('datalist');list.id='meeting-models-'+c0.provider;models.forEach(id=>list.append(new Option(id)));model.setAttribute('list',list.id);const load=el('button','abtn',models.length?'Refresh':'Load models');load.type='button';load.onclick=async()=>{load.disabled=true;load.textContent='Loading…';try{const response=await fetch('/api/ai/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:c0.provider,base:c0.base||''})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not load models');agentProviderModels[c0.provider]=result.models||[];renderSettings()}catch(error){toast(String(error.message||error));load.disabled=false;load.textContent='Load models'}};modelLine.append(model,list,load);
+  body.append(subRow('Model',(models.length?`${models.length} models reported by the provider`:(p.model?`Default: ${p.model}`:'Load the provider catalog or enter an exact model ID')),modelLine));
 }
 function subRow(title,desc,ctl){ const {r,c}=srowShell({title,desc}); c.append(ctl); return r; }
 
@@ -1594,6 +1637,7 @@ function recordShortcut(id,title){
     saveB.onclick=()=>{ if(!valid()) return; done(); store.set(id, modTrigger ? ('mod:'+modTrigger) : combo().join('+')); closeModal(); renderSettings();
       if(id==='sc_start'||id==='sc_cancel'){ syncDictation(false); paintDictHints(); toast('Dictation shortcut updated.'); }
       else if(id==='wa_open'||id==='wa_close') toast('Saved. Writing Assistant shortcuts activate when that module ships.');
+      else if(id==='agent_shortcut'){ syncAgentShortcut(); toast('Agent shortcut updated.'); }
       else if(id==='mtg_shortcut') toast('Saved. A global meeting shortcut is coming soon.');
       else toast('Shortcut saved.'); };
     _modalCleanup=()=>{ delete $('#mScrim').dataset.recording; done(); };
@@ -1604,6 +1648,8 @@ function recordShortcut(id,title){
 }
 function aiInput(type,val,ph,onset){ const i=document.createElement('input'); i.type=type; i.className='inp'; i.style.minWidth='260px';
   i.placeholder=ph; i.value=val||''; i.onchange=()=>onset(i.value.trim()); return i; }
+
+function syncAgentShortcut(){ if(!inTauri()||!hasCap('agentGlobalShortcut'))return; const raw=store.get('agent_shortcut',DEFAULTS.agent_shortcut); const spec=(raw&&raw!=='Not set')?dictHotkey(raw):null; try{ const result=window.__TAURI__.core.invoke('set_agent_shortcut',{spec}); if(result?.catch)result.catch(error=>toast(String(error))); }catch(error){toast(String(error))} }
 
 /* ================= LIVE TRANSCRIPT ================= */
 function initials(n){return n.replace(/\(.*/,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()}
@@ -2065,10 +2111,67 @@ function initCall(){
   $('#callChip').addEventListener('mousedown', e=>callBeginDrag(e,$('#callChip')));
 }
 
+let agentRuntimeStatus=null,agentRuntimeLoading=false,agentProviderModels={};
+function agentComputeCfg(){ return store.get('agentCompute',{lane:'chatgpt',apiProvider:'openai',apiModel:'',apiBase:'',model:'',effort:'medium',personality:'pragmatic',maxOutput:1200}); }
+function setAgentCompute(patch){ store.set('agentCompute',Object.assign(agentComputeCfg(),patch)); }
+function agentField(label,control){ const wrap=el('div','agent-config-field'); wrap.append(el('label','',label),control); return wrap; }
+function agentSelect(values,current,onchange){ const select=el('select','selp'); values.forEach(value=>{ const item=typeof value==='string'?{value,label:value}:value; select.add(new Option(item.label,item.value,false,item.value===current)); }); select.onchange=()=>onchange(select.value); return select; }
+function selectedCodexModel(status,cfg){ const models=status?.models||[]; return models.find(item=>(item.id||item.model)===cfg.model)||models.find(item=>item.isDefault)||models[0]||null; }
+function renderAgentCompute(){
+  const lanes=$('#agentComputeLanes'),body=$('#agentComputeBody'); if(!lanes||!body)return;
+  const cfg=agentComputeCfg(),lane=cfg.lane||'chatgpt'; lanes.replaceChildren();
+  [['local','Local'],['api','API key'],['chatgpt','ChatGPT · Codex']].forEach(([value,label])=>{ const b=el('button',value===lane?'on':'',label); b.type='button'; b.onclick=()=>{setAgentCompute({lane:value});renderAgentCompute();ensureAgentRuntime()}; lanes.append(b); });
+  body.replaceChildren();
+  if(lane==='local'){
+    const row=el('div','agent-runtime'); row.append(el('span','state'),el('span','','Optional local Intelligence runtime'));
+    const tag=el('span','tag','Not bundled'); row.append(tag); body.append(row,el('div','agent-privacy','This lane will detect a separately installed local model. It stays off until the installer, checksum, RAM guidance, and unload lifecycle are complete.'));
+    return;
+  }
+  if(lane==='api'){
+    const providers=[{value:'openai',label:'OpenAI API'},{value:'groq',label:'Groq API'},{value:'cerebras',label:'Cerebras API'},{value:'custom',label:'Custom OpenAI-compatible'}];
+    const provider=cfg.apiProvider||'openai',grid=el('div','agent-config-grid');
+    grid.append(agentField('Provider',agentSelect(providers,provider,value=>{setAgentCompute({apiProvider:value,apiModel:''});renderAgentCompute()})));
+    if(provider==='custom'){
+      const base=aiInput('url',cfg.apiBase||'','https://example.com/v1',value=>setAgentCompute({apiBase:value})); grid.append(agentField('Base URL',base));
+    }
+    const keyLine=el('div','agent-config-line'),key=aiInput('password','','Paste API key',()=>{}),save=el('button','abtn',cfg.apiKeySaved?'Replace':'Save');
+    save.type='button'; save.onclick=async()=>{ const value=key.value.trim(); if(!value)return toast('Paste the API key first.'); save.disabled=true; try{ const response=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,key:value})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Could not save key'); key.value=''; setAgentCompute({apiKeySaved:true}); save.textContent='Saved'; toast('API key saved in macOS Keychain.'); }catch(error){toast(String(error.message||error))}finally{save.disabled=false} };
+    keyLine.append(key,save); grid.append(agentField('API key',keyLine));
+    const modelLine=el('div','agent-config-line'),models=agentProviderModels[provider]||[],model=el('input','inp'); model.type='text'; model.placeholder='Choose or enter a model'; model.value=cfg.apiModel||''; const listId='agent-models-'+provider,dl=el('datalist'); dl.id=listId; models.forEach(id=>dl.append(new Option(id))); model.setAttribute('list',listId); model.onchange=()=>setAgentCompute({apiModel:model.value.trim()});
+    const load=el('button','abtn',models.length?'Refresh':'Load models'); load.type='button'; load.onclick=async()=>{ load.disabled=true; load.textContent='Loading…'; try{ const response=await fetch('/api/ai/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,base:cfg.apiBase||''})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Could not load models'); agentProviderModels[provider]=result.models||[]; renderAgentCompute(); }catch(error){toast(String(error.message||error));load.disabled=false;load.textContent='Load models'} };
+    modelLine.append(model,dl,load); grid.append(agentField('Model',modelLine));
+    const efforts=provider==='openai'?['auto','low','medium','high']:[{value:'auto',label:'Provider default'}];
+    grid.append(agentField('Reasoning effort',agentSelect(efforts,cfg.apiEffort||efforts[0],value=>setAgentCompute({apiEffort:value}))));
+    grid.append(agentField('Maximum output',agentSelect([{value:'600',label:'Short · 600 tokens'},{value:'1200',label:'Balanced · 1,200 tokens'},{value:'2400',label:'Long · 2,400 tokens'}],String(cfg.maxOutput||1200),value=>setAgentCompute({maxOutput:+value}))));
+    body.append(grid,el('div','agent-privacy','The key goes directly to macOS Keychain and is never stored in localStorage, JSON settings, logs, or command arguments. “Load models” calls only the provider’s model-catalog endpoint.'));
+    return;
+  }
+  const status=agentRuntimeStatus||{installed:false,models:[],login:{status:'idle'}};
+  const runtime=el('div','agent-runtime'+(status.signedIn?' ready':'')); runtime.append(el('span','state'),el('span','',agentRuntimeLoading&&!agentRuntimeStatus?'Checking for the external Codex runtime…':status.installed?(status.signedIn?'Connected through Codex':'Codex runtime detected'):'Codex runtime not installed'));
+  if(status.source)runtime.append(el('span','tag',status.source)); if(status.version)runtime.append(el('span','tag',String(status.version).replace('codex-cli ','v'))); body.append(runtime);
+  if(agentRuntimeLoading&&!agentRuntimeStatus){ body.append(el('div','agent-privacy','This check runs only after you open Agents and choose the ChatGPT · Codex lane.')); return; }
+  if(!status.installed){ const action=el('div','agent-action'),button=el('button','obtn','Open ChatGPT download'); button.onclick=()=>fetch('/api/open-external',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:'chatgpt_download'})}).catch(error=>toast(String(error.message||error))); action.append(button,el('div','agent-privacy','My Assistant detects the official external runtime. The roughly 300 MB Codex package is never copied into this app or DMG.')); body.append(action); return; }
+  const login=status.login||{};
+  if(!status.signedIn){
+    const action=el('div','agent-action'),button=el('button','obtn solid',login.status==='pending'?'Waiting for sign-in…':'Sign in with ChatGPT'); button.disabled=login.status==='pending'||login.status==='starting'; button.onclick=startAgentLogin; action.append(button);
+    if(login.userCode)action.append(el('span','agent-code',login.userCode)); action.append(el('div','agent-privacy',login.status==='pending'?'Finish the device-code flow in your browser. My Assistant never receives OAuth tokens from App Server; authentication material stays in its private isolated Codex profile.':'Uses a dedicated, isolated Codex profile owned by the official App Server.')); body.append(action); if(login.error)body.append(el('div','agent-privacy',login.error)); return;
+  }
+  const modelInfo=selectedCodexModel(status,cfg),models=(status.models||[]).map(item=>({value:item.id||item.model,label:item.displayName||item.id||item.model}));
+  if(modelInfo&&!cfg.model)setAgentCompute({model:modelInfo.id||modelInfo.model});
+  const efforts=(modelInfo?.supportedReasoningEfforts||[]).map(item=>({value:item.reasoningEffort,label:(item.reasoningEffort||'')+(item.description?' · '+item.description:'')})); if(!efforts.length)efforts.push({value:modelInfo?.defaultReasoningEffort||'medium',label:modelInfo?.defaultReasoningEffort||'medium'});
+  const grid=el('div','agent-config-grid'); grid.append(agentField('Model',agentSelect(models,cfg.model||(modelInfo?.id||modelInfo?.model||''),value=>{const next=(status.models||[]).find(item=>(item.id||item.model)===value);setAgentCompute({model:value,effort:next?.defaultReasoningEffort||'medium'});renderAgentCompute()})));
+  grid.append(agentField('Reasoning effort',agentSelect(efforts,cfg.effort||modelInfo?.defaultReasoningEffort||efforts[0].value,value=>setAgentCompute({effort:value}))));
+  const personalities=modelInfo?.supportsPersonality===false?[{value:'default',label:'Model default'}]:[{value:'pragmatic',label:'Pragmatic'},{value:'friendly',label:'Friendly'},{value:'default',label:'Model default'}];
+  grid.append(agentField('Response personality',agentSelect(personalities,cfg.personality||'pragmatic',value=>setAgentCompute({personality:value}))));
+  grid.append(agentField('Action policy',agentSelect([{value:'readOnly',label:'Read-only preview'}],'readOnly',()=>{}))); const foot=el('div','agent-action'),logout=el('button','abtn','Sign out of Codex'); logout.type='button'; logout.onclick=async()=>{logout.disabled=true;try{const response=await fetch('/api/agent/compute/logout',{method:'POST'});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not sign out');agentRuntimeStatus=null;await refreshAgentRuntime();toast('Signed out of the isolated Codex profile.')}catch(error){toast(String(error.message||error));logout.disabled=false}}; foot.append(logout,el('div','agent-privacy','Models and effort choices come live from model/list for this account. The experiment uses no shell, file, network-search, or computer-action tools and returns structured preview text only.')); body.append(grid,foot);
+}
+function ensureAgentRuntime(){ if(!hasCap('agentComputeConfig')||agentComputeCfg().lane!=='chatgpt'||agentRuntimeStatus||agentRuntimeLoading)return; refreshAgentRuntime(); }
+async function refreshAgentRuntime(){ agentRuntimeLoading=true; renderAgentCompute(); try{ const response=await fetch('/api/agent/compute/status'); agentRuntimeStatus=await response.json(); }catch(error){agentRuntimeStatus={installed:false,error:String(error)}} finally{agentRuntimeLoading=false;renderAgentCompute()} }
+async function startAgentLogin(){ try{ const response=await fetch('/api/agent/compute/login',{method:'POST'}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Sign-in could not start'); agentRuntimeStatus=Object.assign(agentRuntimeStatus||{}, {login:result}); renderAgentCompute(); const timer=setInterval(async()=>{await refreshAgentRuntime(); const state=agentRuntimeStatus?.login?.status; if(agentRuntimeStatus?.signedIn||state==='complete'||state==='error')clearInterval(timer)},2500); setTimeout(()=>clearInterval(timer),185000); }catch(error){toast(String(error.message||error))} }
+
 function initAgents(){
   const button=$('#agentInspect'), result=$('#agentResult');
-  if(!button||!result||!hasCap('agentContextInspector'))return;
-  button.onclick=async()=>{
+  if(button&&result&&hasCap('agentContextInspector'))button.onclick=async()=>{
     const original=button.textContent;
     button.disabled=true; button.textContent='Inspecting…';
     result.hidden=true;
@@ -2098,7 +2201,13 @@ function initAgents(){
       result.hidden=false;
     }finally{ button.disabled=false; button.textContent=original; }
   };
+  const compute=$('#agentComputeCard'); if(compute)compute.hidden=!hasCap('agentComputeConfig');
+  const previewCard=$('#agentPreviewCard'),draftButton=$('#agentDraftButton'),draftResult=$('#agentDraftResult');
+  if(previewCard)previewCard.hidden=!hasCap('agentDraftPreview');
+  if(draftButton&&draftResult&&hasCap('agentDraftPreview'))draftButton.onclick=async()=>{ const instruction=$('#agentDraftInput').value.trim(); if(!instruction)return toast('Describe the draft first.'); draftButton.disabled=true; draftButton.textContent='Preparing…'; draftResult.hidden=true; try{ const response=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Preview failed'); const preview=result.preview||{}; draftResult.replaceChildren(el('b','',preview.action==='none'?'No safe draft':'Draft preview'),el('div','draft',preview.text||'No text proposed.'),el('div','why',preview.explanation||'Read-only preview. Nothing was applied.')); draftResult.hidden=false; }catch(error){draftResult.replaceChildren(el('b','','Preview unavailable'),el('div','why',String(error.message||error)));draftResult.hidden=false}finally{draftButton.disabled=false;draftButton.textContent='Prepare preview'} };
+  renderAgentCompute();
 }
+window.addEventListener('my-assistant-agent-shortcut',()=>{ setView('agents'); setTimeout(()=>{ const target=$('#agentDraftInput')||$('#agentInspect'); target?.focus(); },40); });
 
 /* ---------- boot ---------- */
 async function boot(){
@@ -2106,6 +2215,7 @@ async function boot(){
   setTheme(themePref());                    // re-apply theme + accent now the real values are hydrated (the pre-paint inline read saw empty storage)
   initCall();
   initAgents();
+  syncAgentShortcut();
   setView((()=>{try{const r=localStorage.getItem('route');return safeView((r&&TITLES[r])?r:'meetings')}catch{return 'meetings'}})());
   mtShow('library');
   if(inTauri() && store.get('stealth',false)) setStealth(true);

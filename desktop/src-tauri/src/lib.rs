@@ -15,6 +15,7 @@ use tauri::{
 };
 use tauri_plugin_notification::NotificationExt;
 
+mod codex_runtime;
 mod local_server;
 #[cfg(target_os = "macos")]
 mod native_pill;
@@ -780,6 +781,7 @@ struct HotkeySpec {
     modifier: String,
 }
 static DICT_HOTKEY: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
+static AGENT_HOTKEY: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
 static DICT_TRIGGER_LABEL: Mutex<String> = Mutex::new(String::new());
 
 fn dict_trigger_label(hotkey: Option<&HotkeySpec>) -> String {
@@ -917,6 +919,72 @@ fn register_dict_hotkey(app: &AppHandle, spec: &HotkeySpec) -> bool {
             false
         }
     }
+}
+
+fn shortcut_from_spec(spec: &HotkeySpec) -> Option<tauri_plugin_global_shortcut::Shortcut> {
+    use tauri_plugin_global_shortcut::{Modifiers, Shortcut};
+    let code = key_to_code(&spec.key)?;
+    let mut mods = Modifiers::empty();
+    for modifier in &spec.mods {
+        match modifier.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods |= Modifiers::CONTROL,
+            "shift" => mods |= Modifiers::SHIFT,
+            "alt" | "option" | "opt" => mods |= Modifiers::ALT,
+            "cmd" | "meta" | "super" | "win" => mods |= Modifiers::SUPER,
+            _ => {}
+        }
+    }
+    (!mods.is_empty() && spec.modifier.is_empty()).then(|| Shortcut::new(Some(mods), code))
+}
+
+#[tauri::command]
+fn set_agent_shortcut(app: AppHandle, spec: Option<HotkeySpec>) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let global = app.global_shortcut();
+    let Some(spec) = spec else {
+        if let Some(previous) = AGENT_HOTKEY
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        {
+            let _ = global.unregister(previous);
+        }
+        return Ok(());
+    };
+    let shortcut = shortcut_from_spec(&spec).ok_or_else(|| {
+        "Agent shortcut needs a supported key plus at least one modifier".to_string()
+    })?;
+    if AGENT_HOTKEY
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()
+        == Some(&shortcut)
+    {
+        return Ok(());
+    }
+    global
+        .on_shortcut(shortcut, |app, _shortcut, event| {
+            if event.state != ShortcutState::Pressed {
+                return;
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                let _ = window
+                    .eval("window.dispatchEvent(new CustomEvent('my-assistant-agent-shortcut'))");
+            }
+        })
+        .map_err(|error| format!("Agent shortcut could not be registered: {error}"))?;
+    let mut current = AGENT_HOTKEY
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(previous) = current.replace(shortcut) {
+        if previous != shortcut {
+            let _ = global.unregister(previous);
+        }
+    }
+    Ok(())
 }
 
 // ---- bare-modifier trigger (Handy-style: right ⌘, Option, etc. as a hold/tap-to-talk key) --------------
@@ -1354,6 +1422,7 @@ pub fn run() {
             set_stealth,
             set_tray_recording,
             set_dictation,
+            set_agent_shortcut,
             dictation_stop,
             set_tray_visible,
             perm_status
@@ -1408,5 +1477,25 @@ mod tests {
             })),
             "⌃⇧D"
         );
+    }
+
+    #[test]
+    fn agent_shortcut_requires_a_combination_not_a_bare_modifier() {
+        assert!(shortcut_from_spec(&HotkeySpec {
+            mods: vec!["ctrl".into(), "shift".into()],
+            key: "A".into(),
+            modifier: String::new(),
+        })
+        .is_some());
+        assert!(shortcut_from_spec(&HotkeySpec {
+            modifier: "command_right".into(),
+            ..Default::default()
+        })
+        .is_none());
+        assert!(shortcut_from_spec(&HotkeySpec {
+            key: "A".into(),
+            ..Default::default()
+        })
+        .is_none());
     }
 }

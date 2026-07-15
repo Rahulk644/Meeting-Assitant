@@ -36,6 +36,15 @@ versions will use semantic versioning once the first public beta tag is cut.
 - An honest Agents foundation view plus a signed, on-demand native Accessibility inspector. It returns a
   bounded read-only snapshot, redacts secure fields, and exits without screenshot, network, persistence, or
   computer actions.
+- Agent compute configuration for Local, API key, and ChatGPT account lanes. BYOK credentials go directly
+  to Keychain; provider model IDs load on demand. The ChatGPT lane detects a verified official external Codex
+  runtime, uses an isolated profile/device-code sign-in, and renders account-visible model/effort controls
+  without adding Codex or Node to the DMG.
+- A preview-only structured Agent draft planner for API-key and ChatGPT account compute plus a preview-only
+  configurable global Agent shortcut. Planner output is display-only; unsupported actions are rejected and
+  no Apply, Send, shell, file, search, or computer mutation path exists.
+- Evidence-backed Agent app and wake-word acceptance suites. Porcupine is the leading external wake-word
+  candidate and Rustpotter the lightweight control; neither engine, model, or credential is bundled.
 
 ### Changed
 
@@ -43,6 +52,8 @@ versions will use semantic versioning once the first public beta tag is cut.
 - The native dictation pill now states the current phase, elapsed time, configured finish shortcut, and Esc
   cancellation instead of showing an unexplained waveform.
 - The packaged application uses an in-process Rust service instead of bundling Node.
+- External Codex detection is lazy: ordinary launch and the Local/API Agent lanes do not create a Codex
+  profile or process; the check begins only after the ChatGPT · Codex lane is opened.
 - Speech-model residency defaults to a user-configurable 10-minute idle timeout.
 - First-run model copy now states that cloud speech is unavailable in the current beta.
 - Scheduled/calendar titles now outrank meeting-window titles; unscheduled calls are labelled
@@ -73,6 +84,8 @@ versions will use semantic versioning once the first public beta tag is cut.
 - Automatic dictation language now reaches the decoder unchanged instead of being silently forced to English.
 - Qwen decoding now uses a bounded 512-token budget with repeated-cycle termination, preventing runaway
   loops while retaining valid partial speech.
+- ChatGPT device-code status polling no longer starts competing Codex processes against the active login
+  flow; verified runtime detection and version metadata are cached for the app process.
 
 ### Security
 
@@ -82,3 +95,5 @@ versions will use semantic versioning once the first public beta tag is cut.
 - Local UI, helper, STT, host, origin, filename, and request-size boundaries are fail-closed.
 - Screen-derived Agent context is explicit, local, bounded, treated as untrusted data, and unavailable to
   future mutation paths without snapshot revalidation and confirmation policy.
+- Legacy or malformed Agent compute settings are reduced to an allowlisted non-secret schema. Official Codex
+  OAuth state remains owned by its isolated external profile and can be cleared through App Server logout.

@@ -54,3 +54,12 @@ test("every release-matrix capability is registered in the server-owned contract
   const matrixKeys = new Set([...matrix.matchAll(/^\| `([^`]+)` \|/gm)].map((match) => match[1]));
   for (const key of matrixKeys) assert.ok(CAPABILITIES[key], `${key} is missing from app/release.js`);
 });
+
+test("external Codex detection is lazy and lane-specific", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.match(html, /if\(name==='agents'\) ensureAgentRuntime\(\)/);
+  assert.match(html, /agentComputeCfg\(\)\.lane!=='chatgpt'/);
+  assert.match(html, /agentRuntimeStatus\|\|agentRuntimeLoading/);
+  const initAgents = html.slice(html.indexOf("function initAgents()"), html.indexOf("window.addEventListener('my-assistant-agent-shortcut'"));
+  assert.doesNotMatch(initAgents, /refreshAgentRuntime\(\)/, "app boot must not probe Codex unconditionally");
+});

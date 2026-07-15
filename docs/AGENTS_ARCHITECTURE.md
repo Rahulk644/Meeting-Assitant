@@ -16,7 +16,7 @@ remove the keyboard step after its battery, privacy, accent, and false-trigger g
 This is not ordinary dictation. Dictation converts speech to text in the focused field. An Agent interprets
 an instruction against screen context, may use tools, and must verify that the intended outcome happened.
 
-## Current production truth
+## Current product truth
 
 The first foundation is deliberately read-only:
 
@@ -26,7 +26,22 @@ The first foundation is deliberately read-only:
   My Assistant when the dashboard itself is frontmost;
 - secure fields are redacted and every element receives an opaque request-local `el_N` identifier;
 - the response is capped by element, depth, per-node child, time, process-output, and HTTP limits;
-- no screenshot, audio, model, network, computer action, or persistence is involved.
+- no screenshot, audio, computer action, or persistence is involved in inspection.
+
+The production Agents view also exposes compute **configuration**, not autonomous execution:
+
+- **Local** is an honest unavailable lane until a separate install/detect/checksum/RAM/unload lifecycle exists;
+- **API key** supports Groq, OpenAI, Cerebras, and custom OpenAI-compatible endpoints, stores the credential
+  directly in macOS Keychain, and discovers the provider's current model IDs only after an explicit click;
+- **ChatGPT account** detects an official, externally installed native Codex runtime, verifies its OpenAI code
+  signature, starts it only on demand with an isolated app-owned `CODEX_HOME`, and obtains account-visible
+  model, reasoning-effort, and personality support from Codex App Server.
+
+The structured draft planner and configurable global shortcut are preview-only. A preview can return
+`draft_text`, `replace_selection`, or `none`, but the native server reduces every result to a bounded display
+object and forces confirmation. There is no Apply, Send, click, shell, file, search, network-tool, or AX
+mutation path. API-provider network access is limited to the explicitly selected model request; the Codex
+experiment uses a restricted read-only sandbox with no readable roots or tools.
 
 The current helper is an on-demand native Swift resource. It adds no idle process or idle RAM. The Rust
 loopback service enforces a 1.5-second process deadline and 256 KiB output ceiling. The helper itself targets
@@ -117,32 +132,48 @@ Required contract:
 - measured incremental CPU, physical footprint, battery drain, false accepts, and false rejects on supported
   Macs before enabling it by default.
 
-`dscripka/openWakeWord` is a useful Apache-2.0 research/training reference, but its primary runtime is
-Python. `rhasspy/openWakeWord-cpp` is MIT and avoids Python, but currently expects ONNX Runtime and provides
-only a small C++ inference program, not a mature macOS audio/product integration. Neither is adopted until a
-native harness proves the custom phrase and resource budgets. Apple does not expose a general third-party
-Siri-style wake-word API.
+Porcupine is the primary candidate because it is native, on-device, supports custom wake words, and the
+vendor publishes a small embedded footprint. It is **not** in the app: current use requires a Picovoice
+AccessKey and the commercial/redistribution terms must be accepted for the actual product. Vendor accuracy
+and resource claims are inputs to our benchmark, not My Assistant evidence.
 
-## Providers and “Sign in with ChatGPT”
+Rustpotter is the first lightweight control because it is pure Rust, Apache-2.0, and has sub-4 MB model
+options, but its own maintainer does not describe it as production-grade. `dscripka/openWakeWord` remains a
+useful Apache-2.0 code/training reference; its included pretrained models have separate non-commercial
+terms and its primary runtime is Python. `rhasspy/openWakeWord-cpp` is archived and expects ONNX Runtime.
+The identical opt-in corpus must compare Porcupine and Rustpotter across real accents/noise, false accepts,
+latency, CPU, physical footprint, energy, suspension behavior, integration maturity, and licensing before
+an engine is selected. Apple does not expose a general third-party Siri-style wake-word API.
 
-ChatGPT subscriptions and API billing are separate. OpenAI documents “Sign in with ChatGPT” for its own
-Codex clients, but there is no documented public third-party OAuth flow that lets My Assistant consume a
-user's ChatGPT Plus/Pro allowance. Do not imitate private Codex endpoints or collect ChatGPT session tokens.
+The complete evidence contract is [`WAKE_WORD_BENCHMARK.md`](WAKE_WORD_BENCHMARK.md) and the machine-readable
+cases are in `acceptance/cases.json`.
 
-Supported product paths are:
+## Providers and ChatGPT account compute
 
-- OpenAI API BYOK stored in macOS Keychain and billed to the user's API account;
-- other explicit provider BYOK adapters;
-- a My Assistant cloud plan with clear metering and privacy terms;
-- a future delegated OpenAI authorization adapter only if OpenAI publishes and supports it for third-party
-  apps.
+ChatGPT subscriptions and API billing remain separate. My Assistant does not turn a ChatGPT subscription
+into a general OpenAI API key. The supported account lane embeds OpenAI's documented **Codex App Server**:
+the official external runtime owns device-code authentication and tokens; My Assistant receives only
+sanitized account state, plan type, rate state when requested, and the models/configuration that App Server
+documents for that account. This consumes the user's available Codex allowance and remains subject to their
+plan limits. It is labelled **ChatGPT account · Codex**, never “free OpenAI API.”
+
+The runtime is deliberately absent from the DMG. Detection is limited to standard installed ChatGPT, Codex,
+or native Codex CLI locations and execution is refused unless macOS verifies OpenAI Team ID `2DC432GLL2`.
+Each request starts the native binary directly—Node is neither bundled nor kept resident—and uses a private
+isolated profile rather than the user's general Codex configuration. Device-code OAuth secrets remain in
+that profile under the official runtime's ownership and are never copied into settings, localStorage, logs,
+arguments, or the UI.
+
+The API-key lane remains independent: it is billed by the selected provider and its key lives in Keychain.
+Model lists are loaded from the selected provider's authenticated `/models` endpoint. ChatGPT account model
+and reasoning controls come from App Server `model/list`, so the UI does not hard-code entitlements.
 
 Official references:
 
-- [ChatGPT Plus does not include API usage](https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus)
-- [ChatGPT and API billing are separate](https://help.openai.com/en/articles/9039756-billing-settings-in-chatgpt-vs-platform)
+- [Codex App Server](https://developers.openai.com/codex/app-server)
+- [Using Codex with a ChatGPT plan](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan)
+- [ChatGPT and API billing are separate](https://help.openai.com/en/articles/9039756-managing-billing-settings-on-chatgpt-web-and-platform)
 - [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication)
-- [Codex-specific Sign in with ChatGPT](https://help.openai.com/en/articles/11381614-api-codex-cli-and-sign-in-with-chatgpt)
 
 ## Primary-source competitive evidence
 
@@ -163,14 +194,19 @@ These projects informed the contracts above; no source code was copied into My A
 
 ## Ordered implementation
 
-1. Physically verify the read-only context snapshot across Safari, Chrome, Mail, Notes, Slack, Terminal,
-   Electron, full-screen, multiple displays, secure fields, and permission denial/recovery.
-2. Add a global Agent shortcut and a native non-activating Listening → Understanding → Preview surface.
-3. Add a provider-neutral structured planner; screen data is untrusted and API keys remain native/Keychain.
-4. Ship a narrow draft/replace/undo executor with snapshot revalidation and fresh-result verification.
-5. Add OCR and app-specific adapters only where the Accessibility acceptance matrix proves a gap.
-6. Add separately permissioned screenshot/vision fallback with a clear disclosure.
-7. Benchmark a local wake phrase harness; ship only after privacy, accuracy, CPU/RAM, battery, and suspension
-   gates pass.
-8. Expand to governed multi-step skills, audit history, and team/cloud capabilities after the single-action
-   contract is reliable.
+1. Complete the read-only matrix across Gmail, Slack, LinkedIn, Google Docs, Apple Notes, Google Slides,
+   Terminal, secure fields, full-screen, multiple displays, and permission denial/recovery using only
+   synthetic/test-account content.
+2. Physically verify the preview global shortcut across conflicts, relaunch, hidden-window focus, Spaces,
+   and multiple displays; then replace the dashboard request box with a native non-activating Listening →
+   Understanding → Preview surface.
+3. Exercise both API-key and ChatGPT account planners across provider failures, model capability changes,
+   prompt injection, output truncation, and stale snapshots. Keep all results display-only.
+4. Implement one native draft/replace/undo executor with snapshot revalidation, field-type policy, explicit
+   preview, fresh-result verification, and no submit controls.
+5. Add OCR and app-specific adapters only where the Accessibility acceptance matrix proves a gap, then add a
+   separately permissioned screenshot/vision fallback only if those adapters remain insufficient.
+6. Run the Porcupine-versus-Rustpotter opt-in wake benchmark; adopt neither until privacy, accuracy,
+   CPU/RAM, energy, suspension, and licensing gates pass.
+7. Expand to governed multi-step skills, audit history, and team/cloud capabilities only after the
+   single-action contract is reliable.

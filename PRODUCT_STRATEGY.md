@@ -86,7 +86,9 @@ later powers coaching and writing actions. Its simple picker is:
 
 - **Automatic (recommended)**;
 - **On this Mac**; and
-- **Cloud API**.
+- **Your API key**; and
+- **ChatGPT account · Codex** for the Agent planner only, using a verified external official runtime and the
+  user's available Codex allowance—not a general OpenAI API entitlement.
 
 Local choices begin with Gemma because the efficient variants are designed for device use:
 
@@ -105,6 +107,12 @@ OpenAI-compatible endpoint. The app presents stable jobs such as **Fast notes**,
 **Private**, while model IDs live in a remotely updateable, signed catalog. Exact model selection remains
 under Advanced.
 
+The Agent pillar initially has three honest compute lanes: a separately installed local runtime, provider
+BYOK in Keychain, and ChatGPT account/Codex. Codex is detected rather than bundled; the official external
+runtime owns device-code auth and tokens in an isolated profile, while `model/list` supplies the account's
+actual model/effort/personality controls. This lane cannot be generalized to meeting summaries or arbitrary
+API work without evidence that the documented Codex product contract supports that job.
+
 ## Provider and model architecture
 
 The Rust core owns all provider calls. The WebView receives capability metadata and connection status, but
@@ -114,6 +122,8 @@ never a secret.
   diarization, vocabulary prompt, and data-retention disclosure.
 - `IntelligenceProvider`: chat/structured output, context limit, streaming, tool/JSON support, and privacy
   disclosure.
+- `AgentComputeProvider`: local, API-key, or external Codex source; live model/config capabilities; typed
+  read-only preview today; one native policy/executor chokepoint later.
 - `ModelManifest`: stable ID, engine, artifact URLs, exact size, SHA-256/signature, license, languages,
   minimum/recommended memory, architecture, quantization, and benchmark version.
 - `ResourceCoordinator`: permits only the heavy processes that fit. On an 8 GB Mac, transcription unloads

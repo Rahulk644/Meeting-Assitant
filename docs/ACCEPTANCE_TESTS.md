@@ -45,6 +45,41 @@ python3 acceptance/run.py summary --session /private/path/session.json
 
 The summary exits non-zero while any case is pending, failed, or blocked.
 
+## Agent context and preview matrix
+
+Use only disposable documents and dedicated test accounts; this is not permission to inspect private inboxes,
+chats, profiles, documents, or terminal output. The suite covers Gmail, Slack, LinkedIn, Google Docs, Apple
+Notes, Google Slides, Terminal, secure fields, permission recovery, full-screen/displays, prompt injection,
+the physical global shortcut, both compute lanes, and stale/missing targets:
+
+```sh
+python3 acceptance/run.py new \
+  --suite agent-context --operator-id qa-01 \
+  --notes "Synthetic content only; packaged preview build"
+```
+
+Evidence must record aggregate roles/counts, timing, capability state, and the absence of mutation. Do not
+attach screenshots or logs containing page text, document contents, account identifiers, tokens, API keys,
+or personal data. A useful tree is not sufficient to pass the action milestone: the current experiment is
+display-only, and Apply/Send remain nonexistent until fresh-snapshot revalidation and a native policy gate
+are separately implemented and accepted.
+
+## Wake-word benchmark
+
+The wake-word suite is a product and licensing gate, not evidence that wake word ships. It requires explicit
+opt-in, an externally installed candidate, the tester's own Porcupine AccessKey when applicable, and a
+dedicated consented corpus:
+
+```sh
+python3 acceptance/run.py new \
+  --suite wake-word --operator-id qa-01 \
+  --notes "Porcupine candidate; external adapter; private synthetic corpus"
+```
+
+Run the identical corpus through Porcupine and the lightweight Rustpotter control. Record false accepts,
+false rejects, p50/p95 latency, CPU, physical footprint/RSS, energy, disk cost, suspension behavior, privacy,
+and exact licensing terms. The detailed protocol is [`WAKE_WORD_BENCHMARK.md`](WAKE_WORD_BENCHMARK.md).
+
 ## Two-person meeting matrix
 
 Use two consenting people in a live call. A prerecorded loop, one-person simulation, or helper self-test is

@@ -25,7 +25,18 @@ terms continue to apply.
   through the revision-pinned GGML artifacts named by the catalog.
 - **Gemma / LiteRT-LM:** optional external installations, not bundled. Google's applicable model and tool
   terms apply to the user's installation.
+- **OpenAI Codex:** optional official external ChatGPT/Codex app or native CLI installation, detected and
+  executed on demand but not copied or redistributed in My Assistant. OpenAI's product terms and the user's
+  ChatGPT/Codex plan limits apply to that installation.
 - **FFmpeg:** invoked from the host system for thumbnails when present; it is not bundled.
+
+## Wake-word evaluation candidates — not included
+
+- **Picovoice Porcupine:** proprietary service/runtime candidate requiring the tester's own AccessKey and
+  applicable Picovoice terms. It is not bundled, redistributed, or selected for release.
+- **Rustpotter:** Apache-2.0 pure-Rust research control. It is not currently a dependency or release asset.
+- **openWakeWord:** Apache-2.0 code/training reference; pretrained model terms are separate and currently
+  unsuitable for an assumed commercial default. Neither it nor the archived openWakeWord C++ port is bundled.
 
 ## Evaluation-only assets
 

@@ -11,8 +11,9 @@ vulnerability. For the engineering detail behind these claims, see [ARCHITECTURE
   summarization (when the optional Gemma/LiteRT-LM runtime has been installed) all run as local processes.
   **No bot joins your calls, and no audio or transcript leaves the machine** while the local provider is
   available and selected.
-- **No account, no telemetry.** There is no sign-in, no analytics, and no crash/usage reporting. The app
-  makes no network request on its own beyond the two explicit, opt-in cases below.
+- **No My Assistant account or telemetry.** There is no My Assistant identity, analytics, or crash/usage
+  reporting. An optional preview can sign into an isolated profile owned by an official external Codex
+  runtime; that is a ChatGPT/Codex account, not a My Assistant account. Network paths are explicit below.
 
 ## What can leave the machine (only when you opt in)
 
@@ -27,6 +28,12 @@ vulnerability. For the engineering detail behind these claims, see [ARCHITECTURE
    provider you choose. Keep **On-device** selected to stay fully local; the current DMG does not yet install
    that optional Intelligence runtime on a clean Mac, so summary/Ask will fail closed until it is installed or
    a BYOK provider is configured.
+3. **Agent planner preview (preview builds only).** After an explicit request, the selected API-key provider
+   or official external Codex runtime receives the user's instruction plus a fresh bounded Accessibility
+   snapshot. It does not receive audio, screenshots, files, shell access, or a persistent snapshot. The
+   result is displayed only; no Apply, click, Send, or other computer mutation exists in this milestone.
+   The API-key lane is billed by that provider. The ChatGPT account lane consumes the user's available Codex
+   allowance and is not a general OpenAI API entitlement.
 
 ## Where your data lives
 
@@ -39,6 +46,7 @@ the repository (the whole `data/` tree is git-ignored):
 | `data/meetings/rec/*.mp4` | screen recordings — only if you enable video recording |
 | `models/` | the downloaded on-device speech model |
 | `settings.json` | non-secret preferences (a durable mirror of the UI's settings) |
+| `data/codex-profile/` | optional private isolated profile managed by the official external Codex runtime; may contain its managed ChatGPT OAuth state until the user chooses **Sign out of Codex** |
 | `data/tmp/` | private (`0700`) short-lived audio/request files, deleted immediately or on next launch |
 
 Dictation history is held **in memory only**. Audio uses a uniquely named `0600` file inside the private
@@ -46,8 +54,13 @@ application directory only while it is being transcribed and is deleted immediat
 
 ## API keys
 
-Bring-your-own API keys are stored in **macOS Keychain**, not `settings.json`, and are sent per request only
-to the provider you selected. Summary and Ask routes ignore caller-supplied destinations and credentials.
+Bring-your-own API keys are sent directly to **macOS Keychain**, never placed in localStorage or
+`settings.json`, and are sent per request only to the selected provider. Summary, Ask, model-catalog, and
+Agent-preview routes resolve allowlisted providers or validated HTTPS/loopback endpoints server-side.
+
+ChatGPT device-code authentication is owned by the verified external Codex runtime. My Assistant never
+receives OAuth tokens or account email. It exposes **Sign out of Codex**, which invokes the documented App
+Server logout method for the isolated profile.
 
 ## Local service boundary
 
@@ -61,13 +74,20 @@ Face artifact. Incomplete or mismatched downloads are deleted and never loaded.
 
 ## Agent screen context
 
-The production Agents foundation is read-only and explicit. Clicking **Inspect app behind My Assistant**
+The production Agents inspector is read-only and explicit. Clicking **Inspect app behind My Assistant**
 runs a signed native Accessibility helper once, returns a bounded structured snapshot to the authenticated
 local UI, and exits. Secure fields omit values. It does not take a screenshot, capture audio, contact a
 model/provider, write the snapshot to disk, or perform a computer action. The helper and Rust endpoint both
 enforce size/time limits. Future model prompts must delimit screen-derived text as untrusted data, and no
-mutation capability may ship without native snapshot revalidation and the confirmation policy in
+The production surface may configure compute, but the networked planner endpoint and global Agent shortcut
+remain preview-gated. Model output is reduced to a typed draft/replace/no-op display object; unsupported
+actions are rejected and the server forces confirmation. No mutation capability may ship without native
+snapshot revalidation and the confirmation policy in
 [`docs/AGENTS_ARCHITECTURE.md`](docs/AGENTS_ARCHITECTURE.md).
+
+The external Codex path only executes a native binary from standard ChatGPT/Codex/CLI locations after
+strict macOS signature verification confirms OpenAI Team ID `2DC432GLL2`. It runs on demand with a private
+isolated `CODEX_HOME`; it is not bundled and adds no idle process to the app.
 
 ## macOS permissions
 
