@@ -18,9 +18,9 @@ formal third-party penetration test or a promise of zero defects. Product visibi
 A review of the real shipping Rust found that beta.2's external Codex trust check combined ordinary
 `codesign` validation with a spoofable Team-ID text search. Current `codex/agent-actions` source replaces it
 with Security.framework validation of the `codex` identifier, Apple trust anchor, Developer ID certificate,
-and OpenAI Team ID `2DC432GLL2`; it also rejects symlinks, detects replacement during validation, and
-revalidates cached paths before every spawn. The regression reproduces the prior ad-hoc identifier spoof and
-proves it is rejected; the installed official runtime remains accepted. Rust fmt, check, warnings-denied
+and OpenAI Team ID `2DC432GLL2`; it also holds a no-follow file handle across spawn and dynamically validates
+the actual child before RPC. The regression reproduces the prior ad-hoc identifier spoof and proves both its
+static file and running process are rejected; the installed official runtime remains accepted. Rust fmt, check, warnings-denied
 Clippy, 44/44 Rust tests, and 33/33 Node tests pass.
 
 The artifact below predates that correction. Preserve its evidence as a historical release snapshot, but do

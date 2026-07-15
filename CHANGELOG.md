@@ -9,8 +9,9 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 - Replaced the external Codex runtime's spoofable signature-text check with a native Security.framework
   requirement anchored to Apple, the `codex` identifier, OpenAI's Developer ID certificate, and Team ID
-  `2DC432GLL2`. Cached runtime paths are revalidated immediately before every process launch; symlinks and
-  files replaced during validation fail closed.
+  `2DC432GLL2`. Cached runtime paths are revalidated immediately before every process launch with a no-follow
+  file handle held across spawn, and the actual child process is validated before RPC; symlinks and replaced
+  files fail closed.
 
 ## [0.1.0-beta.2] - 2026-07-15
 

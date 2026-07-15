@@ -4,11 +4,13 @@
 //! ChatGPT/Codex app (or a user-installed CLI), give it an isolated `CODEX_HOME`, and keep OAuth tokens in
 //! that official runtime. Every status/planning request starts the process on demand and tears it down.
 
-use security_framework::os::macos::code_signing::{Flags, SecRequirement, SecStaticCode};
+use security_framework::os::macos::code_signing::{
+    Flags, GuestAttributes, SecCode, SecRequirement, SecStaticCode,
+};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -28,14 +30,12 @@ struct Runtime {
 }
 
 impl Runtime {
-    fn command(&self) -> Result<Command, String> {
-        if !is_executable(&self.executable) {
-            return Err(
-                "The external Codex runtime is no longer signed by the expected OpenAI Developer ID"
-                    .into(),
-            );
-        }
-        Ok(Command::new(&self.executable))
+    fn command(&self) -> Result<(Command, VerifiedExecutable), String> {
+        let verified = verify_executable(&self.executable).ok_or_else(|| {
+            "The external Codex runtime is no longer signed by the expected OpenAI Developer ID"
+                .to_string()
+        })?;
+        Ok((Command::new(&self.executable), verified))
     }
 }
 
@@ -73,33 +73,68 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn is_executable(path: &Path) -> bool {
-    // Do not follow a user-controlled symlink into a different executable. Retain the
-    // metadata identity so a replacement during signature validation also fails closed.
-    let Ok(before) = path.symlink_metadata() else {
-        return false;
-    };
-    let permissions_ok = !before.file_type().is_symlink()
-        && before.is_file()
+    verify_executable(path).is_some()
+}
+
+struct VerifiedExecutable {
+    file: fs::File,
+    dev: u64,
+    ino: u64,
+    len: u64,
+    mtime: i64,
+    mtime_nsec: i64,
+}
+
+impl VerifiedExecutable {
+    fn matches_path(&self, path: &Path) -> bool {
+        let matches = |meta: &fs::Metadata| {
+            meta.is_file()
+                && meta.dev() == self.dev
+                && meta.ino() == self.ino
+                && meta.len() == self.len
+                && meta.mtime() == self.mtime
+                && meta.mtime_nsec() == self.mtime_nsec
+        };
+        self.file
+            .metadata()
+            .map(|meta| matches(&meta))
+            .unwrap_or(false)
+            && path
+                .symlink_metadata()
+                .map(|meta| !meta.file_type().is_symlink() && matches(&meta))
+                .unwrap_or(false)
+    }
+}
+
+fn verify_executable(path: &Path) -> Option<VerifiedExecutable> {
+    // O_NOFOLLOW makes the ownership/signature decision against a regular file, not a
+    // user-controlled symlink. Keep this handle alive until the child has been validated.
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .ok()?;
+    let before = file.metadata().ok()?;
+    let permissions_ok = before.is_file()
         && before.mode() & 0o111 != 0
         && (before.uid() == unsafe { libc::geteuid() } || path.starts_with("/Applications/"));
     if !permissions_ok {
-        return false;
+        return None;
     }
 
     if !code_satisfies_requirement(path, OPENAI_CODE_REQUIREMENT) {
-        return false;
+        return None;
     }
 
-    path.symlink_metadata()
-        .map(|after| {
-            !after.file_type().is_symlink()
-                && before.dev() == after.dev()
-                && before.ino() == after.ino()
-                && before.len() == after.len()
-                && before.mtime() == after.mtime()
-                && before.mtime_nsec() == after.mtime_nsec()
-        })
-        .unwrap_or(false)
+    let verified = VerifiedExecutable {
+        file,
+        dev: before.dev(),
+        ino: before.ino(),
+        len: before.len(),
+        mtime: before.mtime(),
+        mtime_nsec: before.mtime_nsec(),
+    };
+    verified.matches_path(path).then_some(verified)
 }
 
 fn code_satisfies_requirement(path: &Path, requirement: &str) -> bool {
@@ -117,6 +152,37 @@ fn code_satisfies_requirement(path: &Path, requirement: &str) -> bool {
         &requirement,
     )
     .is_ok()
+}
+
+fn running_code_satisfies_requirement(pid: u32, requirement: &str) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    let mut attributes = GuestAttributes::new();
+    attributes.set_pid(pid);
+    let Ok(code) = SecCode::copy_guest_with_attribues(None, &attributes, Flags::NONE) else {
+        return false;
+    };
+    let Ok(requirement) = requirement.parse::<SecRequirement>() else {
+        return false;
+    };
+    code.check_validity(Flags::STRICT_VALIDATE, &requirement)
+        .is_ok()
+}
+
+fn validate_spawned_runtime(
+    child: &mut Child,
+    runtime: &Runtime,
+    verified: &VerifiedExecutable,
+) -> Result<(), String> {
+    if verified.matches_path(&runtime.executable)
+        && running_code_satisfies_requirement(child.id(), OPENAI_CODE_REQUIREMENT)
+    {
+        return Ok(());
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    Err("The launched Codex runtime failed OpenAI signature validation".into())
 }
 
 fn detect_runtime() -> Option<Runtime> {
@@ -178,7 +244,7 @@ impl RpcProcess {
         let workspace = codex_home.join("workspace");
         // Runtime discovery is cached, so enforce the signature boundary again at the
         // actual execution point before the isolated OAuth profile can be touched.
-        let mut command = runtime.command()?;
+        let (mut command, verified) = runtime.command()?;
         let mut child = command
             .args(["app-server", "--stdio"])
             .env("CODEX_HOME", &codex_home)
@@ -188,6 +254,7 @@ impl RpcProcess {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| format!("Codex App Server could not start: {error}"))?;
+        validate_spawned_runtime(&mut child, runtime, &verified)?;
         let stdin = child
             .stdin
             .take()
@@ -297,7 +364,7 @@ fn version(runtime: &Runtime) -> Option<String> {
     if let Some(value) = RUNTIME_VERSION.get() {
         return Some(value.clone());
     }
-    let mut command = runtime.command().ok()?;
+    let (mut command, verified) = runtime.command().ok()?;
     let mut child = command
         .arg("--version")
         .stdin(Stdio::null())
@@ -305,6 +372,7 @@ fn version(runtime: &Runtime) -> Option<String> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    validate_spawned_runtime(&mut child, runtime, &verified).ok()?;
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         if child.try_wait().ok().flatten().is_some() {
@@ -649,7 +717,7 @@ mod tests {
         let root = test_root("signature-spoof");
         fs::create_dir_all(&root).unwrap();
         let fake = root.join("codex");
-        fs::copy("/usr/bin/true", &fake).unwrap();
+        fs::copy("/bin/sleep", &fake).unwrap();
         fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
         let signed = Command::new("/usr/bin/codesign")
             .args([
@@ -675,11 +743,19 @@ mod tests {
         );
         assert!(!is_executable(&fake));
         assert!(Runtime {
-            executable: fake,
+            executable: fake.clone(),
             source: "test"
         }
         .command()
         .is_err());
+
+        let mut child = Command::new(&fake).arg("2").spawn().unwrap();
+        assert!(!running_code_satisfies_requirement(
+            child.id(),
+            OPENAI_CODE_REQUIREMENT
+        ));
+        let _ = child.kill();
+        let _ = child.wait();
         let _ = fs::remove_dir_all(root);
     }
 

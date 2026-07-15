@@ -107,8 +107,9 @@ macOS Keychain.
   enters process arguments or logs.
 - External Codex is accepted only from standard installed locations after native Security.framework
   validation of its `codex` identifier, Apple trust anchor, Developer ID certificate, and OpenAI Team ID
-  `2DC432GLL2`. Cached paths are revalidated immediately before every spawn; symlinks and files replaced
-  during validation fail closed. It is not touched during ordinary app launch: opening Agents with the
+  `2DC432GLL2`. Cached paths are revalidated with a no-follow file handle held across every spawn, and the
+  actual child process is validated before RPC; symlinks and replaced files fail closed. It is not touched
+  during ordinary app launch: opening Agents with the
   ChatGPT · Codex lane selected triggers on-demand status, isolated device-code sign-in/out, model discovery,
   or a preview. Login polling cannot create competing processes, and no Codex process remains resident afterward.
 
