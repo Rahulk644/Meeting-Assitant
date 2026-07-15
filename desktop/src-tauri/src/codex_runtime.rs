@@ -4,6 +4,7 @@
 //! ChatGPT/Codex app (or a user-installed CLI), give it an isolated `CODEX_HOME`, and keep OAuth tokens in
 //! that official runtime. Every status/planning request starts the process on demand and tears it down.
 
+use security_framework::os::macos::code_signing::{Flags, SecRequirement, SecStaticCode};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -18,11 +19,24 @@ use std::time::{Duration, Instant};
 const RPC_TIMEOUT: Duration = Duration::from_secs(8);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_RPC_LINE: usize = 2 * 1024 * 1024;
+const OPENAI_CODE_REQUIREMENT: &str = r#"identifier "codex" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "2DC432GLL2""#;
 
 #[derive(Clone, Debug)]
 struct Runtime {
     executable: PathBuf,
     source: &'static str,
+}
+
+impl Runtime {
+    fn command(&self) -> Result<Command, String> {
+        if !is_executable(&self.executable) {
+            return Err(
+                "The external Codex runtime is no longer signed by the expected OpenAI Developer ID"
+                    .into(),
+            );
+        }
+        Ok(Command::new(&self.executable))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -59,41 +73,50 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn is_executable(path: &Path) -> bool {
-    let permissions_ok = path
-        .metadata()
-        .map(|meta| {
-            meta.is_file() && meta.mode() & 0o111 != 0 && meta.uid() == unsafe { libc::geteuid() }
-        })
-        .unwrap_or(false)
-        || (path.starts_with("/Applications/")
-            && path
-                .metadata()
-                .map(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
-                .unwrap_or(false));
+    // Do not follow a user-controlled symlink into a different executable. Retain the
+    // metadata identity so a replacement during signature validation also fails closed.
+    let Ok(before) = path.symlink_metadata() else {
+        return false;
+    };
+    let permissions_ok = !before.file_type().is_symlink()
+        && before.is_file()
+        && before.mode() & 0o111 != 0
+        && (before.uid() == unsafe { libc::geteuid() } || path.starts_with("/Applications/"));
     if !permissions_ok {
         return false;
     }
-    let verified = Command::new("/usr/bin/codesign")
-        .args(["--verify", "--strict"])
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
-    if !verified {
+
+    if !code_satisfies_requirement(path, OPENAI_CODE_REQUIREMENT) {
         return false;
     }
-    Command::new("/usr/bin/codesign")
-        .args(["-dv", "--verbose=2"])
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map(|output| String::from_utf8_lossy(&output.stderr).contains("TeamIdentifier=2DC432GLL2"))
+
+    path.symlink_metadata()
+        .map(|after| {
+            !after.file_type().is_symlink()
+                && before.dev() == after.dev()
+                && before.ino() == after.ino()
+                && before.len() == after.len()
+                && before.mtime() == after.mtime()
+                && before.mtime_nsec() == after.mtime_nsec()
+        })
         .unwrap_or(false)
+}
+
+fn code_satisfies_requirement(path: &Path, requirement: &str) -> bool {
+    let Some(url) = core_foundation_code_signing::url::CFURL::from_path(path, false) else {
+        return false;
+    };
+    let Ok(code) = SecStaticCode::from_path(&url, Flags::NONE) else {
+        return false;
+    };
+    let Ok(requirement) = requirement.parse::<SecRequirement>() else {
+        return false;
+    };
+    code.check_validity(
+        Flags::CHECK_ALL_ARCHITECTURES | Flags::STRICT_VALIDATE,
+        &requirement,
+    )
+    .is_ok()
 }
 
 fn detect_runtime() -> Option<Runtime> {
@@ -153,7 +176,10 @@ impl RpcProcess {
     fn start(runtime: &Runtime, data_dir: &Path) -> Result<Self, String> {
         let codex_home = isolated_home(data_dir)?;
         let workspace = codex_home.join("workspace");
-        let mut child = Command::new(&runtime.executable)
+        // Runtime discovery is cached, so enforce the signature boundary again at the
+        // actual execution point before the isolated OAuth profile can be touched.
+        let mut command = runtime.command()?;
+        let mut child = command
             .args(["app-server", "--stdio"])
             .env("CODEX_HOME", &codex_home)
             .current_dir(workspace)
@@ -271,7 +297,8 @@ fn version(runtime: &Runtime) -> Option<String> {
     if let Some(value) = RUNTIME_VERSION.get() {
         return Some(value.clone());
     }
-    let mut child = Command::new(&runtime.executable)
+    let mut command = runtime.command().ok()?;
+    let mut child = command
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -571,6 +598,18 @@ pub fn plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn test_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "my-assistant-codex-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
 
     #[test]
     fn login_state_never_contains_account_identity() {
@@ -594,6 +633,64 @@ mod tests {
     fn detected_runtime_reports_a_codex_version() {
         if let Some(runtime) = detect_runtime() {
             assert!(version(&runtime).is_some());
+        }
+    }
+
+    #[test]
+    fn native_requirement_validation_accepts_apple_signed_code() {
+        assert!(code_satisfies_requirement(
+            Path::new("/usr/bin/true"),
+            "anchor apple"
+        ));
+    }
+
+    #[test]
+    fn ad_hoc_identifier_cannot_spoof_the_openai_team() {
+        let root = test_root("signature-spoof");
+        fs::create_dir_all(&root).unwrap();
+        let fake = root.join("codex");
+        fs::copy("/usr/bin/true", &fake).unwrap();
+        fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
+        let signed = Command::new("/usr/bin/codesign")
+            .args([
+                "--force",
+                "--sign",
+                "-",
+                "--identifier",
+                "TeamIdentifier=2DC432GLL2",
+            ])
+            .arg(&fake)
+            .status()
+            .unwrap();
+        assert!(signed.success());
+
+        let details = Command::new("/usr/bin/codesign")
+            .args(["-dv", "--verbose=2"])
+            .arg(&fake)
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&details.stderr).contains("TeamIdentifier=2DC432GLL2"),
+            "the fixture must reproduce the old substring-check bypass"
+        );
+        assert!(!is_executable(&fake));
+        assert!(Runtime {
+            executable: fake,
+            source: "test"
+        }
+        .command()
+        .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn installed_official_runtime_satisfies_the_openai_requirement() {
+        let candidates = [
+            Path::new("/Applications/ChatGPT.app/Contents/Resources/codex"),
+            Path::new("/Applications/Codex.app/Contents/Resources/codex"),
+        ];
+        for candidate in candidates.into_iter().filter(|path| path.is_file()) {
+            assert!(is_executable(candidate), "{}", candidate.display());
         }
     }
 

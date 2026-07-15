@@ -28,6 +28,7 @@ tauri-plugin-notification = "2"               # native meeting-start alerts, emi
 tauri-plugin-global-shortcut = "2"          # Carbon hotkey — needs NO Input Monitoring / Accessibility
 core-graphics = "0.23"                      # synth ⌘V (explicit Command flag) to paste — the proven CGEvent method
 core-foundation = "0.9"                     # CFRunLoop that services the bare-modifier event tap (Handy-style right-⌘/Option trigger)
+core-foundation-code-signing = { package = "core-foundation", version = "0.10" } # CFURL bridge for Security.framework's native code-signing validation
 macos-accessibility-client = "0.0.2"        # prompt for Accessibility under the app's own identity
 objc2 = "0.6.4"                             # typed Objective-C ownership for the native AppKit dictation panel
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData", "NSDictionary", "NSGeometry", "NSObject", "NSString", "NSURL"] }

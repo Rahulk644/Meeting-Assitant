@@ -5,7 +5,12 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ## Unreleased
 
-No user-visible changes are queued after beta.2.
+### Security
+
+- Replaced the external Codex runtime's spoofable signature-text check with a native Security.framework
+  requirement anchored to Apple, the `codex` identifier, OpenAI's Developer ID certificate, and Team ID
+  `2DC432GLL2`. Cached runtime paths are revalidated immediately before every process launch; symlinks and
+  files replaced during validation fail closed.
 
 ## [0.1.0-beta.2] - 2026-07-15
 

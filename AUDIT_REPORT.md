@@ -2,16 +2,31 @@
 
 **Audit date:** 15 July 2026
 
-**Scope:** Apple-silicon macOS beta; verified production artifact built from current `codex/agent-actions` source
+**Scope:** Apple-silicon macOS beta; verified production artifact built from the then-current
+`codex/agent-actions` source, plus the dated source correction below
 
-**Decision:** suitable for a small, explicitly informed beta group; not a general public release
+**Decision:** corrected source is suitable for a small, explicitly informed beta group after a new release
+build; the beta.2 artifact is held from new distribution
 
 This is the release-evidence snapshot. It is intentionally not a chronological work log and is not a
 formal third-party penetration test or a promise of zero defects. Product visibility remains governed by
 [`PRODUCT_RELEASE_MATRIX.md`](PRODUCT_RELEASE_MATRIX.md); the compaction-safe handoff is
 [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md).
 
-## Sendable artifact
+### Post-audit security correction — 16 July 2026
+
+A review of the real shipping Rust found that beta.2's external Codex trust check combined ordinary
+`codesign` validation with a spoofable Team-ID text search. Current `codex/agent-actions` source replaces it
+with Security.framework validation of the `codex` identifier, Apple trust anchor, Developer ID certificate,
+and OpenAI Team ID `2DC432GLL2`; it also rejects symlinks, detects replacement during validation, and
+revalidates cached paths before every spawn. The regression reproduces the prior ad-hoc identifier spoof and
+proves it is rejected; the installed official runtime remains accepted. Rust fmt, check, warnings-denied
+Clippy, 44/44 Rust tests, and 33/33 Node tests pass.
+
+The artifact below predates that correction. Preserve its evidence as a historical release snapshot, but do
+not newly distribute it. A new immutable DMG must complete the release pipeline before it becomes sendable.
+
+## Superseded beta.2 artifact
 
 | Item | Verified value |
 |---|---|
@@ -22,7 +37,7 @@ formal third-party penetration test or a promise of zero defects. Product visibi
 | Target | Apple Silicon, macOS 14.4+ |
 | Signing | stable self-signed `My Assistant Dev`, hardened runtime, no Team ID/notarization |
 
-This is the latest verified sendable production build. It contains the signed preview-only Agent action
+This was the last fully verified production build before the security correction. It contains the signed preview-only Agent action
 helper, but the production contract disables draft preview, Apply/Undo, and the Agent shortcut; do not present
 the helper's presence as evidence that those features ship. The DMG checksum and
 `hdiutil verify` pass. A read-only mount contains `My Assistant.app`, an Applications
@@ -144,8 +159,9 @@ Additional release checks passed:
 - Provider keys use Keychain and are excluded from JSON, WebView state, logs, temporary files, arguments,
   and child configuration. Startup settings do not decrypt credentials; explicit provider use reads a key at
   most once per process and keeps the reusable copy only in volatile process memory.
-- Agent compute settings are allowlisted and secret-free. The external Codex path requires a strict OpenAI
-  Team-ID signature check, uses a private isolated profile, supports documented logout, and is never bundled.
+- Agent compute settings are allowlisted and secret-free. Current source requires the Apple-anchored native
+  OpenAI Codex signature check described above, uses a private isolated profile, supports documented logout,
+  and never bundles Codex. The beta.2 artifact predates that anchored check and is held from distribution.
 - Custom remote LLM endpoints require HTTPS; loopback HTTP is allowed for local runtimes.
 - Model installation verifies exact byte size and SHA-256 before owner-only atomic rename/use.
 - Saved meetings and transient audio use owner-only paths; recording names, byte ranges, request sizes,

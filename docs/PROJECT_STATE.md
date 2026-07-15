@@ -1,6 +1,6 @@
 # Project state
 
-**Current as of:** 15 July 2026
+**Current as of:** 16 July 2026
 
 **Canonical repository:** `/Users/rahulkhatri/Meeting-Assitant`
 
@@ -105,16 +105,22 @@ macOS Keychain.
   verified; a rollback that cannot be proven is surfaced as urgent. A single prior value stays in Rust memory
   for at most five minutes and is restored only if the applied value is unchanged. Draft/original text never
   enters process arguments or logs.
-- External Codex is accepted only from standard installed locations after strict signature verification of
-  OpenAI Team ID `2DC432GLL2`. It is not touched during ordinary app launch: opening Agents with the
+- External Codex is accepted only from standard installed locations after native Security.framework
+  validation of its `codex` identifier, Apple trust anchor, Developer ID certificate, and OpenAI Team ID
+  `2DC432GLL2`. Cached paths are revalidated immediately before every spawn; symlinks and files replaced
+  during validation fail closed. It is not touched during ordinary app launch: opening Agents with the
   ChatGPT · Codex lane selected triggers on-demand status, isolated device-code sign-in/out, model discovery,
   or a preview. Login polling cannot create competing processes, and no Codex process remains resident afterward.
 
 ## Release status
 
-The latest automated-verified **production** artifact is
+The last fully automated-verified **production** artifact is
 `desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.2_arm64.dmg` (14,759,965 bytes), SHA-256
 `ace262ed08930aca9206378ee1617f72befe72c0af2248100e0fdc35224acc5a`. The app bundle is 28,704 KiB.
+That artifact predates the 16 July anchored Codex signature correction and is held from new distribution.
+The current branch rejects the former ad-hoc Team-ID substring spoof, accepts the official installed runtime,
+and passes 44/44 Rust tests plus fmt, check, warnings-denied Clippy, and 33/33 Node tests. Build a new immutable
+DMG and rerun the release pipeline before restoring sendable status.
 After the packaged launch settled, the app plus the two meeting helpers measured about 38 MiB aggregate
 physical footprint and 44,736 KiB aggregate RSS; the on-demand Agent helpers were not resident and no
 app-owned Speech, LLM, or Codex process was resident. That artifact's release gate was 33/33 Node tests,
@@ -125,7 +131,8 @@ The DMG passed checksum and deep signature verification, carries the production 
 capability-gated Translation/Agent-compute payload, contains no Codex, Node, model, benchmark, transcript, or source artifact, launched
 successfully, kept unauthenticated loopback access at 401, and rejected a forged Host at 403.
 
-The artifact matches current `codex/agent-actions` source. Its main executable is arm64 UUID
+The artifact matched `codex/agent-actions` at build time but no longer matches current source after the
+security correction. Its main executable is arm64 UUID
 `CD4A10B1-EC33-3702-B2FC-D86A40D82328`, SHA-256
 `1e42a14b0b0e6e2baa27b311a4554b2b6221d6a7bdd20b96a5ede5463e081dfa`. It launched from the exact
 read-only DMG mount, rendered the production capability contract, defaulted a clean Agent compute profile to
@@ -146,9 +153,10 @@ was the source of the observed macOS reopen/crash loop. Its evidence was capture
 were removed after the final candidate passed; `/Applications/My Assistant.app` is now the only installed copy.
 Never infer test identity from the display name alone.
 
-This is suitable for a small explicitly informed beta group, subject to the documented **Privacy & Security
-→ Open Anyway** installation flow. The physical Right-Command matrix and real two-person meeting matrix below
-remain human acceptance work; do not describe the beta as zero-bug or notarized.
+The corrected source remains a small-beta candidate, but beta.2 is not the current sendable artifact. A newly
+verified build will remain subject to the documented **Privacy & Security → Open Anyway** installation flow.
+The physical Right-Command matrix and real two-person meeting matrix below remain human acceptance work; do
+not describe the beta as zero-bug or notarized.
 
 Rebuild and remeasure after any native/helper change; do not send an older artifact merely because it exists.
 The beta has no Apple Developer ID, so current macOS recipients must attempt launch and use **Privacy &
@@ -157,33 +165,35 @@ background updates cannot be made trustworthy until a separate updater signing-k
 
 ## Known release blockers and follow-ups
 
-1. Add bounded audio recovery checkpoints; transcript recovery exists, but an utterance in flight during a
+1. Build and verify a new immutable DMG containing the anchored Codex runtime validation; do not newly
+   distribute beta.2.
+2. Add bounded audio recovery checkpoints; transcript recovery exists, but an utterance in flight during a
    hard crash can still be lost.
-2. Add a user-triggered, redacted diagnostic archive and support ID.
-3. Complete the physical Right-Command rapid-toggle/cancel/failure/focus/full-screen/multi-display acceptance
+3. Add a user-triggered, redacted diagnostic archive and support ID.
+4. Complete the physical Right-Command rapid-toggle/cancel/failure/focus/full-screen/multi-display acceptance
    session defined in `acceptance/cases.json`; automation and synthetic key events are not evidence.
-4. Add explicit per-meeting Off / Transcript / Audio / Video choice and complete the real two-person
+5. Add explicit per-meeting Off / Transcript / Audio / Video choice and complete the real two-person
    platform/version acceptance matrix for every advertised native/browser/chat adapter.
-5. Generate a dependency SBOM and complete third-party notice packaging.
-6. Add signed update manifests only after an offline update-key and rollback design is documented and tested.
-7. Complete quality evidence without blocking user choice: real café/wind/traffic recordings, long-form
+6. Generate a dependency SBOM and complete third-party notice packaging.
+7. Add signed update manifests only after an offline update-key and rollback design is documented and tested.
+8. Complete quality evidence without blocking user choice: real café/wind/traffic recordings, long-form
    fixtures, a physical model switch matrix, and representative RAM/latency/thermal measurements. Keep
    Whisper Large v3 Turbo as the recommended default; never market proxy WER as human Hinglish accuracy.
-8. Add and benchmark macOS 26 SpeechAnalyzer as an optional system Speech adapter, retain the local catalog
+9. Add and benchmark macOS 26 SpeechAnalyzer as an optional system Speech adapter, retain the local catalog
    fallback, and separate future cloud Speech providers from meeting-note Intelligence providers.
-9. Add an in-app local Intelligence install/status/remove flow; until then, clean beta testers use BYOK for
+10. Add an in-app local Intelligence install/status/remove flow; until then, clean beta testers use BYOK for
    meeting notes even though dictation and transcription remain fully local.
-10. Complete read-only Agent inspection/drafting across Gmail, Slack, LinkedIn, Docs, Notes, Slides, Terminal,
+11. Complete read-only Agent inspection/drafting across Gmail, Slack, LinkedIn, Docs, Notes, Slides, Terminal,
     secure/unsupported fields, permission recovery, prompt injection, providers, full-screen, and displays.
     Cursor Apply, selection replacement, app-switch/stale-state rejection, exact Undo, Undo-after-drift refusal,
     and unchanged-build Keychain authorization now pass on the packaged preview candidate. Still close physical
     global-shortcut, expiry/relaunch execution-state, secure/unsupported-target, packaged-helper residency,
     verified rollback, and urgent rollback-failure cases. Do not add another app adapter, Send, or multi-step
     mutation until those gates pass.
-11. Run the identical Porcupine, microWakeWord, and sherpa-onnx KWS wake-word suite. Adopt none until real
+12. Run the identical Porcupine, microWakeWord, and sherpa-onnx KWS wake-word suite. Adopt none until real
     accents/noise, false accepts, latency, CPU/RAM, energy, suspension, privacy, integration, and licensing
     gates pass.
-12. The verified work is a stacked draft-PR chain ahead of `main`: PR #1 `craft/cleanup-tests-docs`, PR #2
+13. The verified work is a stacked draft-PR chain ahead of `main`: PR #1 `craft/cleanup-tests-docs`, PR #2
     `codex/agent-context-foundation`, PR #3 `codex/agent-compute-providers`, then PR #4
     `codex/agent-actions`. Review and merge them in that order before treating the private repository's
     default branch or community profile as current OSS truth, then create the first tag and GitHub beta
