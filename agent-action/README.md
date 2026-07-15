@@ -17,9 +17,10 @@ bundle ID, exact window title, focused control role and label, complete value, c
 the snapshot fingerprint. The validation build refuses every non-TextEdit target. Within that disposable
 document it allows only settable, non-secure `AXTextField`, `AXTextArea`, `AXComboBox`, and `AXSearchField`
 targets, verifies the resulting value, returns a private undo record through stdout, and immediately exits.
-Because the current preview is an activating dashboard, the helper brings that exact captured TextEdit
-process forward before final revalidation and mutation; it never infers a target from whichever app happens
-to be behind My Assistant at Apply time.
+Because the current preview is an activating dashboard, the helper first checks the first ordinary on-screen
+window behind My Assistant and refuses the action unless it still belongs to the exact captured TextEdit
+process. It only then brings that process forward for final revalidation and mutation. Switching apps after
+preparing a preview therefore invalidates the proposal.
 
 If a target transforms a write, the helper attempts to restore and verify the complete original text and
 selection. A verified restoration is returned as `apply_rolled_back`; an unverified final state is returned

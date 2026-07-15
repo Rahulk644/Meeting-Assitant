@@ -105,12 +105,25 @@ The final artifact was built through `./script/build_release_dmg.sh`, which now 
 - full desktop npm audit: **0 vulnerabilities**;
 - optimized Tauri build, stable helper/app signing, DMG signing/layout/checksum verification.
 
-The newer `codex/agent-actions` source separately passes **31/31** Node tests, **38/38** Rust tests,
+The newer `codex/agent-actions` source separately passes **33/33** Node tests, **41/41** Rust tests,
 **3/3** acceptance-runner tests, warnings-denied Clippy, WebView asset preparation, and both Agent Swift
-self-tests. Its optimized 28,772 KiB preview `.app` passes strict deep signature verification, embeds both
-signed arm64 Agent helpers, and carries the preview release contract. It was not launched. Those checks were
-intentionally non-mutating. The physical packaged TextEdit isolation, Apply/Undo, rollback, and
-global-shortcut matrix remains open, so this source is not a new sendable artifact.
+self-tests. Its optimized 28,788 KiB preview `.app` passes strict deep signature verification, embeds both
+signed arm64 Agent helpers, and carries the preview release contract. The installed candidate (arm64 UUID
+`5414F90D-1230-35FC-9A9F-254DBD54E99A`, main-binary SHA-256
+`fa6cde1a6899394fac7259182c8e7e8c8a267191f2ef9fde90f9dafb2ef49218`) launched, quit normally,
+and relaunched without a new crash report. AGT-023 passed with private, hash-pinned
+evidence: three proposals and one model-list request produced no repeated Keychain prompt in one process, and
+the unchanged installed candidate reused the credential after relaunch with zero prompts. The physical
+packaged gate now passes cursor insertion, selection replacement, exact Undo, app-switch rejection, stale
+text/selection rejection, and Undo-after-user-edit refusal. Physical shortcut, expiry/relaunch execution
+state, secure/unsupported targets, packaged-helper residency, and instrumented rollback outcomes remain open,
+so this source is not a new sendable artifact.
+
+The macOS reopen/crash dialogs observed during this pass were traced to an older comparison binary with a
+different arm64 UUID that was still registered under the same bundle identifier in `/Applications`. Its
+evidence was captured, it was replaced, and the duplicate bundles were removed after the gate; the candidate
+itself did not create a new crash report during graceful quit/relaunch. Release QA must pin the binary
+UUID/hash rather than trusting the app name.
 
 Additional release checks passed:
 
@@ -132,7 +145,8 @@ Additional release checks passed:
 
 - Every local UI/API route requires a random per-launch secret exchanged for an HttpOnly SameSite cookie.
 - Provider keys use Keychain and are excluded from JSON, WebView state, logs, temporary files, arguments,
-  and child configuration.
+  and child configuration. Startup settings do not decrypt credentials; explicit provider use reads a key at
+  most once per process and keeps the reusable copy only in volatile process memory.
 - Agent compute settings are allowlisted and secret-free. The external Codex path requires a strict OpenAI
   Team-ID signature check, uses a private isolated profile, supports documented logout, and is never bundled.
 - Custom remote LLM endpoints require HTTPS; loopback HTTP is allowed for local runtimes.

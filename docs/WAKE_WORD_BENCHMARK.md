@@ -6,19 +6,24 @@ and uses only a dedicated, consented, non-private corpus.
 
 ## Candidate order
 
-1. **Porcupine** is the primary product candidate. It offers native macOS runtimes, on-device inference, and
-   custom wake words. It also requires a Picovoice AccessKey and applicable vendor/commercial terms. Those
-   terms and redistribution constraints must be approved before integration; a tester supplies their own
-   key outside Git and app settings.
-2. **microWakeWord** is the footprint control. It is an active Apache-2.0 TensorFlow training project used
+1. **sherpa-onnx keyword spotting** is the primary open-runtime candidate. It is actively maintained under
+   Apache-2.0, exposes C/C++ and Swift-friendly native APIs, supports Apple-silicon macOS, and has a
+   documented streaming keyword spotter. It needs no vendor account or AccessKey. The current v1.13.4
+   arm64 shared no-TTS library archive is 15.2 MB compressed; the unique extracted runtime libraries are
+   about 31.3 MB. A representative English INT8 KWS model set is about 5.3 MB when only the selected
+   encoder/decoder/joiner and tokenizer assets are installed. The official 19 MB model directory is larger
+   because it carries both INT8 and FP32 alternatives. Those are disk figures, not measured RSS.
+2. **Porcupine** is the proprietary footprint/accuracy control, not the default OSS integration. Its public
+   repository carries Apache-2.0, and its current macOS arm64 engine plus one language model and keyword is
+   roughly 1.3 MB. However, using the current SDK requires a Picovoice AccessKey that verifies account
+   limits, and Picovoice's current service terms include restrictions relevant to competitive products.
+   Do not ship it in the free/open core without an explicit legal/commercial decision; an opt-in benchmark
+   tester must supply their own key outside Git and app settings.
+3. **microWakeWord** is the footprint control. It is an active Apache-2.0 TensorFlow training project used
    by ESPHome/Home Assistant to produce small INT8 TFLite Micro wake-word models for constrained devices.
    That makes it the strongest modern open reference for minimum resource cost, but it is embedded-first:
    My Assistant would still need a maintained macOS audio/inference adapter and a properly licensed custom
    model. It is a benchmark control, not a ready Mac integration.
-3. **sherpa-onnx keyword spotting** is the desktop/open-runtime control. It is actively maintained under
-   Apache-2.0, exposes C/C++ and Swift-friendly native APIs, supports macOS, and has a documented streaming
-   keyword-spotter example. Its ONNX Runtime and representative 3.3M-parameter KWS model make it heavier
-   than the microWakeWord footprint target, and English thresholds/models require product-specific tuning.
 4. **openWakeWord** may be a research reference only. Its primary runtime is Python, included pretrained model
    licenses are separate from the Apache-2.0 code, and the small C++ port is archived and brings ONNX
    Runtime. It cannot become the default merely because its code is open.
@@ -26,11 +31,14 @@ and uses only a dedicated, consented, non-private corpus.
 Official references:
 
 - [Porcupine documentation](https://picovoice.ai/docs/porcupine/)
+- [Porcupine repository license](https://github.com/Picovoice/porcupine/blob/master/LICENSE)
 - [Picovoice terms](https://picovoice.ai/docs/terms-of-use/)
 - [microWakeWord](https://github.com/OHF-Voice/micro-wake-word)
 - [ESPHome microWakeWord runtime](https://esphome.io/components/micro_wake_word/)
 - [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
 - [sherpa-onnx keyword-spotter example](https://github.com/k2-fsa/sherpa-onnx/blob/master/python-api-examples/keyword-spotter.py)
+- [sherpa-onnx v1.13.4 macOS release assets](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.4)
+- [sherpa-onnx KWS model inventory](https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/index.html)
 - [openWakeWord](https://github.com/dscripka/openWakeWord)
 - [archived openWakeWord C++ port](https://github.com/rhasspy/openWakeWord-cpp)
 
@@ -95,15 +103,16 @@ speech, transcript content, AccessKeys, personal identifiers, or private screens
 
 ## Adoption decision
 
-Porcupine remains the leading product candidate. microWakeWord and sherpa-onnx replace Rustpotter as the
-modern open controls. Adoption requires all of the following:
+sherpa-onnx is the leading architectural candidate; Porcupine remains the small proprietary comparison and
+microWakeWord remains the embedded footprint control. All three replace Rustpotter in the current decision
+set. Adoption requires all of the following:
 
 - it beats or materially de-risks both the tiny-footprint and desktop-open controls on the real product
   corpus, or an open control wins outright;
 - product-approved false-accept, false-reject, latency, CPU, physical-memory, and energy budgets are met on
   the lowest supported Mac;
 - suspend/resume and privacy cases pass without a duplicate microphone stream or retained pre-wake audio;
-- the AccessKey UX and commercial/redistribution terms are acceptable for a free/open-source core;
+- any vendor AccessKey UX and commercial/redistribution terms are acceptable for a free/open-source core;
 - an uninstall/disable path removes the external adapter and credentials cleanly; and
 - the result is recorded in `PRODUCT_RELEASE_MATRIX.md` before any production capability is enabled.
 

@@ -37,6 +37,10 @@ const MAX_AUDIO_BODY: usize = 64 * 1024 * 1024;
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
 static LLM_HTTP: OnceLock<ureq::Agent> = OnceLock::new();
 static APP_ICONS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+// Provider credentials remain authoritative in Keychain. This process-local cache prevents every
+// proposal/model request from asking macOS to decrypt the same item again. It is never serialized,
+// logged, sent to the WebView, or inherited by a child process, and disappears when the app exits.
+static PROVIDER_KEY_CACHE: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
 
 #[derive(Clone)]
 pub struct ServerInfo {
@@ -1360,7 +1364,10 @@ fn ai_key_save(mut request: Request) {
         provider,
         key.as_bytes(),
     ) {
-        Ok(()) => json_response(request, 200, json!({"saved":true})),
+        Ok(()) => {
+            cache_provider_key(provider, key.as_bytes());
+            json_response(request, 200, json!({"saved":true}))
+        }
         Err(_) => json_response(
             request,
             500,
@@ -2197,18 +2204,27 @@ fn sanitize_model_setting(raw: &str, persist_secret: bool) -> Option<String> {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
         {
-            let _ = security_framework::passwords::set_generic_password(
+            if security_framework::passwords::set_generic_password(
                 KEYCHAIN_SERVICE,
                 &provider,
                 key.as_bytes(),
-            );
-            obj.insert("keySaved".into(), Value::Bool(true));
-        } else if keychain_key(&provider).is_some() {
-            obj.insert("keySaved".into(), Value::Bool(true));
+            )
+            .is_ok()
+            {
+                cache_provider_key(&provider, key.as_bytes());
+                obj.insert("keySaved".into(), Value::Bool(true));
+            }
         }
-    } else if keychain_key(&provider).is_some() {
-        obj.insert("keySaved".into(), Value::Bool(true));
     }
+    // `keySaved` is only a display hint. Never synchronously decrypt Keychain items while serving
+    // startup settings: macOS may wait for user interaction, which previously left the whole UI
+    // hidden behind the boot screen. Explicit provider tests and inference still read Keychain and
+    // remain the authoritative checks.
+    let key_saved = obj
+        .get("keySaved")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    obj.insert("keySaved".into(), Value::Bool(key_saved));
     obj.insert("key".into(), Value::String(String::new()));
     Some(value.to_string())
 }
@@ -2250,6 +2266,10 @@ fn sanitize_agent_compute_setting(raw: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| matches!(*value, "default" | "friendly" | "pragmatic"))
         .unwrap_or("pragmatic");
+    let api_key_saved = value
+        .get("apiKeySaved")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     Some(
         json!({
             "lane":lane,
@@ -2257,7 +2277,9 @@ fn sanitize_agent_compute_setting(raw: &str) -> Option<String> {
             "apiBase":api_base,
             "apiModel":api_model,
             "apiEffort":api_effort,
-            "apiKeySaved":keychain_key(provider).is_some(),
+            // This is a non-authoritative UI hint. The explicit provider-model and Agent-plan
+            // endpoints verify the Keychain item when the user asks them to use it.
+            "apiKeySaved":api_key_saved,
             "model":model,
             "effort":effort,
             "personality":personality,
@@ -2267,11 +2289,45 @@ fn sanitize_agent_compute_setting(raw: &str) -> Option<String> {
     )
 }
 
-fn keychain_key(account: &str) -> Option<String> {
-    security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, account)
+fn cached_provider_key_with<F>(
+    cache: &Mutex<HashMap<String, Vec<u8>>>,
+    account: &str,
+    loader: F,
+) -> Option<String>
+where
+    F: FnOnce() -> Option<Vec<u8>>,
+{
+    // Keep the per-process cache locked during the first Keychain load. Provider requests can
+    // overlap; releasing the lock between the miss and the load would allow two requests to show
+    // two authorization prompts before either one cached the credential.
+    let mut keys = cache.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(bytes) = keys.get(account).cloned() {
+        return String::from_utf8(bytes)
+            .ok()
+            .filter(|value| !value.is_empty());
+    }
+    let bytes = loader()?;
+    let value = String::from_utf8(bytes.clone())
         .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .filter(|s| !s.is_empty())
+        .filter(|value| !value.is_empty())?;
+    keys.insert(account.to_string(), bytes);
+    Some(value)
+}
+
+fn cache_provider_key(account: &str, key: &[u8]) {
+    PROVIDER_KEY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(account.to_string(), key.to_vec());
+}
+
+fn keychain_key(account: &str) -> Option<String> {
+    cached_provider_key_with(
+        PROVIDER_KEY_CACHE.get_or_init(|| Mutex::new(HashMap::new())),
+        account,
+        || security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, account).ok(),
+    )
 }
 
 fn save_settings(cfg: &Config, settings: &HashMap<String, String>) -> Result<(), String> {
@@ -4643,6 +4699,65 @@ mod tests {
     }
 
     #[test]
+    fn provider_key_is_decrypted_only_once_per_app_session() {
+        use std::cell::Cell;
+
+        let cache = Mutex::new(HashMap::new());
+        let loads = Cell::new(0_u8);
+        let first = cached_provider_key_with(&cache, "custom", || {
+            loads.set(loads.get() + 1);
+            Some(b"private-test-key".to_vec())
+        });
+        let second = cached_provider_key_with(&cache, "custom", || {
+            loads.set(loads.get() + 1);
+            Some(b"must-not-be-read".to_vec())
+        });
+
+        assert_eq!(first.as_deref(), Some("private-test-key"));
+        assert_eq!(second.as_deref(), Some("private-test-key"));
+        assert_eq!(loads.get(), 1);
+    }
+
+    #[test]
+    fn overlapping_provider_requests_share_one_keychain_read() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+        use std::time::Duration;
+
+        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let loads = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(Barrier::new(3));
+        let mut workers = Vec::new();
+
+        for _ in 0..2 {
+            let cache = Arc::clone(&cache);
+            let loads = Arc::clone(&loads);
+            let start = Arc::clone(&start);
+            workers.push(thread::spawn(move || {
+                start.wait();
+                cached_provider_key_with(&cache, "custom", || {
+                    loads.fetch_add(1, Ordering::SeqCst);
+                    thread::sleep(Duration::from_millis(25));
+                    Some(b"private-test-key".to_vec())
+                })
+            }));
+        }
+
+        start.wait();
+        for worker in workers {
+            assert_eq!(
+                worker
+                    .join()
+                    .expect("provider worker should finish")
+                    .as_deref(),
+                Some("private-test-key")
+            );
+        }
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn agent_compute_settings_are_allowlisted_and_secret_free() {
         let raw = json!({
             "lane":"api",
@@ -4650,6 +4765,7 @@ mod tests {
             "apiModel":"example-model",
             "apiEffort":"impossible",
             "maxOutput":99_999,
+            "apiKeySaved":true,
             "key":"must-not-survive",
             "accessToken":"must-not-survive",
             "unexpected":{"nested":"value"}
@@ -4660,6 +4776,10 @@ mod tests {
         assert_eq!(value.get("lane").and_then(Value::as_str), Some("api"));
         assert_eq!(value.get("apiEffort").and_then(Value::as_str), Some("auto"));
         assert_eq!(value.get("maxOutput").and_then(Value::as_u64), Some(4_000));
+        assert_eq!(
+            value.get("apiKeySaved").and_then(Value::as_bool),
+            Some(true)
+        );
         assert!(value.get("key").is_none());
         assert!(value.get("accessToken").is_none());
         assert!(value.get("unexpected").is_none());

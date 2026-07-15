@@ -42,9 +42,10 @@ planner can return `draft_text`, `replace_selection`, or `none`; the Rust server
 bounded proposal and always forces confirmation. The model has no execution tool. Only a separate click on
 **Apply draft** may invoke `agent-action`. In the validation build, Rust creates an executable proposal only
 for a disposable TextEdit document. The short-lived Swift helper resolves the exact captured TextEdit
-process instead of guessing which app is behind My Assistant, brings that process forward, then rechecks the
-bundle, window, focused role, label, full text, and selection fingerprint before changing the field. The UI
-names the target app/window/control before Apply. Process identity and the private state fingerprint are
+process and requires the first ordinary on-screen window behind My Assistant to still belong to that exact
+process. It only then brings TextEdit forward and rechecks the bundle, window, focused role, label, full
+text, and selection fingerprint before changing the field. Switching apps after preview fails closed. The
+UI names the target app/window/control before Apply. Process identity and the private state fingerprint are
 removed from the model prompt and never exposed to the browser. Other apps remain available for read-only
 inspection and draft generation but receive no Apply control. There is no Send, Return, click,
 shell, file, search, network-tool, or multi-step mutation path.
@@ -98,7 +99,8 @@ change invalidates the prior snapshot.
 
 The current single-field milestone is narrower: request-local `el_N` identifiers cannot outlive the
 one-shot inspector process, so `agent-action` supports only the field that remained focused behind My
-Assistant. Its cryptographic fingerprint binds role, label, complete current value, cursor, and selection.
+Assistant. The external-window check prevents it from silently returning to that older field after the user
+switches apps. Its cryptographic fingerprint binds role, label, complete current value, cursor, and selection.
 This is intentional; persistent multi-element references require a future native session architecture, not
 an unsafe attempt to reuse dead AX objects.
 

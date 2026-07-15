@@ -67,9 +67,16 @@ guarded one-step Undo in an explicitly disposable TextEdit document. Gmail, Slac
 Slides, Terminal, and every other app are read-only in this phase and must never render Apply. Every TextEdit
 Apply must visibly name the app/window/control, bind the exact captured process, prove fresh-state
 revalidation, and verify the final output. Stale targets, non-TextEdit targets, secure fields, unsupported
-controls, edited-after-Apply Undo, expired state, and relaunch must fail closed. Unexpected writes must either
+controls, switching to another app before Apply, changed text or selection, edited-after-Apply Undo, expired
+state, and relaunch must fail closed. Unexpected writes must either
 restore and verify the original text and selection or produce an urgent unverified-state warning. Send,
 Return, click, and multi-step actions remain nonexistent.
+
+Keychain authorization has its own packaged case. Save one disposable provider key in an unchanged signed
+build, exercise repeated model loads and proposals, close/reopen the window, and relaunch once. Count prompts
+without recording the password or key. Repeated requests in one app session must use the process-only cache;
+an unchanged build must respect macOS **Always Allow** across relaunches. Re-signing a developer build changes
+the test subject and is recorded separately rather than presented as normal update behavior.
 
 ## Wake-word benchmark
 

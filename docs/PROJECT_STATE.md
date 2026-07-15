@@ -92,7 +92,9 @@ macOS Keychain.
   Parakeet, Nemotron, and Oriserve fail closed in both the UI and Rust service.
 - Native transcription keeps valid partial text when a model reaches its output limit, reports truncation,
   and guarantees valid UTF-8 JSON.
-- API keys never belong in JSON, SQLite, logs, process arguments, temporary files, or WebView state.
+- API keys never belong in JSON, SQLite, logs, process arguments, temporary files, or WebView state. Startup
+  settings never decrypt Keychain items. An explicit provider request reads the credential at most once per
+  app process, holds it only in process memory, and reuses that copy until quit.
 - Agent context is captured only after an explicit user request, bounded by node/depth/child/time limits,
   uses opaque request-local element IDs, and redacts secure fields. Inspection alone is neither persisted nor
   sent to a provider. A preview request explicitly sends the instruction and fresh bounded snapshot only to
@@ -123,13 +125,26 @@ The DMG passed checksum and deep signature verification, carries the production 
 capability-gated Translation/Agent-compute payload, contains no Codex, Node, model, benchmark, transcript, or source artifact, launched
 successfully, kept unauthenticated loopback access at 401, and rejected a forged Host at 403.
 
-Current `codex/agent-actions` source is newer than that DMG. Its non-mutating verification is 31/31 Node
-tests, 38/38 Rust tests, 3/3 acceptance-runner tests, warnings-denied Clippy, valid release WebView assets,
-and passing `agent-context` and `agent-action` self-tests. An optimized 28,772 KiB preview `.app` also passes
-strict deep signature verification, contains both signed arm64 Agent helpers, and carries the preview release
-contract. It was verified without launching. The preview helper is process-bound and TextEdit-only, but its
-physical packaged acceptance matrix is still open. Do not distribute the older DMG as evidence of the new
-Agent action code, and do not enable `agentActions` in production.
+Current `codex/agent-actions` source is newer than that DMG. Its verification is 33/33 Node tests, 41/41 Rust
+tests, 3/3 acceptance-runner tests, warnings-denied Clippy, valid release WebView assets, and passing
+`agent-context` and `agent-action` self-tests. The optimized 28,788 KiB preview `.app` passes strict deep
+signature verification, contains both signed arm64 Agent helpers, and carries the preview release contract.
+The final installed candidate is arm64 UUID `5414F90D-1230-35FC-9A9F-254DBD54E99A` with main-binary
+SHA-256 `fa6cde1a6899394fac7259182c8e7e8c8a267191f2ef9fde90f9dafb2ef49218`. It launched, quit
+cleanly, and relaunched without a new crash report.
+AGT-023 passed: three proposals plus model discovery reused one process-only credential copy, and the unchanged
+installed candidate accessed the same disposable Keychain item after relaunch with zero authorization dialogs.
+The controlled packaged TextEdit gate also passes cursor insertion, selection replacement, exact Undo,
+app-switch rejection, stale text/selection rejection, and Undo-after-user-edit refusal (AGT-015/016/017/019/020).
+The preview helper remains process-bound and TextEdit-only. Physical shortcut acceptance, expiry/relaunch
+execution-state checks, non-TextEdit/secure-field breadth, and instrumented rollback outcomes remain open.
+Do not distribute the older DMG as evidence of the new Agent action code, and do not enable `agentActions`
+in production.
+
+An older comparison build formerly present at `/Applications/My Assistant.app` had a different arm64 UUID and
+was the source of the observed macOS reopen/crash loop. Its evidence was captured and the duplicate bundles
+were removed after the final candidate passed; `/Applications/My Assistant.app` is now the only installed copy.
+Never infer test identity from the display name alone.
 
 This is suitable for a small explicitly informed beta group, subject to the documented **Privacy & Security
 → Open Anyway** installation flow. The physical Right-Command matrix and real two-person meeting matrix below
@@ -160,9 +175,11 @@ background updates cannot be made trustworthy until a separate updater signing-k
    meeting notes even though dictation and transcription remain fully local.
 10. Complete read-only Agent inspection/drafting across Gmail, Slack, LinkedIn, Docs, Notes, Slides, Terminal,
     secure/unsupported fields, permission recovery, prompt injection, providers, full-screen, and displays.
-    Separately pass TextEdit-only exact-process, stale-target, verified Apply, verified rollback, urgent
-    rollback-failure, guarded Undo, relaunch, and packaged-helper cases. Physically accept the preview global
-    shortcut. Do not add another app adapter, Send, or multi-step mutation until those gates pass.
+    Cursor Apply, selection replacement, app-switch/stale-state rejection, exact Undo, Undo-after-drift refusal,
+    and unchanged-build Keychain authorization now pass on the packaged preview candidate. Still close physical
+    global-shortcut, expiry/relaunch execution-state, secure/unsupported-target, packaged-helper residency,
+    verified rollback, and urgent rollback-failure cases. Do not add another app adapter, Send, or multi-step
+    mutation until those gates pass.
 11. Run the identical Porcupine, microWakeWord, and sherpa-onnx KWS wake-word suite. Adopt none until real
     accents/noise, false accepts, latency, CPU/RAM, energy, suspension, privacy, integration, and licensing
     gates pass.
@@ -179,8 +196,8 @@ background updates cannot be made trustworthy until a separate updater signing-k
 3. Run `./script/prepare_web_assets.sh` before desktop checks/builds.
 4. Use `./script/build_release_dmg.sh` as the release gate; it owns Node, benchmark, Rust format/Clippy/check/test,
    native helper, dependency audit, signing, build, and DMG verification.
-5. Launch only the absolute repo-built app path during testing. `/Applications/My Assistant.app` may be an
-   older comparison build.
+5. Pin the exact candidate UUID/hash before launch. The repo bundle and `/Applications/My Assistant.app` may
+   otherwise refer to different builds with the same bundle identifier and display name.
 6. Update this state page and the release matrix when product truth changes; keep historical detail in Git
    and user-facing changes in `CHANGELOG.md`.
 

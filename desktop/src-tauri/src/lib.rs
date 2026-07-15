@@ -937,9 +937,42 @@ fn shortcut_from_spec(spec: &HotkeySpec) -> Option<tauri_plugin_global_shortcut:
     (!mods.is_empty() && spec.modifier.is_empty()).then(|| Shortcut::new(Some(mods), code))
 }
 
+const OPEN_AGENTS_SCRIPT: &str = "window.__myAssistantOpenAgents?.()";
+
+fn open_agents_from_shortcut(window: tauri::WebviewWindow) {
+    let main_window = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        if let Ok(pointer) = main_window.ns_window() {
+            use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+
+            // A hidden app window normally stays attached to its previous Space. For a global
+            // Agent shortcut that is unsafe: the context inspector would see the app behind that
+            // old window instead of the app where the shortcut was pressed. Move this window to
+            // the currently active Space before it becomes key, and never combine the mutually
+            // exclusive CanJoinAllSpaces and MoveToActiveSpace behaviors.
+            let native_window: &NSWindow = unsafe { &*pointer.cast() };
+            let mut behavior = native_window.collectionBehavior();
+            behavior.remove(NSWindowCollectionBehavior::CanJoinAllSpaces);
+            behavior.insert(NSWindowCollectionBehavior::MoveToActiveSpace);
+            native_window.setCollectionBehavior(behavior);
+        }
+
+        // Route once while hidden and again after focus. The direct window function remains
+        // reliable when WKWebView has throttled a hidden page; a one-shot CustomEvent could be
+        // missed while restoring the window.
+        let _ = main_window.eval(OPEN_AGENTS_SCRIPT);
+        let _ = main_window.show();
+        let _ = main_window.unminimize();
+        let _ = main_window.set_focus();
+        let _ = main_window.eval(OPEN_AGENTS_SCRIPT);
+    });
+}
+
 #[tauri::command]
 fn set_agent_shortcut(app: AppHandle, spec: Option<HotkeySpec>) -> Result<(), String> {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    log::info!("agent: global shortcut configuration requested");
     let global = app.global_shortcut();
     let Some(spec) = spec else {
         if let Some(previous) = AGENT_HOTKEY
@@ -949,6 +982,7 @@ fn set_agent_shortcut(app: AppHandle, spec: Option<HotkeySpec>) -> Result<(), St
         {
             let _ = global.unregister(previous);
         }
+        log::info!("agent: global shortcut cleared");
         return Ok(());
     };
     let shortcut = shortcut_from_spec(&spec).ok_or_else(|| {
@@ -960,22 +994,21 @@ fn set_agent_shortcut(app: AppHandle, spec: Option<HotkeySpec>) -> Result<(), St
         .as_ref()
         == Some(&shortcut)
     {
+        log::info!("agent: requested global shortcut is already registered");
         return Ok(());
     }
-    global
-        .on_shortcut(shortcut, |app, _shortcut, event| {
-            if event.state != ShortcutState::Pressed {
-                return;
-            }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-                let _ = window
-                    .eval("window.dispatchEvent(new CustomEvent('my-assistant-agent-shortcut'))");
-            }
-        })
-        .map_err(|error| format!("Agent shortcut could not be registered: {error}"))?;
+    if let Err(error) = global.on_shortcut(shortcut, |app, _shortcut, event| {
+        if event.state != ShortcutState::Pressed {
+            return;
+        }
+        log::info!("agent: global shortcut pressed");
+        if let Some(window) = app.get_webview_window("main") {
+            open_agents_from_shortcut(window);
+        }
+    }) {
+        log::error!("agent: global shortcut registration failed: {error}");
+        return Err(format!("Agent shortcut could not be registered: {error}"));
+    }
     let mut current = AGENT_HOTKEY
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -984,6 +1017,7 @@ fn set_agent_shortcut(app: AppHandle, spec: Option<HotkeySpec>) -> Result<(), St
             let _ = global.unregister(previous);
         }
     }
+    log::info!("agent: global shortcut registered");
     Ok(())
 }
 
@@ -1497,5 +1531,10 @@ mod tests {
             ..Default::default()
         })
         .is_none());
+    }
+
+    #[test]
+    fn agent_shortcut_routes_through_the_durable_webview_entrypoint() {
+        assert_eq!(OPEN_AGENTS_SCRIPT, "window.__myAssistantOpenAgents?.()");
     }
 }

@@ -2259,7 +2259,14 @@ function initAgents(){
   if(draftButton&&draftResult&&hasCap('agentDraftPreview'))draftButton.onclick=async()=>{ const instruction=$('#agentDraftInput').value.trim(); if(!instruction)return toast('Describe the draft first.'); draftButton.disabled=true; draftButton.textContent='Preparing…'; draftResult.hidden=true; try{ const response=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Preview failed'); renderAgentDraft(result.preview||{},result); }catch(error){draftResult.replaceChildren(el('b','','Preview unavailable'),el('div','why',String(error.message||error)));draftResult.hidden=false}finally{draftButton.disabled=false;draftButton.textContent='Prepare preview'} };
   renderAgentCompute();
 }
-window.addEventListener('my-assistant-agent-shortcut',()=>{ setView('agents'); setTimeout(()=>{ const target=$('#agentDraftInput')||$('#agentInspect'); target?.focus(); },40); });
+function openAgentsFromShortcut(){
+  setView('agents');
+  const focusRequest=()=>{ const target=$('#agentDraftInput')||$('#agentInspect'); target?.focus(); };
+  requestAnimationFrame(focusRequest);
+  setTimeout(focusRequest,40);
+}
+window.__myAssistantOpenAgents=openAgentsFromShortcut;
+window.addEventListener('my-assistant-agent-shortcut',openAgentsFromShortcut);
 
 /* ---------- boot ---------- */
 async function boot(){
@@ -2270,7 +2277,9 @@ async function boot(){
   syncAgentShortcut();
   setView((()=>{try{const r=localStorage.getItem('route');return safeView((r&&TITLES[r])?r:'meetings')}catch{return 'meetings'}})());
   mtShow('library');
-  if(inTauri() && store.get('stealth',false)) setStealth(true);
+  // Apply both sides on every fresh native window. Only applying the true case can leave a
+  // recreated/restored window protected even though the persisted preference is off.
+  if(inTauri()) setStealth(store.get('stealth',false));
   setVideoMode(store.get('videoMode','off'));
   setLanguage(store.get('language','auto'));
   // Translation is capability-gated again after the model catalog loads; the Rust server also fails closed

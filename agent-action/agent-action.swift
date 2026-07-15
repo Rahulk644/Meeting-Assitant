@@ -14,6 +14,7 @@ import Foundation
 
 private let maximumTextLength = 64_000
 private let allowedPreviewBundleId = "com.apple.TextEdit"
+private let dashboardBundleId = "com.myassistant.desktop"
 
 private struct ExpectedTarget: Codable {
     let bundleId: String
@@ -164,6 +165,53 @@ private enum TargetResolution {
     case failure(ActionResponse)
 }
 
+private func isActionGateWindow(
+    ownerPID: Int32,
+    layer: Int,
+    alpha: Double,
+    bounds: CGRect,
+    bundleId: String?,
+    isRegularApp: Bool
+) -> Bool {
+    ownerPID > 0
+        && ownerPID != getpid()
+        && layer == 0
+        && alpha > 0
+        && bounds.width >= 80
+        && bounds.height >= 60
+        && bundleId != dashboardBundleId
+        && isRegularApp
+}
+
+private func appBehindDashboardProcessIdentifier() -> Int32? {
+    guard let windows = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements],
+        kCGNullWindowID
+    ) as? [[String: Any]] else { return nil }
+
+    for window in windows {
+        guard let ownerNumber = window[kCGWindowOwnerPID as String] as? NSNumber else { continue }
+        let ownerPID = ownerNumber.int32Value
+        let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
+        let alpha = (window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+        var bounds = CGRect.zero
+        guard let boundsDictionary = window[kCGWindowBounds as String] as? NSDictionary,
+              CGRectMakeWithDictionaryRepresentation(boundsDictionary, &bounds),
+              let app = NSRunningApplication(processIdentifier: ownerPID),
+              !app.isTerminated,
+              isActionGateWindow(
+                  ownerPID: ownerPID,
+                  layer: layer,
+                  alpha: alpha,
+                  bounds: bounds,
+                  bundleId: app.bundleIdentifier,
+                  isRegularApp: app.activationPolicy == .regular
+              ) else { continue }
+        return ownerPID
+    }
+    return nil
+}
+
 private func resolveTarget(_ expected: ExpectedTarget, requireOriginalFingerprint: Bool) -> TargetResolution {
     guard AXIsProcessTrusted() else { return .failure(failure("permission_required", "Accessibility permission is required.")) }
     guard expected.bundleId == allowedPreviewBundleId else {
@@ -178,9 +226,15 @@ private func resolveTarget(_ expected: ExpectedTarget, requireOriginalFingerprin
           app.bundleIdentifier == expected.bundleId else {
         return .failure(failure("stale_target", "The exact target app process is no longer available. Prepare the draft again."))
     }
-    // The current experiment is launched from the activating dashboard rather than the future non-activating
-    // native preview surface. Bring the expected target app forward so rich editors such as
-    // TextEdit accept their selected-text Accessibility mutation and the user sees the result immediately.
+    // The dashboard necessarily becomes frontmost when its Apply button is clicked. Resolve the first
+    // ordinary on-screen window behind it before activating anything: it must still belong to the exact
+    // captured TextEdit process. This makes an intervening app switch fail closed instead of silently
+    // returning to an older target.
+    guard appBehindDashboardProcessIdentifier() == app.processIdentifier else {
+        return .failure(failure("stale_target", "Another app was opened after this preview. Prepare the draft again."))
+    }
+    // Bring the already revalidated target forward so rich editors such as TextEdit accept their
+    // selected-text Accessibility mutation and the user sees the result immediately.
     guard app.activate(options: []) else {
         return .failure(failure("activation_failed", "The target app could not be brought forward safely."))
     }
@@ -463,6 +517,30 @@ private func selfTest() -> Bool {
         && mutationDisposition(original: "before", expected: "after", actual: "before") == .unchanged
         && mutationDisposition(original: "before", expected: "after", actual: nil) == .unreadable
         && mutationDisposition(original: "before", expected: "after", actual: "changed") == .unexpected("changed")
+        && isActionGateWindow(
+            ownerPID: 42,
+            layer: 0,
+            alpha: 1,
+            bounds: CGRect(x: 0, y: 0, width: 800, height: 600),
+            bundleId: allowedPreviewBundleId,
+            isRegularApp: true
+        )
+        && !isActionGateWindow(
+            ownerPID: 42,
+            layer: 0,
+            alpha: 1,
+            bounds: CGRect(x: 0, y: 0, width: 800, height: 600),
+            bundleId: dashboardBundleId,
+            isRegularApp: true
+        )
+        && !isActionGateWindow(
+            ownerPID: 42,
+            layer: 0,
+            alpha: 1,
+            bounds: CGRect(x: 0, y: 0, width: 800, height: 600),
+            bundleId: "com.example.accessibility-helper",
+            isRegularApp: false
+        )
 }
 
 if CommandLine.arguments.contains("--selftest") {

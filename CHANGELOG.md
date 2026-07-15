@@ -90,6 +90,15 @@ versions will use semantic versioning once the first public beta tag is cut.
   loops while retaining valid partial speech.
 - ChatGPT device-code status polling no longer starts competing Codex processes against the active login
   flow; verified runtime detection and version metadata are cached for the app process.
+- Provider settings no longer decrypt Keychain credentials during startup. Explicit provider use performs
+  one serialized Keychain read per app process—even when requests overlap—and reuses only a volatile
+  process-memory copy, preventing repeated authorization dialogs and hidden-window startup stalls.
+- The preview Agent shortcut now moves the dashboard to the active Space, routes through a durable WebView
+  entry point, and focuses the request field after hidden-window restoration.
+- Preview TextEdit Apply now rejects a proposal if another ordinary app was opened behind the dashboard
+  after capture; stale text and selection checks remain exact and fail closed.
+- A recreated native window now reapplies both enabled and disabled screen-share privacy state instead of
+  retaining stale protection from a previous window.
 
 ### Security
 

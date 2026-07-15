@@ -64,6 +64,18 @@ test("external Codex detection is lazy and lane-specific", () => {
   assert.doesNotMatch(initAgents, /refreshAgentRuntime\(\)/, "app boot must not probe Codex unconditionally");
 });
 
+test("packaged Agent shortcut has a durable route and focus entrypoint", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.match(html, /window\.__myAssistantOpenAgents=openAgentsFromShortcut/);
+  assert.match(html, /setView\('agents'\)/);
+  assert.match(html, /target\?\.focus\(\)/);
+});
+
+test("screen-share privacy is deterministically restored on every native boot", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.match(html, /if\(inTauri\(\)\) setStealth\(store\.get\('stealth',false\)\)/);
+});
+
 test("preview Agent actions remain TextEdit-isolated and report unknown final state honestly", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   assert.match(html, /Target: /);
