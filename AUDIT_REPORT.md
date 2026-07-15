@@ -166,7 +166,9 @@ no claim that executable code is impossible to reverse engineer.
     protocol; do not adopt any engine before privacy, accuracy, resource, energy, suspension, integration,
     and licensing evidence passes.
 11. Review and merge the stacked draft PR chain into the default branch, then create the first signed/tagged
-    GitHub beta release. The repository is still private and has no tag or GitHub release.
+    GitHub beta release. The current order is PR #1 cleanup/release baseline, PR #2 read-only Agent context,
+    PR #3 Agent compute providers, then PR #4 isolated TextEdit actions. The repository is still private and
+    has no tag or GitHub release.
 
 Until the physical matrices close, describe Dictation as the primary beta and Meetings as Beta—never as
 zero-bug, notarized, or universally verified.

@@ -166,9 +166,11 @@ background updates cannot be made trustworthy until a separate updater signing-k
 11. Run the identical Porcupine, microWakeWord, and sherpa-onnx KWS wake-word suite. Adopt none until real
     accents/noise, false accepts, latency, CPU/RAM, energy, suspension, privacy, integration, and licensing
     gates pass.
-12. The verified work is a stacked branch chain ahead of `main`; review and merge the open draft PRs in
-    dependency order before treating the private repository's default branch or community profile as current
-    OSS truth, then create the first tag and GitHub beta release.
+12. The verified work is a stacked draft-PR chain ahead of `main`: PR #1 `craft/cleanup-tests-docs`, PR #2
+    `codex/agent-context-foundation`, PR #3 `codex/agent-compute-providers`, then PR #4
+    `codex/agent-actions`. Review and merge them in that order before treating the private repository's
+    default branch or community profile as current OSS truth, then create the first tag and GitHub beta
+    release.
 
 ## Resume protocol
 
