@@ -232,6 +232,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .agent-preview-input{width:100%;min-height:78px;resize:vertical;margin-top:14px}
   .agent-preview-box{margin-top:14px;padding:14px;border-radius:12px;background:var(--surface-2)}
   .agent-preview-box b{display:block;font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}
+  .agent-preview-box .target{font-size:11.5px;font-weight:620;line-height:1.45;color:var(--ink);margin-top:8px;overflow-wrap:anywhere}
   .agent-preview-box .draft{font-size:13px;line-height:1.55;color:var(--ink);white-space:pre-wrap;margin-top:7px}
   .agent-preview-box .why{font-size:11.5px;line-height:1.45;color:var(--ink-2);margin-top:8px}
   @media(max-width:760px){.agent-status{grid-template-columns:1fr}.agent-grid{grid-template-columns:1fr}}
@@ -741,11 +742,11 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
         <div class="agent-head"><div>
           <div class="agent-kicker"><i></i>Foundation preview</div>
           <div class="h1">Say what you need. Keep your flow.</div>
-          <div class="lead" style="max-width:590px">Agents will understand the app in front of you, draft the right change, and let you stay in control. The first native context layer is ready to inspect; actions are deliberately off.</div>
+          <div class="lead" id="agentHeroCopy" style="max-width:590px">Agents understand the app in front of you and prepare a draft while you stay in control. Production remains read-only while the guarded action experiment is tested.</div>
         </div></div>
         <div class="agent-status" aria-label="Agent foundation status">
           <div class="agent-stat"><small>Screen context</small><b><i></i>On demand</b></div>
-          <div class="agent-stat muted"><small>Computer actions</small><b><i></i>Read-only</b></div>
+          <div class="agent-stat muted" id="agentActionStatus"><small>Computer actions</small><b><i></i>Read-only</b></div>
           <div class="agent-stat muted"><small>Wake phrase</small><b><i></i>Not enabled</b></div>
         </div>
         <div class="agent-grid">
@@ -782,8 +783,8 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
             <div class="agent-compute-body" id="agentComputeBody" aria-live="polite"></div>
           </div>
           <div class="agent-card wide" id="agentPreviewCard" hidden>
-            <h3>Read-only draft experiment</h3>
-            <p>Describe a draft for the app behind My Assistant. The model receives one bounded Accessibility snapshot and can only return a preview—there is no Apply or Send action.</p>
+            <h3 id="agentDraftHeading">Read-only draft experiment</h3>
+            <p id="agentDraftCopy">Describe a draft for the app behind My Assistant. The model receives one bounded Accessibility snapshot and can only return a preview.</p>
             <textarea class="inp agent-preview-input" id="agentDraftInput" maxlength="2000" placeholder="For example: Reply that Friday works, keep it warm, and do not send."></textarea>
             <div class="agent-action"><button class="obtn solid" id="agentDraftButton">Prepare preview</button><div class="agent-privacy">Fresh context is captured on click. Screen text is treated as untrusted data.</div></div>
             <div class="agent-preview-box" id="agentDraftResult" hidden aria-live="polite"></div>
@@ -2163,11 +2164,56 @@ function renderAgentCompute(){
   grid.append(agentField('Reasoning effort',agentSelect(efforts,cfg.effort||modelInfo?.defaultReasoningEffort||efforts[0].value,value=>setAgentCompute({effort:value}))));
   const personalities=modelInfo?.supportsPersonality===false?[{value:'default',label:'Model default'}]:[{value:'pragmatic',label:'Pragmatic'},{value:'friendly',label:'Friendly'},{value:'default',label:'Model default'}];
   grid.append(agentField('Response personality',agentSelect(personalities,cfg.personality||'pragmatic',value=>setAgentCompute({personality:value}))));
-  grid.append(agentField('Action policy',agentSelect([{value:'readOnly',label:'Read-only preview'}],'readOnly',()=>{}))); const foot=el('div','agent-action'),logout=el('button','abtn','Sign out of Codex'); logout.type='button'; logout.onclick=async()=>{logout.disabled=true;try{const response=await fetch('/api/agent/compute/logout',{method:'POST'});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not sign out');agentRuntimeStatus=null;await refreshAgentRuntime();toast('Signed out of the isolated Codex profile.')}catch(error){toast(String(error.message||error));logout.disabled=false}}; foot.append(logout,el('div','agent-privacy','Models and effort choices come live from model/list for this account. The experiment uses no shell, file, network-search, or computer-action tools and returns structured preview text only.')); body.append(grid,foot);
+  const actionEnabled=hasCap('agentActions');
+  grid.append(agentField('Action policy',agentSelect(actionEnabled?[{value:'confirm',label:'Preview, then confirm'}]:[{value:'readOnly',label:'Read-only preview'}],actionEnabled?'confirm':'readOnly',()=>{}))); const foot=el('div','agent-action'),logout=el('button','abtn','Sign out of Codex'); logout.type='button'; logout.onclick=async()=>{logout.disabled=true;try{const response=await fetch('/api/agent/compute/logout',{method:'POST'});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not sign out');agentRuntimeStatus=null;await refreshAgentRuntime();toast('Signed out of the isolated Codex profile.')}catch(error){toast(String(error.message||error));logout.disabled=false}}; foot.append(logout,el('div','agent-privacy',actionEnabled?'Models and effort choices come live from model/list. The model can prepare text only. During validation, Apply is restricted to the exact captured disposable TextEdit process; Send is never available.':'Models and effort choices come live from model/list for this account. The experiment uses no shell, file, network-search, or computer-action tools and returns structured preview text only.')); body.append(grid,foot);
 }
 function ensureAgentRuntime(){ if(!hasCap('agentComputeConfig')||agentComputeCfg().lane!=='chatgpt'||agentRuntimeStatus||agentRuntimeLoading)return; refreshAgentRuntime(); }
 async function refreshAgentRuntime(){ agentRuntimeLoading=true; renderAgentCompute(); try{ const response=await fetch('/api/agent/compute/status'); agentRuntimeStatus=await response.json(); }catch(error){agentRuntimeStatus={installed:false,error:String(error)}} finally{agentRuntimeLoading=false;renderAgentCompute()} }
 async function startAgentLogin(){ try{ const response=await fetch('/api/agent/compute/login',{method:'POST'}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Sign-in could not start'); agentRuntimeStatus=Object.assign(agentRuntimeStatus||{}, {login:result}); renderAgentCompute(); const timer=setInterval(async()=>{await refreshAgentRuntime(); const state=agentRuntimeStatus?.login?.status; if(agentRuntimeStatus?.signedIn||state==='complete'||state==='error')clearInterval(timer)},2500); setTimeout(()=>clearInterval(timer),185000); }catch(error){toast(String(error.message||error))} }
+
+function agentTargetDescription(target){
+  if(!target)return 'No explicit target';
+  const app=target.appName||target.bundleId||'Unknown app',windowTitle=target.windowTitle?(' — '+target.windowTitle):'',control=[target.focusedRole,target.focusedLabel].filter(Boolean).join(' · ');
+  return app+windowTitle+(control?' · '+control:'');
+}
+function agentResponseError(payload,fallback){ const error=new Error(payload?.error||fallback); error.status=payload?.status||''; return error; }
+function renderAgentDraft(preview,result){
+  const box=$('#agentDraftResult'); if(!box)return;
+  box.replaceChildren(el('b','',preview.action==='none'?'No safe draft':'Draft preview'));
+  box.append(el('div','target','Target: '+agentTargetDescription(result.target)));
+  if(preview.action==='none'){
+    box.append(el('div','draft',preview.text||'No text proposed.'),el('div','why',preview.explanation||'Nothing was applied.'));
+    if(result.actionBlockedReason)box.append(el('div','why',result.actionBlockedReason));
+    box.hidden=false; return;
+  }
+  const blockReason=result.actionBlockedReason||'',canApply=hasCap('agentActions')&&Boolean(result.proposalId)&&!blockReason,draft=el('textarea','inp agent-preview-input');
+  draft.maxLength=64000; draft.value=preview.text||''; draft.setAttribute('aria-label','Agent draft text');
+  if(!canApply)draft.readOnly=true;
+  box.append(draft,el('div','why',preview.explanation||(canApply?'Review the text, confirm the named target above, then choose Apply draft.':'Read-only preview. Nothing was applied.')));
+  if(blockReason)box.append(el('div','why',blockReason));
+  if(canApply){
+    const actions=el('div','agent-action'),applyButton=el('button','obtn solid','Apply draft'),cancelButton=el('button','obtn','Cancel');
+    applyButton.type='button'; cancelButton.type='button';
+    cancelButton.onclick=()=>{ box.hidden=true; box.replaceChildren(); };
+    applyButton.onclick=async()=>{
+      const text=draft.value; if(!text.trim())return toast('The draft cannot be empty.');
+      applyButton.disabled=true; cancelButton.disabled=true; applyButton.textContent='Revalidating…';
+      try{
+        const response=await fetch('/api/agent/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({proposalId:result.proposalId,confirmed:true,text})});
+        const applied=await response.json(); if(!response.ok)throw agentResponseError(applied,'The draft could not be applied.');
+        const undoButton=el('button','obtn','Undo'); undoButton.type='button';
+        undoButton.onclick=async()=>{
+          undoButton.disabled=true; undoButton.textContent='Checking…';
+          try{const undoResponse=await fetch('/api/agent/undo',{method:'POST'});const undone=await undoResponse.json();if(!undoResponse.ok)throw agentResponseError(undone,'Undo did not complete.');box.replaceChildren(el('b','','Undone and verified'),el('div','why','The previous TextEdit value and selection were restored and verified.'));}
+          catch(error){const urgent=error.status==='verification_failed';box.replaceChildren(el('b','',urgent?'Check TextEdit immediately':error.status==='undo_rolled_back'?'Undo rolled back':'Undo did not complete'),el('div','why',String(error.message||error)),el('div','why',urgent?'The helper could not prove the final field state. No further action will run.':'The applied text remains in place unless the message above confirms a rollback.'));}
+        };
+        box.replaceChildren(el('b','','Applied and verified'),el('div','why','Only the reviewed text was inserted into the named disposable TextEdit document. TextEdit is now in front; nothing was sent or submitted.'),undoButton);
+      }catch(error){const urgent=error.status==='verification_failed',rolledBack=error.status==='apply_rolled_back';box.replaceChildren(el('b','',urgent?'Check TextEdit immediately':rolledBack?'Apply rolled back':'Apply did not complete'),el('div','why',String(error.message||error)),el('div','why',urgent?'The helper could not prove the final field state. No further action will run.':rolledBack?'The original text and selection were restored and verified.':'Prepare a fresh draft after confirming the intended disposable TextEdit document.'));}
+    };
+    actions.append(applyButton,cancelButton); box.append(actions);
+  }
+  box.hidden=false;
+}
 
 function initAgents(){
   const button=$('#agentInspect'), result=$('#agentResult');
@@ -2203,8 +2249,14 @@ function initAgents(){
   };
   const compute=$('#agentComputeCard'); if(compute)compute.hidden=!hasCap('agentComputeConfig');
   const previewCard=$('#agentPreviewCard'),draftButton=$('#agentDraftButton'),draftResult=$('#agentDraftResult');
+  if(hasCap('agentActions')){
+    $('#agentHeroCopy').textContent='Agents understand the app in front of you and prepare the right text. During validation, confirmed Apply is isolated to a disposable TextEdit document; every other app remains read-only.';
+    const actionStatus=$('#agentActionStatus'); actionStatus.classList.remove('muted'); actionStatus.querySelector('b').lastChild.textContent='TextEdit only';
+    $('#agentDraftHeading').textContent='Guarded text action';
+    $('#agentDraftCopy').textContent='Describe the change for the app behind My Assistant. Every app can produce a read-only draft; only a named disposable TextEdit document can show Apply. The exact process and field are rechecked before editing.';
+  }
   if(previewCard)previewCard.hidden=!hasCap('agentDraftPreview');
-  if(draftButton&&draftResult&&hasCap('agentDraftPreview'))draftButton.onclick=async()=>{ const instruction=$('#agentDraftInput').value.trim(); if(!instruction)return toast('Describe the draft first.'); draftButton.disabled=true; draftButton.textContent='Preparing…'; draftResult.hidden=true; try{ const response=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Preview failed'); const preview=result.preview||{}; draftResult.replaceChildren(el('b','',preview.action==='none'?'No safe draft':'Draft preview'),el('div','draft',preview.text||'No text proposed.'),el('div','why',preview.explanation||'Read-only preview. Nothing was applied.')); draftResult.hidden=false; }catch(error){draftResult.replaceChildren(el('b','','Preview unavailable'),el('div','why',String(error.message||error)));draftResult.hidden=false}finally{draftButton.disabled=false;draftButton.textContent='Prepare preview'} };
+  if(draftButton&&draftResult&&hasCap('agentDraftPreview'))draftButton.onclick=async()=>{ const instruction=$('#agentDraftInput').value.trim(); if(!instruction)return toast('Describe the draft first.'); draftButton.disabled=true; draftButton.textContent='Preparing…'; draftResult.hidden=true; try{ const response=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Preview failed'); renderAgentDraft(result.preview||{},result); }catch(error){draftResult.replaceChildren(el('b','','Preview unavailable'),el('div','why',String(error.message||error)));draftResult.hidden=false}finally{draftButton.disabled=false;draftButton.textContent='Prepare preview'} };
   renderAgentCompute();
 }
 window.addEventListener('my-assistant-agent-shortcut',()=>{ setView('agents'); setTimeout(()=>{ const target=$('#agentDraftInput')||$('#agentInspect'); target?.focus(); },40); });

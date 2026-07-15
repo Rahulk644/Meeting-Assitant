@@ -18,7 +18,7 @@ an instruction against screen context, may use tools, and must verify that the i
 
 ## Current product truth
 
-The first foundation is deliberately read-only:
+The production foundation is deliberately read-only:
 
 - the Agents view is visible and labels itself **Foundation preview**;
 - **Inspect app behind My Assistant** invokes `agent-context/agent-context` once and the helper exits;
@@ -37,11 +37,26 @@ The production Agents view also exposes compute **configuration**, not autonomou
   signature, starts it only on demand with an isolated app-owned `CODEX_HOME`, and obtains account-visible
   model, reasoning-effort, and personality support from Codex App Server.
 
-The structured draft planner and configurable global shortcut are preview-only. A preview can return
-`draft_text`, `replace_selection`, or `none`, but the native server reduces every result to a bounded display
-object and forces confirmation. There is no Apply, Send, click, shell, file, search, network-tool, or AX
-mutation path. API-provider network access is limited to the explicitly selected model request; the Codex
-experiment uses a restricted read-only sandbox with no readable roots or tools.
+The structured draft planner, guarded text executor, and configurable global shortcut are preview-only. A
+planner can return `draft_text`, `replace_selection`, or `none`; the Rust server reduces every result to a
+bounded proposal and always forces confirmation. The model has no execution tool. Only a separate click on
+**Apply draft** may invoke `agent-action`. In the validation build, Rust creates an executable proposal only
+for a disposable TextEdit document. The short-lived Swift helper resolves the exact captured TextEdit
+process instead of guessing which app is behind My Assistant, brings that process forward, then rechecks the
+bundle, window, focused role, label, full text, and selection fingerprint before changing the field. The UI
+names the target app/window/control before Apply. Process identity and the private state fingerprint are
+removed from the model prompt and never exposed to the browser. Other apps remain available for read-only
+inspection and draft generation but receive no Apply control. There is no Send, Return, click,
+shell, file, search, network-tool, or multi-step mutation path.
+
+One Undo is kept in Rust memory for at most five minutes. It contains the prior bounded field value and is
+never written to disk, logs, process arguments, the browser, or a provider. Undo runs only when the same
+process/app/window/control still contains the exact applied value. State drift cancels before mutation. If
+an Accessibility write produces unexpected text, the helper restores and verifies the complete original
+text and selection. A rollback that cannot be proven is an urgent `verification_failed` state, never a safe
+cancellation. Proposals expire after two minutes and are single-use even when Apply fails. API-provider
+network access remains limited to the selected model request; the Codex experiment uses a restricted
+sandbox with no readable roots or tools.
 
 The current helper is an on-demand native Swift resource. It adds no idle process or idle RAM. The Rust
 loopback service enforces a 1.5-second process deadline and 256 KiB output ceiling. The helper itself targets
@@ -74,11 +89,18 @@ typed plan → policy gate → user preview/confirmation → native executor
 fresh observation verifies the result
 ```
 
-The model never receives live AX object pointers and never invents an Accessibility path. It returns a
+The model never receives live AX object pointers and never invents an Accessibility path. Longer-lived,
+multi-target plans will return a
 typed intent such as `replace_selection`, `set_value`, `invoke`, or `open_url` referencing
 `{snapshot_id, element_id}`. Before mutation, the executor verifies that the snapshot is still current, the
 same app/window is active, the target is enabled and appropriate, and the field is not secure. Any screen
 change invalidates the prior snapshot.
+
+The current single-field milestone is narrower: request-local `el_N` identifiers cannot outlive the
+one-shot inspector process, so `agent-action` supports only the field that remained focused behind My
+Assistant. Its cryptographic fingerprint binds role, label, complete current value, cursor, and selection.
+This is intentional; persistent multi-element references require a future native session architecture, not
+an unsafe attempt to reuse dead AX objects.
 
 Screen text is untrusted data. Web pages, documents, emails, and chats can contain instructions intended to
 hijack an agent. Context must be delimited as untrusted; it cannot override system policy, user intent,
@@ -132,18 +154,21 @@ Required contract:
 - measured incremental CPU, physical footprint, battery drain, false accepts, and false rejects on supported
   Macs before enabling it by default.
 
-Porcupine is the primary candidate because it is native, on-device, supports custom wake words, and the
+Porcupine is the primary product candidate because it is native, on-device, supports custom wake words, and the
 vendor publishes a small embedded footprint. It is **not** in the app: current use requires a Picovoice
 AccessKey and the commercial/redistribution terms must be accepted for the actual product. Vendor accuracy
 and resource claims are inputs to our benchmark, not My Assistant evidence.
 
-Rustpotter is the first lightweight control because it is pure Rust, Apache-2.0, and has sub-4 MB model
-options, but its own maintainer does not describe it as production-grade. `dscripka/openWakeWord` remains a
-useful Apache-2.0 code/training reference; its included pretrained models have separate non-commercial
-terms and its primary runtime is Python. `rhasspy/openWakeWord-cpp` is archived and expects ONNX Runtime.
-The identical opt-in corpus must compare Porcupine and Rustpotter across real accents/noise, false accepts,
-latency, CPU, physical footprint, energy, suspension behavior, integration maturity, and licensing before
-an engine is selected. Apple does not expose a general third-party Siri-style wake-word API.
+Rustpotter is no longer the control because its maintenance and production maturity do not match this
+product. `OHF-Voice/micro-wake-word` is the modern tiny-footprint control: active, Apache-2.0, used through
+ESPHome/Home Assistant, and designed to emit INT8 TFLite Micro models for constrained hardware. It is
+embedded-first, however, so a Mac adapter and licensed custom model remain real integration work.
+`k2-fsa/sherpa-onnx` keyword spotting is the maintained desktop/open-runtime control: Apache-2.0, native
+C/C++ with macOS support, and a documented streaming KWS path, but larger and model/threshold sensitive.
+`dscripka/openWakeWord` remains a training reference only because its primary runtime is Python and bundled
+model terms differ from the code. The identical opt-in corpus must compare Porcupine, microWakeWord, and
+sherpa-onnx across real accents/noise, false accepts, latency, CPU, physical footprint, energy, suspension,
+integration maturity, and licensing. Apple does not expose a general third-party Siri-style wake-word API.
 
 The complete evidence contract is [`WAKE_WORD_BENCHMARK.md`](WAKE_WORD_BENCHMARK.md) and the machine-readable
 cases are in `acceptance/cases.json`.
@@ -194,19 +219,22 @@ These projects informed the contracts above; no source code was copied into My A
 
 ## Ordered implementation
 
-1. Complete the read-only matrix across Gmail, Slack, LinkedIn, Google Docs, Apple Notes, Google Slides,
-   Terminal, secure fields, full-screen, multiple displays, and permission denial/recovery using only
-   synthetic/test-account content.
+1. Complete read-only inspection and drafting across Gmail, Slack, LinkedIn, Google Docs, Apple Notes,
+   Google Slides, Terminal, secure fields, full-screen, multiple displays, and permission denial/recovery
+   using only synthetic/test-account content. Run mutation acceptance only in explicitly disposable TextEdit
+   documents; never in an operator's real inbox, chatbox, document, or terminal.
 2. Physically verify the preview global shortcut across conflicts, relaunch, hidden-window focus, Spaces,
    and multiple displays; then replace the dashboard request box with a native non-activating Listening →
    Understanding → Preview surface.
 3. Exercise both API-key and ChatGPT account planners across provider failures, model capability changes,
-   prompt injection, output truncation, and stale snapshots. Keep all results display-only.
-4. Implement one native draft/replace/undo executor with snapshot revalidation, field-type policy, explicit
-   preview, fresh-result verification, and no submit controls.
+   prompt injection, output truncation, stale snapshots, edited previews, exact process binding, verified
+   TextEdit Apply, verified rollback, unverified rollback warning, and guarded Undo.
+4. Keep TextEdit draft/replace/undo as the only mutation allowlist entry until the complete packaged matrix
+   passes. Add each future app adapter through its own synthetic mutation acceptance gate; do not add Send,
+   Return, click, or multi-step skills early.
 5. Add OCR and app-specific adapters only where the Accessibility acceptance matrix proves a gap, then add a
    separately permissioned screenshot/vision fallback only if those adapters remain insufficient.
-6. Run the Porcupine-versus-Rustpotter opt-in wake benchmark; adopt neither until privacy, accuracy,
-   CPU/RAM, energy, suspension, and licensing gates pass.
+6. Run the identical Porcupine, microWakeWord, and sherpa-onnx opt-in wake benchmark; adopt none until
+   privacy, accuracy, CPU/RAM, energy, suspension, integration, and licensing gates pass.
 7. Expand to governed multi-step skills, audit history, and team/cloud capabilities only after the
    single-action contract is reliable.

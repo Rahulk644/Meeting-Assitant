@@ -2,8 +2,9 @@
 
 A native macOS window (Rust + the OS WebView) around the Meetings UI. A **release build is self-contained**:
 the authenticated UI/API server runs inside the Rust app process, which starts the gated capturer and
-`meeting-state` directly and cleans them up on quit. Agents context uses a third native helper that runs only
-for one explicit inspection and exits. No Node runtime or Node process is shipped. The native
+`meeting-state` directly and cleans them up on quit. Agents use two short-lived native helpers: one bounded
+read-only context inspection and one preview-only, explicitly confirmed text Apply/Undo boundary. Both exit
+after one request. No Node runtime or Node process is shipped. The native
 transcription server starts only when speech needs transcription and unloads after the configured idle
 period, so it never holds the model in RAM indefinitely. The app also adds what a browser tab can't: a **menu-bar tray** (with an
 audio-wave recording indicator) and a **screen-share-invisible** window (`set_content_protected` →
@@ -33,7 +34,7 @@ meeting-window evidence, and speaker names, and Screen Recording only when video
 identity to pin, so TCC pins the raw **cdhash** — which changes on every rebuild, so the grant silently
 stops matching and the app re-prompts *forever* (the Settings toggle stays "on" but is dead). The cure is
 a **stable certificate**: `tauri.conf.json` sets `bundle.macOS.signingIdentity: "My Assistant Dev"`, and
-`setup.sh` signs the three native helpers (`meeting-tap`, `meeting-state`, `agent-context`) **with the same cert *and* the
+`setup.sh` signs the four native helpers (`meeting-tap`, `meeting-state`, `agent-context`, `agent-action`) **with the same cert *and* the
 app's identifier** (`com.myassistant.desktop`). That makes every binary's requirement
 `identifier "com.myassistant.desktop" and certificate leaf = …` — **cdhash-independent**, so grants
 survive rebuilds *and* the helpers ride the app's single grant instead of each demanding their own.

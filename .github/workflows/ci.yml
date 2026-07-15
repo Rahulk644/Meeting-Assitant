@@ -44,13 +44,16 @@ jobs:
           xcrun swiftc -O meeting-state/meeting-state.swift -o meeting-state/meeting-state \
             -framework AppKit -framework ApplicationServices
           xcrun swiftc -O agent-context/agent-context.swift -o agent-context/agent-context \
-            -framework AppKit -framework ApplicationServices -framework CoreGraphics
+            -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CryptoKit
+          xcrun swiftc -O agent-action/agent-action.swift -o agent-action/agent-action \
+            -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CryptoKit
           xcrun swiftc -O stt/meeting-tap.swift -o stt/meeting-tap \
             -framework CoreAudio -framework AudioToolbox -framework AVFoundation \
             -framework ScreenCaptureKit -framework CoreGraphics -framework CoreImage \
             -framework AppKit -framework ApplicationServices
           meeting-state/meeting-state --selftest
           agent-context/agent-context --selftest
+          agent-action/agent-action --selftest
           stt/meeting-tap --selftest
       - name: Stage compile-only transcription resource
         run: |

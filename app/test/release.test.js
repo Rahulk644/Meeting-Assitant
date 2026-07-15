@@ -63,3 +63,12 @@ test("external Codex detection is lazy and lane-specific", () => {
   const initAgents = html.slice(html.indexOf("function initAgents()"), html.indexOf("window.addEventListener('my-assistant-agent-shortcut'"));
   assert.doesNotMatch(initAgents, /refreshAgentRuntime\(\)/, "app boot must not probe Codex unconditionally");
 });
+
+test("preview Agent actions remain TextEdit-isolated and report unknown final state honestly", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.match(html, /Target: /);
+  assert.match(html, /result\.actionBlockedReason/);
+  assert.match(html, /verification_failed/);
+  assert.match(html, /exact captured disposable TextEdit process/);
+  assert.doesNotMatch(html, /Apply cancelled safely/);
+});

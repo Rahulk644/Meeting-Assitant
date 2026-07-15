@@ -41,7 +41,7 @@ echo "3/3  Building native helpers (Swift)…"
     -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework CoreImage \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist )
 ( cd "$ROOT/meeting-state" && swiftc -O meeting-state.swift -o meeting-state )
-( cd "$ROOT/agent-context" && swiftc -O agent-context.swift -o agent-context )
+bash "$ROOT/script/build_agent_helpers.sh"
 # TCC keys Screen-Recording / Mic / Accessibility grants on a process's SIGNING IDENTIFIER + code
 # requirement — NOT on who its parent is. These helpers are spawned children of the app, but each is its
 # own binary with its own identity, so the app's grant (identifier "com.myassistant.desktop") does NOT
@@ -57,6 +57,7 @@ if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
   codesign --force --options runtime --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/stt/meeting-tap"
   codesign --force --options runtime --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/meeting-state/meeting-state"
   codesign --force --options runtime --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/agent-context/agent-context"
+  codesign --force --options runtime --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/agent-action/agent-action"
   echo "     signed native helpers as '$APP_ID' with '$SIGN_ID' — they ride the app's TCC grants (no re-prompt)."
 else
   echo "     ⚠  Signing identity '$SIGN_ID' not found in your keychain. Falling back to ad-hoc —"
@@ -66,6 +67,7 @@ else
   codesign --force --options runtime --identifier "$APP_ID" --sign - "$ROOT/stt/meeting-tap"
   codesign --force --options runtime --identifier "$APP_ID" --sign - "$ROOT/meeting-state/meeting-state"
   codesign --force --options runtime --identifier "$APP_ID" --sign - "$ROOT/agent-context/agent-context"
+  codesign --force --options runtime --identifier "$APP_ID" --sign - "$ROOT/agent-action/agent-action"
 fi
 
 cat <<'EOF'

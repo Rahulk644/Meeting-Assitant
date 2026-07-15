@@ -10,10 +10,16 @@ and uses only a dedicated, consented, non-private corpus.
    custom wake words. It also requires a Picovoice AccessKey and applicable vendor/commercial terms. Those
    terms and redistribution constraints must be approved before integration; a tester supplies their own
    key outside Git and app settings.
-2. **Rustpotter** is the lightweight control. It is pure Rust under Apache-2.0 with published model sizes
-   from hundreds of kilobytes to a few megabytes. Its maintainer does not call it production-grade, so it is
-   a benchmark control, not a default recommendation.
-3. **openWakeWord** may be a research control only. Its primary runtime is Python, included pretrained model
+2. **microWakeWord** is the footprint control. It is an active Apache-2.0 TensorFlow training project used
+   by ESPHome/Home Assistant to produce small INT8 TFLite Micro wake-word models for constrained devices.
+   That makes it the strongest modern open reference for minimum resource cost, but it is embedded-first:
+   My Assistant would still need a maintained macOS audio/inference adapter and a properly licensed custom
+   model. It is a benchmark control, not a ready Mac integration.
+3. **sherpa-onnx keyword spotting** is the desktop/open-runtime control. It is actively maintained under
+   Apache-2.0, exposes C/C++ and Swift-friendly native APIs, supports macOS, and has a documented streaming
+   keyword-spotter example. Its ONNX Runtime and representative 3.3M-parameter KWS model make it heavier
+   than the microWakeWord footprint target, and English thresholds/models require product-specific tuning.
+4. **openWakeWord** may be a research reference only. Its primary runtime is Python, included pretrained model
    licenses are separate from the Apache-2.0 code, and the small C++ port is archived and brings ONNX
    Runtime. It cannot become the default merely because its code is open.
 
@@ -21,7 +27,10 @@ Official references:
 
 - [Porcupine documentation](https://picovoice.ai/docs/porcupine/)
 - [Picovoice terms](https://picovoice.ai/docs/terms-of-use/)
-- [Rustpotter](https://github.com/GiviMAD/rustpotter)
+- [microWakeWord](https://github.com/OHF-Voice/micro-wake-word)
+- [ESPHome microWakeWord runtime](https://esphome.io/components/micro_wake_word/)
+- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
+- [sherpa-onnx keyword-spotter example](https://github.com/k2-fsa/sherpa-onnx/blob/master/python-api-examples/keyword-spotter.py)
 - [openWakeWord](https://github.com/dscripka/openWakeWord)
 - [archived openWakeWord C++ port](https://github.com/rhasspy/openWakeWord-cpp)
 
@@ -86,9 +95,11 @@ speech, transcript content, AccessKeys, personal identifiers, or private screens
 
 ## Adoption decision
 
-Porcupine remains the leading candidate, but adoption requires all of the following:
+Porcupine remains the leading product candidate. microWakeWord and sherpa-onnx replace Rustpotter as the
+modern open controls. Adoption requires all of the following:
 
-- it beats or materially de-risks the lightweight control on the real product corpus;
+- it beats or materially de-risks both the tiny-footprint and desktop-open controls on the real product
+  corpus, or an open control wins outright;
 - product-approved false-accept, false-reject, latency, CPU, physical-memory, and energy budgets are met on
   the lowest supported Mac;
 - suspend/resume and privacy cases pass without a duplicate microphone stream or retained pre-wake audio;

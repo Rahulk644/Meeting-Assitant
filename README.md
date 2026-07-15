@@ -260,6 +260,7 @@ packaged `.app` gets its own. Flags pass through (`--app all`, `--mic off`, `--m
 | `app/index.html` | the UI — nav, live transcript, Library + detail (player), settings; light/dark |
 | `meeting-state/meeting-state.swift` | AX layer: speaker names + in-meeting / mute / share |
 | `agent-context/agent-context.swift` | On-demand, bounded, read-only AX snapshot for the Agents foundation |
+| `agent-action/agent-action.swift` | On-demand, preview-only confirmed text Apply/Undo with exact AX target revalidation |
 | `data/meetings/` | saved history + `rec/` screen recordings (git-ignored, on-device) |
 
 The optional on-device LLM (LiteRT-LM + Gemma 4 E2B) is installed by the source-only `setup.sh` into
@@ -328,7 +329,12 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 - [x] **Agents foundation and compute setup** — explicit on-demand, read-only Accessibility context plus Local,
   Keychain BYOK, and ChatGPT account/Codex configuration. The official Codex runtime is detected externally,
   verified, isolated, and started only on demand; it is not bundled in the DMG. Draft planning and the Agent
-  shortcut remain preview-only and cannot mutate another app.
+  shortcut remain preview-only.
+- [x] **Guarded Agent text-action foundation (preview)** — the model prepares text but cannot execute it;
+  Apply is a separate click and is currently restricted to the exact captured process of a named disposable
+  TextEdit document. The native helper revalidates and verifies one draft/selection edit or rolls it back,
+  and one exact-value Undo is kept only in memory. Other apps remain read-only. No Send, Return, click, or
+  multi-step action exists.
 
 **Next**
 
@@ -337,11 +343,13 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 - [ ] Measure every shipped speech model on representative Apple-silicon memory/latency/thermal profiles.
 - [ ] Add cloud Speech as a separate provider contract, beginning with Groq and OpenAI.
 - [ ] Add calendar sync and hardened platform adapters before Live Coach or cross-platform expansion.
-- [ ] Pass the synthetic Agent matrix across Gmail, Slack, LinkedIn, Docs, Notes, Slides, Terminal, secure
-  fields, prompt injection, provider failures, and the physical preview shortcut. Then build a native
-  draft/replace/undo executor with fresh-snapshot revalidation; keep Send and multi-step actions out.
-- [ ] Benchmark external Porcupine against lightweight Rustpotter with explicit opt-in, real accents/noise,
-  false-accept, latency, CPU/RAM, energy, suspension, privacy, and licensing evidence before adopting either.
+- [ ] Pass read-only inspection/drafting across Gmail, Slack, LinkedIn, Docs, Notes, Slides, and Terminal;
+  separately pass TextEdit-only Apply/Undo isolation, rollback, stale-target, and packaged-helper tests.
+  Add each future app adapter only after its own synthetic mutation matrix passes. Keep Send and multi-step
+  actions out until this one mutation class is reliable.
+- [ ] Benchmark external Porcupine, microWakeWord, and sherpa-onnx KWS with explicit opt-in, real
+  accents/noise, false-accept, latency, CPU/RAM, energy, suspension, privacy, integration, and licensing
+  evidence before adopting any engine.
 
 The ordered, compaction-safe backlog is maintained in
 [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md#known-release-blockers-and-follow-ups), not duplicated here.

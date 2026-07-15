@@ -30,6 +30,7 @@ const ORIGIN: &str = "http://127.0.0.1:8790";
 const STT_PORT: u16 = 8091;
 const LLM_PORT: u16 = 9379;
 const KEYCHAIN_SERVICE: &str = "com.myassistant.desktop.ai-provider";
+const AGENT_ACTION_PREVIEW_BUNDLE_ID: &str = "com.apple.TextEdit";
 const MAX_JSON_BODY: usize = 1_000_000;
 const MAX_AUDIO_BODY: usize = 64 * 1024 * 1024;
 
@@ -60,7 +61,23 @@ struct Config {
     models_dir: PathBuf,
     transcribe_bin: PathBuf,
     agent_context_bin: PathBuf,
+    agent_action_bin: PathBuf,
     meeting_notifier: Arc<dyn Fn(String) + Send + Sync>,
+}
+
+#[derive(Clone)]
+struct AgentProposal {
+    id: String,
+    created_at: u64,
+    action: String,
+    text: String,
+    expected: Value,
+}
+
+#[derive(Clone)]
+struct AgentUndo {
+    created_at: u64,
+    payload: Value,
 }
 
 struct State {
@@ -85,6 +102,8 @@ struct State {
     llm_last_used: Option<Instant>,
     finalize_generation: u64,
     meeting_last_checkpoint: Option<Instant>,
+    agent_proposal: Option<AgentProposal>,
+    agent_undo: Option<AgentUndo>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -409,6 +428,8 @@ pub fn start(
         llm_last_used: None,
         finalize_generation: 0,
         meeting_last_checkpoint: None,
+        agent_proposal: None,
+        agent_undo: None,
     };
     let res_base = PathBuf::from(res_base);
     let shared = Arc::new(Shared {
@@ -422,6 +443,7 @@ pub fn start(
             models_dir,
             transcribe_bin: res_base.join("stt/transcribe-server/transcribe-server"),
             agent_context_bin: res_base.join("agent-context/agent-context"),
+            agent_action_bin: res_base.join("agent-action/agent-action"),
             meeting_notifier,
         },
         state: Mutex::new(state),
@@ -626,30 +648,61 @@ fn read_bounded<R: Read>(mut reader: R, limit: usize) -> std::io::Result<(Vec<u8
     }
 }
 
-fn capture_agent_context(binary: &Path) -> Result<Value, String> {
+fn run_native_json(
+    binary: &Path,
+    argument: &str,
+    input: Option<&Value>,
+    label: &str,
+    timeout: Duration,
+) -> Result<Value, String> {
     if !binary.is_file() {
-        return Err("The native screen-context helper is missing from this build.".into());
+        return Err(format!(
+            "The native {label} helper is missing from this build."
+        ));
     }
-    let mut child = Command::new(binary)
-        .arg("--once")
-        .stdin(Stdio::null())
+    let mut command = Command::new(binary);
+    command
+        .arg(argument)
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
         .spawn()
-        .map_err(|error| format!("Screen context could not start: {error}"))?;
+        .map_err(|error| format!("{label} could not start: {error}"))?;
+    if let Some(value) = input {
+        let write_result = child.stdin.take().map_or_else(
+            || Err(format!("{label} stdin was unavailable.")),
+            |mut stdin| {
+                serde_json::to_writer(&mut stdin, value)
+                    .map_err(|error| format!("{label} request could not be written: {error}"))?;
+                stdin
+                    .flush()
+                    .map_err(|error| format!("{label} request could not be written: {error}"))
+            },
+        );
+        if let Err(error) = write_result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    }
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| "Screen context stdout was unavailable.".to_string())?;
+        .ok_or_else(|| format!("{label} stdout was unavailable."))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| "Screen context stderr was unavailable.".to_string())?;
+        .ok_or_else(|| format!("{label} stderr was unavailable."))?;
     // Drain both pipes while polling the process. Waiting for exit before reading can deadlock when a rich
     // Accessibility tree exceeds the OS pipe buffer, even though it remains below our response limit.
     let stdout_reader = thread::spawn(move || read_bounded(stdout, 256 * 1024));
     let stderr_reader = thread::spawn(move || read_bounded(stderr, 16 * 1024));
-    let deadline = Instant::now() + Duration::from_millis(1_500);
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -659,40 +712,60 @@ fn capture_agent_context(binary: &Path) -> Result<Value, String> {
                 let _ = child.wait();
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
-                return Err(
-                    "Screen context timed out before macOS returned a bounded snapshot.".into(),
-                );
+                return Err(format!(
+                    "{label} timed out before macOS returned a bounded response."
+                ));
             }
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
-                return Err(format!("Screen context status failed: {error}"));
+                return Err(format!("{label} status failed: {error}"));
             }
         }
     };
     let (stdout, stdout_over_limit) = stdout_reader
         .join()
-        .map_err(|_| "Screen context stdout reader failed.".to_string())?
-        .map_err(|error| format!("Screen context stdout failed: {error}"))?;
+        .map_err(|_| format!("{label} stdout reader failed."))?
+        .map_err(|error| format!("{label} stdout failed: {error}"))?;
     let (stderr, _) = stderr_reader
         .join()
-        .map_err(|_| "Screen context stderr reader failed.".to_string())?
-        .map_err(|error| format!("Screen context stderr failed: {error}"))?;
+        .map_err(|_| format!("{label} stderr reader failed."))?
+        .map_err(|error| format!("{label} stderr failed: {error}"))?;
     if !status.success() {
         let detail = String::from_utf8_lossy(&stderr).trim().to_string();
         return Err(if detail.is_empty() {
-            "Screen context exited without a usable snapshot.".into()
+            format!("{label} exited without a usable response.")
         } else {
-            format!("Screen context failed: {detail}")
+            format!("{label} failed: {detail}")
         });
     }
     if stdout_over_limit {
-        return Err("Screen context exceeded the local response limit.".into());
+        return Err(format!("{label} exceeded the local response limit."));
     }
     serde_json::from_slice(&stdout)
-        .map_err(|error| format!("Screen context returned invalid JSON: {error}"))
+        .map_err(|error| format!("{label} returned invalid JSON: {error}"))
+}
+
+fn capture_agent_context(binary: &Path) -> Result<Value, String> {
+    run_native_json(
+        binary,
+        "--once",
+        None,
+        "Screen context",
+        Duration::from_millis(1_500),
+    )
+}
+
+fn run_agent_action(binary: &Path, input: &Value) -> Result<Value, String> {
+    run_native_json(
+        binary,
+        "--request",
+        Some(input),
+        "Agent action",
+        Duration::from_secs(2),
+    )
 }
 
 fn agent_context(request: Request, shared: &Shared) {
@@ -704,7 +777,7 @@ fn agent_context(request: Request, shared: &Shared) {
         );
     }
     match capture_agent_context(&shared.cfg.agent_context_bin) {
-        Ok(snapshot) => json_response(request, 200, snapshot),
+        Ok(snapshot) => json_response(request, 200, agent_external_snapshot(&snapshot)),
         Err(error) => json_response(request, 503, json!({"ok":false,"error":error})),
     }
 }
@@ -816,6 +889,7 @@ fn agent_plan(mut request: Request, shared: Arc<Shared>) {
         }
         Err(error) => return json_response(request, 503, json!({"error":error})),
     };
+    let planner_snapshot = agent_external_snapshot(&snapshot);
     let model = compute.get("model").and_then(Value::as_str).unwrap_or("");
     let effort = compute
         .get("effort")
@@ -826,7 +900,7 @@ fn agent_plan(mut request: Request, shared: Arc<Shared>) {
         .and_then(Value::as_str)
         .unwrap_or("pragmatic");
     let result = if lane == "api" {
-        agent_api_plan(&compute, &instruction, &snapshot)
+        agent_api_plan(&compute, &instruction, &planner_snapshot)
     } else {
         crate::codex_runtime::plan(
             &shared.cfg.data_dir,
@@ -834,15 +908,25 @@ fn agent_plan(mut request: Request, shared: Arc<Shared>) {
             effort,
             personality,
             &instruction,
-            &snapshot,
+            &planner_snapshot,
         )
     };
     match result.and_then(validate_agent_preview) {
-        Ok(preview) => json_response(
-            request,
-            200,
-            json!({"ok":true,"preview":preview,"snapshotId":snapshot.get("snapshotId")}),
-        ),
+        Ok(preview) => match store_agent_proposal(&shared, &snapshot, &preview) {
+            Ok(proposal_id) => json_response(
+                request,
+                200,
+                json!({
+                    "ok":true,
+                    "preview":preview,
+                    "snapshotId":snapshot.get("snapshotId"),
+                    "proposalId":proposal_id,
+                    "target":public_agent_target(&snapshot),
+                    "actionBlockedReason":agent_action_block_reason(&snapshot),
+                }),
+            ),
+            Err(error) => json_response(request, 409, json!({"error":clean(&error, 500)})),
+        },
         Err(error) => json_response(request, 503, json!({"error":clean(&error, 500)})),
     }
 }
@@ -952,7 +1036,7 @@ fn validate_agent_preview(value: Value) -> Result<Value, String> {
     if !matches!(action, "draft_text" | "replace_selection" | "none") {
         return Err("Agent preview proposed an unsupported action".into());
     }
-    let text = clean(
+    let text = bounded_agent_text(
         value.get("text").and_then(Value::as_str).unwrap_or(""),
         64_000,
     );
@@ -972,9 +1056,286 @@ fn validate_agent_preview(value: Value) -> Result<Value, String> {
         "targetRole":target_role,
         "text":text,
         "explanation":explanation,
-        // This milestone never executes the proposal, irrespective of model output.
+        // Model output can never bypass the user's separate Apply click.
         "requiresConfirmation":true,
     }))
+}
+
+fn expected_agent_target(snapshot: &Value) -> Result<Value, String> {
+    if snapshot.get("editable").and_then(Value::as_bool) != Some(true) {
+        return Err("Focus an ordinary editable text field, then prepare the draft again.".into());
+    }
+    let bundle_id = snapshot
+        .get("bundleId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or("The target app did not expose a stable bundle identifier.")?;
+    if bundle_id != AGENT_ACTION_PREVIEW_BUNDLE_ID {
+        return Err("Guarded Apply is currently limited to a disposable TextEdit document.".into());
+    }
+    let process_identifier = snapshot
+        .get("processIdentifier")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0 && *value <= i32::MAX as i64)
+        .ok_or("The target app did not expose a stable process identifier.")?;
+    let focused_role = snapshot
+        .get("focusedRole")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or("The focused control did not expose a stable role.")?;
+    let focused_fingerprint = snapshot
+        .get("focusedFingerprint")
+        .and_then(Value::as_str)
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or("The focused control could not be fingerprinted safely.")?;
+    Ok(json!({
+        "bundleId":bundle_id,
+        "processIdentifier":process_identifier,
+        "windowTitle":snapshot.get("windowTitle").cloned().unwrap_or(Value::Null),
+        "focusedRole":focused_role,
+        "focusedLabel":snapshot.get("focusedLabel").cloned().unwrap_or(Value::Null),
+        "focusedFingerprint":focused_fingerprint,
+    }))
+}
+
+fn agent_external_snapshot(snapshot: &Value) -> Value {
+    let mut result = snapshot.clone();
+    if let Some(object) = result.as_object_mut() {
+        object.remove("processIdentifier");
+        object.remove("focusedFingerprint");
+    }
+    result
+}
+
+fn public_agent_target(snapshot: &Value) -> Value {
+    json!({
+        "appName":snapshot.get("appName").cloned().unwrap_or(Value::Null),
+        "bundleId":snapshot.get("bundleId").cloned().unwrap_or(Value::Null),
+        "windowTitle":snapshot.get("windowTitle").cloned().unwrap_or(Value::Null),
+        "focusedRole":snapshot.get("focusedRole").cloned().unwrap_or(Value::Null),
+        "focusedLabel":snapshot.get("focusedLabel").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn agent_action_block_reason(snapshot: &Value) -> Option<&'static str> {
+    (snapshot.get("bundleId").and_then(Value::as_str) != Some(AGENT_ACTION_PREVIEW_BUNDLE_ID))
+        .then_some("Apply is currently limited to a disposable TextEdit document while the action matrix is being validated.")
+}
+
+fn store_agent_proposal(
+    shared: &Shared,
+    snapshot: &Value,
+    preview: &Value,
+) -> Result<Option<String>, String> {
+    let action = preview
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("none");
+    if action == "none" {
+        shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .agent_proposal = None;
+        return Ok(None);
+    }
+    if agent_action_block_reason(snapshot).is_some() {
+        shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .agent_proposal = None;
+        return Ok(None);
+    }
+    let expected = expected_agent_target(snapshot)?;
+    if preview
+        .get("targetRole")
+        .and_then(Value::as_str)
+        .is_some_and(|role| Some(role) != snapshot.get("focusedRole").and_then(Value::as_str))
+    {
+        return Err("The model targeted a different control than the focused field.".into());
+    }
+    if action == "replace_selection"
+        && snapshot
+            .get("selectionLength")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            <= 0
+    {
+        return Err("The selected text changed or is no longer available.".into());
+    }
+    let text = preview
+        .get("text")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("The model did not prepare any text to apply.")?
+        .to_string();
+    let id = random_token()?;
+    let proposal = AgentProposal {
+        id: id.clone(),
+        created_at: now_ms(),
+        action: action.to_string(),
+        text,
+        expected,
+    };
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    state.agent_proposal = Some(proposal);
+    state.agent_undo = None;
+    Ok(Some(id))
+}
+
+fn agent_apply(mut request: Request, shared: Arc<Shared>) {
+    if !release_capability(&shared.cfg.release, "agentActions") {
+        return json_response(
+            request,
+            404,
+            json!({"error":"Agent text actions are available only in the preview channel."}),
+        );
+    }
+    let body = match read_json(&mut request) {
+        Ok(value) => value,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let proposal_id = body.get("proposalId").and_then(Value::as_str).unwrap_or("");
+    let confirmed = body.get("confirmed").and_then(Value::as_bool) == Some(true);
+    if !confirmed {
+        return json_response(
+            request,
+            400,
+            json!({"error":"Apply requires an explicit confirmation click."}),
+        );
+    }
+    let proposal = {
+        let mut state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(proposal) = state.agent_proposal.take() else {
+            return json_response(
+                request,
+                409,
+                json!({"error":"The draft proposal expired. Prepare it again."}),
+            );
+        };
+        if proposal.id != proposal_id || now_ms().saturating_sub(proposal.created_at) > 120_000 {
+            return json_response(
+                request,
+                409,
+                json!({"error":"The draft proposal expired or was replaced."}),
+            );
+        }
+        proposal
+    };
+    let requested_text = body
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or(&proposal.text);
+    let text = bounded_agent_text(requested_text, 64_000);
+    if text.trim().is_empty() {
+        return json_response(
+            request,
+            400,
+            json!({"error":"An empty Agent draft cannot be applied."}),
+        );
+    }
+    let input = json!({
+        "operation":"apply",
+        "action":proposal.action,
+        "text":text,
+        "expected":proposal.expected,
+    });
+    let result = match run_agent_action(&shared.cfg.agent_action_bin, &input) {
+        Ok(value) => value,
+        Err(error) => return json_response(request, 503, json!({"error":clean(&error,500)})),
+    };
+    if result.get("ok").and_then(Value::as_bool) != Some(true)
+        || result.get("verified").and_then(Value::as_bool) != Some(true)
+    {
+        return json_response(
+            request,
+            409,
+            json!({"error":result.get("error").and_then(Value::as_str).unwrap_or("The target rejected the draft."),"status":result.get("status")}),
+        );
+    }
+    let Some(undo) = result.get("undo").cloned() else {
+        return json_response(
+            request,
+            503,
+            json!({"error":"The native action did not return an undo record."}),
+        );
+    };
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    state.agent_undo = Some(AgentUndo {
+        created_at: now_ms(),
+        payload: undo,
+    });
+    drop(state);
+    json_response(
+        request,
+        200,
+        json!({"ok":true,"status":"applied","verified":true,"undoAvailable":true}),
+    )
+}
+
+fn agent_undo(request: Request, shared: Arc<Shared>) {
+    if !release_capability(&shared.cfg.release, "agentActions") {
+        return json_response(
+            request,
+            404,
+            json!({"error":"Agent text actions are available only in the preview channel."}),
+        );
+    }
+    let undo = {
+        let mut state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(undo) = state.agent_undo.take() else {
+            return json_response(
+                request,
+                409,
+                json!({"error":"There is no Agent edit available to undo."}),
+            );
+        };
+        if now_ms().saturating_sub(undo.created_at) > 300_000 {
+            return json_response(
+                request,
+                409,
+                json!({"error":"The Agent undo window expired."}),
+            );
+        }
+        undo
+    };
+    let input = json!({
+        "operation":"undo",
+        "expected":undo.payload.get("expected").cloned().unwrap_or(Value::Null),
+        "undo":undo.payload,
+    });
+    let result = match run_agent_action(&shared.cfg.agent_action_bin, &input) {
+        Ok(value) => value,
+        Err(error) => return json_response(request, 503, json!({"error":clean(&error,500)})),
+    };
+    if result.get("ok").and_then(Value::as_bool) == Some(true)
+        && result.get("verified").and_then(Value::as_bool) == Some(true)
+    {
+        json_response(
+            request,
+            200,
+            json!({"ok":true,"status":"undone","verified":true}),
+        )
+    } else {
+        json_response(
+            request,
+            409,
+            json!({"error":result.get("error").and_then(Value::as_str).unwrap_or("Undo did not complete."),"status":result.get("status")}),
+        )
+    }
 }
 
 fn ai_key_save(mut request: Request) {
@@ -1214,6 +1575,8 @@ fn handle(mut request: Request, shared: Arc<Shared>) {
         (Method::Post, "/api/agent/compute/login") => agent_compute_login(request, shared),
         (Method::Post, "/api/agent/compute/logout") => agent_compute_logout(request, &shared),
         (Method::Post, "/api/agent/plan") => agent_plan(request, shared),
+        (Method::Post, "/api/agent/apply") => agent_apply(request, shared),
+        (Method::Post, "/api/agent/undo") => agent_undo(request, shared),
         (Method::Post, "/api/ai/key") => ai_key_save(request),
         (Method::Post, "/api/ai/models") => ai_models(request),
         (Method::Get, "/api/model/status") => json_response(request, 200, model_status(&shared)),
@@ -3589,6 +3952,14 @@ fn clean(s: &str, max: usize) -> String {
         .take(max)
         .collect()
 }
+fn bounded_agent_text(s: &str, max: usize) -> String {
+    s.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .chars()
+        .filter(|character| *character != '\0')
+        .take(max)
+        .collect()
+}
 fn first_state_title(state: &Map<String, Value>, keys: &[&str]) -> Option<String> {
     keys.iter()
         .filter_map(|key| state.get(*key).and_then(Value::as_str))
@@ -4063,6 +4434,7 @@ mod tests {
             models_dir: root.clone(),
             transcribe_bin: root.join("none"),
             agent_context_bin: root.join("none"),
+            agent_action_bin: root.join("none"),
             meeting_notifier: Arc::new(|_| {}),
         };
         save_meeting(&cfg, &m).unwrap();
@@ -4143,7 +4515,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_preview_is_reduced_to_the_read_only_contract() {
+    fn agent_preview_is_reduced_to_the_confirmation_contract() {
         let preview = validate_agent_preview(json!({
             "action":"draft_text",
             "targetRole":"AXTextArea",
@@ -4172,6 +4544,102 @@ mod tests {
             "explanation":"unsafe"
         }))
         .is_err());
+    }
+
+    #[test]
+    fn agent_draft_preserves_structure_while_remaining_bounded() {
+        let preview = validate_agent_preview(json!({
+            "action":"draft_text",
+            "text":"Hello,\r\n\r\n- first\n- second\0ignored",
+            "explanation":"structured"
+        }))
+        .unwrap();
+        assert_eq!(
+            preview.get("text").and_then(Value::as_str),
+            Some("Hello,\n\n- first\n- secondignored")
+        );
+        assert_eq!(bounded_agent_text("abcdef", 3), "abc");
+    }
+
+    #[test]
+    fn agent_target_requires_an_editable_fingerprinted_control() {
+        let valid = json!({
+            "editable":true,
+            "bundleId":AGENT_ACTION_PREVIEW_BUNDLE_ID,
+            "processIdentifier":4242,
+            "windowTitle":"Synthetic note",
+            "focusedRole":"AXTextArea",
+            "focusedLabel":"Body",
+            "focusedFingerprint":"a".repeat(64),
+        });
+        let expected = expected_agent_target(&valid).unwrap();
+        assert_eq!(
+            expected.get("bundleId").and_then(Value::as_str),
+            Some(AGENT_ACTION_PREVIEW_BUNDLE_ID)
+        );
+        assert_eq!(
+            expected.get("processIdentifier").and_then(Value::as_i64),
+            Some(4242)
+        );
+        let mut missing_fingerprint = valid.clone();
+        missing_fingerprint["focusedFingerprint"] = Value::Null;
+        assert!(expected_agent_target(&missing_fingerprint).is_err());
+        let mut read_only = valid;
+        read_only["editable"] = Value::Bool(false);
+        assert!(expected_agent_target(&read_only).is_err());
+    }
+
+    #[test]
+    fn agent_action_preview_blocks_every_non_textedit_target() {
+        let target = json!({
+            "editable":true,
+            "appName":"Synthetic Chat",
+            "bundleId":"com.example.chat",
+            "processIdentifier":4242,
+            "windowTitle":"Disposable fixture",
+            "focusedRole":"AXTextArea",
+            "focusedLabel":"Message",
+            "focusedFingerprint":"a".repeat(64),
+            "selectedText":"must not escape",
+            "elements":[{"value":"must not escape"}]
+        });
+        assert!(agent_action_block_reason(&target).is_some());
+        assert!(expected_agent_target(&target).is_err());
+        let public = public_agent_target(&target);
+        assert_eq!(
+            public.get("appName").and_then(Value::as_str),
+            Some("Synthetic Chat")
+        );
+        assert!(public.get("selectedText").is_none());
+        assert!(public.get("elements").is_none());
+        assert!(public.get("focusedFingerprint").is_none());
+        assert!(public.get("processIdentifier").is_none());
+
+        let planner = agent_external_snapshot(&target);
+        assert!(planner.get("processIdentifier").is_none());
+        assert!(planner.get("focusedFingerprint").is_none());
+        assert_eq!(
+            planner.get("selectedText").and_then(Value::as_str),
+            Some("must not escape")
+        );
+    }
+
+    #[test]
+    fn agent_action_request_uses_stdin_and_parses_verified_response() {
+        let path = std::env::temp_dir().join(format!(
+            "my-assistant-agent-action-fixture-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::write(
+            &path,
+            b"#!/bin/sh\n[ \"$1\" = \"--request\" ] || exit 2\nbody=$(cat)\ncase \"$body\" in *'private draft'*) ;; *) exit 3 ;; esac\nprintf '%s\\n' '{\"ok\":true,\"status\":\"applied\",\"verified\":true}'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        let value = run_agent_action(&path, &json!({"text":"private draft"})).unwrap();
+        assert_eq!(value.get("verified").and_then(Value::as_bool), Some(true));
+        let _ = fs::remove_file(path);
     }
 
     #[test]

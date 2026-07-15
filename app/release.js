@@ -13,6 +13,7 @@ const CAPABILITIES = Object.freeze({
   agentContextInspector:     { state: "shipped", verification: "bounded on-demand native Accessibility snapshot and helper self-test" },
   agentComputeConfig:        { state: "shipped", verification: "external Codex detection, isolated profile, device-code auth, and provider model discovery tests" },
   agentDraftPreview:         { state: "preview", verification: "structured read-only Codex preview requires real-app acceptance before production" },
+  agentActions:              { state: "preview", verification: "TextEdit-only explicit Apply, exact-process revalidation, verified mutation or rollback, bounded in-memory undo, and per-adapter acceptance" },
   agentGlobalShortcut:       { state: "preview", verification: "native registration, conflict, relaunch, and focus acceptance required" },
   wakeWord:                  { state: "blocked", verification: "explicit opt-in, real-noise accuracy, resource, suspension, privacy, and licensing gates required" },
   feedbackSupport:           { state: "hidden", verification: "working destinations required" },

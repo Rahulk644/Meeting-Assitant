@@ -10,6 +10,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import CryptoKit
 import Foundation
 
 private let maxElements = 180
@@ -47,9 +48,13 @@ private struct Snapshot: Codable {
     let source: String
     let appName: String?
     let bundleId: String?
+    let processIdentifier: Int32?
     let windowTitle: String?
     let focusedRole: String?
     let focusedLabel: String?
+    let focusedFingerprint: String?
+    let selectionLocation: Int?
+    let selectionLength: Int?
     let selectedText: String?
     let editable: Bool
     let elementCount: Int
@@ -104,6 +109,13 @@ private func axElements(_ element: AXUIElement, _ attribute: String) -> [AXUIEle
     (axGet(element, attribute) as? [AXUIElement]) ?? []
 }
 
+private func selectedRange(_ element: AXUIElement) -> CFRange? {
+    guard let raw = axGet(element, kAXSelectedTextRangeAttribute as String),
+          CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+    var range = CFRange(location: 0, length: 0)
+    return AXValueGetValue(raw as! AXValue, .cfRange, &range) ? range : nil
+}
+
 private func axFrame(_ element: AXUIElement) -> Frame? {
     guard let positionValue = axGet(element, kAXPositionAttribute as String),
           let sizeValue = axGet(element, kAXSizeAttribute as String),
@@ -133,6 +145,14 @@ private func isEditableControl(_ element: AXUIElement, role: String, secure: Boo
     guard !secure else { return false }
     let editableRoles = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
     return editableRoles.contains(role) && isValueSettable(element)
+}
+
+private func digest(_ value: String) -> String {
+    SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+}
+
+private func stateFingerprint(role: String, label: String?, value: String, range: CFRange?) -> String {
+    digest("v1\u{1f}\(role)\u{1f}\(label ?? "")\u{1f}\(value)\u{1f}\(range?.location ?? -1):\(range?.length ?? -1)")
 }
 
 private func clean(_ raw: String?, limit: Int = 280) -> String? {
@@ -234,8 +254,9 @@ private func capture() -> Snapshot {
     let capturedAt = nowMs()
     guard AXIsProcessTrusted() else {
         return Snapshot(ok: false, status: "permission_required", snapshotId: nil, capturedAt: capturedAt,
-                        source: "none", appName: nil, bundleId: nil, windowTitle: nil,
-                        focusedRole: nil, focusedLabel: nil, selectedText: nil, editable: false,
+                        source: "none", appName: nil, bundleId: nil, processIdentifier: nil, windowTitle: nil,
+                        focusedRole: nil, focusedLabel: nil, focusedFingerprint: nil,
+                        selectionLocation: nil, selectionLength: nil, selectedText: nil, editable: false,
                         elementCount: 0, truncated: false, elements: [],
                         privacy: ["read_only", "on_demand", "no_screenshot", "no_network", "no_persistence"],
                         error: "Accessibility permission is required.")
@@ -243,8 +264,9 @@ private func capture() -> Snapshot {
     let (runningApp, source) = targetApp()
     guard let runningApp else {
         return Snapshot(ok: false, status: "no_target", snapshotId: nil, capturedAt: capturedAt,
-                        source: source, appName: nil, bundleId: nil, windowTitle: nil,
-                        focusedRole: nil, focusedLabel: nil, selectedText: nil, editable: false,
+                        source: source, appName: nil, bundleId: nil, processIdentifier: nil, windowTitle: nil,
+                        focusedRole: nil, focusedLabel: nil, focusedFingerprint: nil,
+                        selectionLocation: nil, selectionLength: nil, selectedText: nil, editable: false,
                         elementCount: 0, truncated: false, elements: [],
                         privacy: ["read_only", "on_demand", "no_screenshot", "no_network", "no_persistence"],
                         error: "No inspectable app window was found.")
@@ -255,8 +277,10 @@ private func capture() -> Snapshot {
     guard let window = focusedWindow(appElement) else {
         return Snapshot(ok: false, status: "no_window", snapshotId: nil, capturedAt: capturedAt,
                         source: source, appName: runningApp.localizedName,
-                        bundleId: runningApp.bundleIdentifier, windowTitle: nil,
-                        focusedRole: nil, focusedLabel: nil, selectedText: nil, editable: false,
+                        bundleId: runningApp.bundleIdentifier, processIdentifier: runningApp.processIdentifier,
+                        windowTitle: nil,
+                        focusedRole: nil, focusedLabel: nil, focusedFingerprint: nil,
+                        selectionLocation: nil, selectionLength: nil, selectedText: nil, editable: false,
                         elementCount: 0, truncated: false, elements: [],
                         privacy: ["read_only", "on_demand", "no_screenshot", "no_network", "no_persistence"],
                         error: "The target app did not expose an Accessibility window.")
@@ -299,6 +323,10 @@ private func capture() -> Snapshot {
     let focusedSecure = isSecure(role: focusedRole ?? "", subrole: focused.flatMap {
         axString($0, kAXSubroleAttribute as String)
     }, label: focusedLabel)
+    let focusedValue = focusedSecure ? nil : focused.flatMap {
+        axString($0, kAXValueAttribute as String)
+    }
+    let range = focused.flatMap(selectedRange)
     let selected = focusedSecure ? nil : focused.flatMap {
         clean(axString($0, kAXSelectedTextAttribute as String), limit: 500)
     }
@@ -308,9 +336,13 @@ private func capture() -> Snapshot {
 
     return Snapshot(ok: true, status: "ready", snapshotId: UUID().uuidString.lowercased(),
                     capturedAt: capturedAt, source: source, appName: runningApp.localizedName,
-                    bundleId: runningApp.bundleIdentifier,
+                    bundleId: runningApp.bundleIdentifier, processIdentifier: runningApp.processIdentifier,
                     windowTitle: clean(axString(window, kAXTitleAttribute as String), limit: 180),
                     focusedRole: focusedRole, focusedLabel: focusedSecure ? nil : focusedLabel,
+                    focusedFingerprint: focusedValue.map {
+                        stateFingerprint(role: focusedRole ?? "AXUnknown", label: focusedLabel, value: $0, range: range)
+                    },
+                    selectionLocation: range?.location, selectionLength: range?.length,
                     selectedText: selected, editable: editable, elementCount: output.count,
                     truncated: truncated, elements: output,
                     privacy: ["read_only", "on_demand", "secure_fields_redacted", "no_screenshot", "no_network", "no_persistence"],
@@ -323,6 +355,8 @@ private func selfTest() -> Bool {
         && isSecure(role: "AXTextField", subrole: "AXSecureTextField", label: nil)
         && isSecure(role: "AXTextField", subrole: nil, label: "API key")
         && !isSecure(role: "AXTextArea", subrole: nil, label: "Email body")
+        && stateFingerprint(role: "AXTextArea", label: nil, value: "x", range: CFRange(location: 0, length: 0))
+            != stateFingerprint(role: "AXTextArea", label: nil, value: "x", range: CFRange(location: 1, length: 0))
 }
 
 if CommandLine.arguments.contains("--selftest") {

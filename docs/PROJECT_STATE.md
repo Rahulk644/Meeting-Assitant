@@ -22,7 +22,10 @@ chronological work log.
 - **Agents:** production exposes the on-demand read-only Accessibility inspector plus honest Local, API-key,
   and ChatGPT account/Codex compute configuration. API keys go directly to Keychain. Codex is a verified
   external runtime with an isolated profile and live account model controls; it is not bundled. The
-  structured draft planner and global Agent shortcut are preview-only, nothing can apply/send, and wake word
+  structured draft planner, global Agent shortcut, and one guarded text Apply/Undo boundary are preview-only.
+  The model cannot execute; Apply is a separate click and is restricted to the exact captured process of a
+  named disposable TextEdit document. Other apps remain read-only. The helper revalidates the complete field
+  state and verifies the write or exact rollback; Send/Return/click/multi-step actions do not exist. Wake word
   remains blocked.
 - **Local speech models:** shipped as an explicit model library shared by dictation and meetings. Downloads
   are separate from the app and the active model controls languages, translation, output, and preprocessing.
@@ -46,6 +49,7 @@ AppKit/Tauri shell
   ├─ meeting-tap (Swift): real-call detection, system audio, mic, optional video
   ├─ meeting-state (Swift): Accessibility-derived speaker/mute/share evidence
   ├─ agent-context (Swift, on demand): bounded read-only Accessibility snapshot
+  ├─ agent-action (Swift, on demand, preview): confirmed draft/selection edit and guarded Undo
   ├─ codex_runtime (Rust, on demand): verified external Codex App Server, isolated auth/model/preview lane
   └─ transcribe-server (C++): on-demand transcribe.cpp/selected local speech model
 ```
@@ -92,8 +96,13 @@ macOS Keychain.
 - Agent context is captured only after an explicit user request, bounded by node/depth/child/time limits,
   uses opaque request-local element IDs, and redacts secure fields. Inspection alone is neither persisted nor
   sent to a provider. A preview request explicitly sends the instruction and fresh bounded snapshot only to
-  the selected API/Codex lane; screen text is untrusted and output is reduced to draft/replace/no-op display
-  data. There is no executor.
+  the selected API/Codex lane; screen text is untrusted and output is reduced to draft/replace/no-op proposal
+  data. The preview-only executor is a separate on-demand helper: it accepts only explicit Apply to the exact
+  captured TextEdit process, revalidates bundle/window/role/label/full text/cursor/selection, and verifies the
+  final value. Non-TextEdit drafts never receive an executable proposal. A transformed write is restored and
+  verified; a rollback that cannot be proven is surfaced as urgent. A single prior value stays in Rust memory
+  for at most five minutes and is restored only if the applied value is unchanged. Draft/original text never
+  enters process arguments or logs.
 - External Codex is accepted only from standard installed locations after strict signature verification of
   OpenAI Team ID `2DC432GLL2`. It is not touched during ordinary app launch: opening Agents with the
   ChatGPT · Codex lane selected triggers on-demand status, isolated device-code sign-in/out, model discovery,
@@ -101,18 +110,26 @@ macOS Keychain.
 
 ## Release status
 
-The current automated-verified artifact is
+The latest automated-verified **production** artifact is
 `desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,689,064 bytes), SHA-256
 `17dcbf330da329fc0d01ea06d86c5346fea10761a1b5c4101107b7190656c4fd`. The app bundle is 28,508 KiB.
 After the packaged launch settled, the app plus the two meeting helpers measured about 43.1 MiB aggregate
 physical footprint and 40,048 KiB aggregate RSS; the on-demand Agent context helper was not resident and no
-app-owned Speech, LLM, or Codex process was resident. Verification is 30/30 Node product/release/parity tests, 34/34 Rust
-tests, warnings-denied Clippy, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, zero desktop npm
+app-owned Speech, LLM, or Codex process was resident. That artifact's release gate was 30/30 Node tests,
+34/34 Rust tests, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, zero desktop npm
 vulnerabilities, and passing transcribe-server, meeting-tap, meeting-state, and agent-context self-tests. All
 12 revision-pinned model endpoints returned the exact catalog content length.
 The DMG passed checksum and deep signature verification, carries the production model picker and
 capability-gated Translation/Agent-compute payload, contains no Codex, Node, model, benchmark, transcript, or source artifact, launched
 successfully, kept unauthenticated loopback access at 401, and rejected a forged Host at 403.
+
+Current `codex/agent-actions` source is newer than that DMG. Its non-mutating verification is 31/31 Node
+tests, 38/38 Rust tests, 3/3 acceptance-runner tests, warnings-denied Clippy, valid release WebView assets,
+and passing `agent-context` and `agent-action` self-tests. An optimized 28,772 KiB preview `.app` also passes
+strict deep signature verification, contains both signed arm64 Agent helpers, and carries the preview release
+contract. It was verified without launching. The preview helper is process-bound and TextEdit-only, but its
+physical packaged acceptance matrix is still open. Do not distribute the older DMG as evidence of the new
+Agent action code, and do not enable `agentActions` in production.
 
 This is suitable for a small explicitly informed beta group, subject to the documented **Privacy & Security
 → Open Anyway** installation flow. The physical Right-Command matrix and real two-person meeting matrix below
@@ -141,12 +158,14 @@ background updates cannot be made trustworthy until a separate updater signing-k
    fallback, and separate future cloud Speech providers from meeting-note Intelligence providers.
 9. Add an in-app local Intelligence install/status/remove flow; until then, clean beta testers use BYOK for
    meeting notes even though dictation and transcription remain fully local.
-10. Complete the synthetic/test-account `agent-context` matrix across Gmail, Slack, LinkedIn, Docs, Notes,
-    Slides, Terminal, secure fields, permission recovery, prompt injection, providers, full-screen, and
-    displays. Physically accept the preview global shortcut; then implement native draft/replace/undo with
-    fresh snapshot revalidation. Do not add Send or multi-step mutation yet.
-11. Run the explicit Porcupine-versus-Rustpotter wake-word suite. Adopt neither until real accents/noise,
-    false accepts, latency, CPU/RAM, energy, suspension, privacy, and licensing gates pass.
+10. Complete read-only Agent inspection/drafting across Gmail, Slack, LinkedIn, Docs, Notes, Slides, Terminal,
+    secure/unsupported fields, permission recovery, prompt injection, providers, full-screen, and displays.
+    Separately pass TextEdit-only exact-process, stale-target, verified Apply, verified rollback, urgent
+    rollback-failure, guarded Undo, relaunch, and packaged-helper cases. Physically accept the preview global
+    shortcut. Do not add another app adapter, Send, or multi-step mutation until those gates pass.
+11. Run the identical Porcupine, microWakeWord, and sherpa-onnx KWS wake-word suite. Adopt none until real
+    accents/noise, false accepts, latency, CPU/RAM, energy, suspension, privacy, integration, and licensing
+    gates pass.
 12. The verified work is a stacked branch chain ahead of `main`; review and merge the open draft PRs in
     dependency order before treating the private repository's default branch or community profile as current
     OSS truth, then create the first tag and GitHub beta release.

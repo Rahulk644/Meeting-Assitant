@@ -41,10 +41,14 @@ versions will use semantic versioning once the first public beta tag is cut.
   runtime, uses an isolated profile/device-code sign-in, and renders account-visible model/effort controls
   without adding Codex or Node to the DMG.
 - A preview-only structured Agent draft planner for API-key and ChatGPT account compute plus a preview-only
-  configurable global Agent shortcut. Planner output is display-only; unsupported actions are rejected and
-  no Apply, Send, shell, file, search, or computer mutation path exists.
+  configurable global Agent shortcut.
+- A separate preview-only native Agent text executor: explicit Apply, exact process/app/window/field/content/
+  selection revalidation, verified draft insertion or selection replacement, verified rollback, and one
+  guarded memory-only Undo. Executable Apply is deliberately restricted to a named disposable TextEdit
+  document while cross-app inspection/drafting remains read-only. The model has no execution tool, and Send,
+  Return, click, shell, file, search, and multi-step actions remain absent.
 - Evidence-backed Agent app and wake-word acceptance suites. Porcupine is the leading external wake-word
-  candidate and Rustpotter the lightweight control; neither engine, model, or credential is bundled.
+  candidate; microWakeWord and sherpa-onnx KWS are the modern open controls. No engine, model, or credential is bundled.
 
 ### Changed
 

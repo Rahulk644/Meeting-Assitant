@@ -45,7 +45,7 @@ python3 acceptance/run.py summary --session /private/path/session.json
 
 The summary exits non-zero while any case is pending, failed, or blocked.
 
-## Agent context and preview matrix
+## Agent context, proposal, Apply, and Undo matrix
 
 Use only disposable documents and dedicated test accounts; this is not permission to inspect private inboxes,
 chats, profiles, documents, or terminal output. The suite covers Gmail, Slack, LinkedIn, Google Docs, Apple
@@ -58,11 +58,18 @@ python3 acceptance/run.py new \
   --notes "Synthetic content only; packaged preview build"
 ```
 
-Evidence must record aggregate roles/counts, timing, capability state, and the absence of mutation. Do not
+Evidence must record aggregate roles/counts, timing, capability state, and the exact synthetic expected
+outcome. Do not
 attach screenshots or logs containing page text, document contents, account identifiers, tokens, API keys,
-or personal data. A useful tree is not sufficient to pass the action milestone: the current experiment is
-display-only, and Apply/Send remain nonexistent until fresh-snapshot revalidation and a native policy gate
-are separately implemented and accepted.
+or personal data. A useful tree is not sufficient to pass the action milestone. The preview channel now has
+one deliberately narrow mutation class: reviewed draft insertion or selection replacement followed by a
+guarded one-step Undo in an explicitly disposable TextEdit document. Gmail, Slack, LinkedIn, Docs, Notes,
+Slides, Terminal, and every other app are read-only in this phase and must never render Apply. Every TextEdit
+Apply must visibly name the app/window/control, bind the exact captured process, prove fresh-state
+revalidation, and verify the final output. Stale targets, non-TextEdit targets, secure fields, unsupported
+controls, edited-after-Apply Undo, expired state, and relaunch must fail closed. Unexpected writes must either
+restore and verify the original text and selection or produce an urgent unverified-state warning. Send,
+Return, click, and multi-step actions remain nonexistent.
 
 ## Wake-word benchmark
 
@@ -76,7 +83,8 @@ python3 acceptance/run.py new \
   --notes "Porcupine candidate; external adapter; private synthetic corpus"
 ```
 
-Run the identical corpus through Porcupine and the lightweight Rustpotter control. Record false accepts,
+Run the identical corpus through Porcupine, the tiny embedded-first microWakeWord control, and the maintained
+desktop sherpa-onnx keyword-spotting control. Record false accepts,
 false rejects, p50/p95 latency, CPU, physical footprint/RSS, energy, disk cost, suspension behavior, privacy,
 and exact licensing terms. The detailed protocol is [`WAKE_WORD_BENCHMARK.md`](WAKE_WORD_BENCHMARK.md).
 

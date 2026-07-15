@@ -34,7 +34,8 @@ terms continue to apply.
 
 - **Picovoice Porcupine:** proprietary service/runtime candidate requiring the tester's own AccessKey and
   applicable Picovoice terms. It is not bundled, redistributed, or selected for release.
-- **Rustpotter:** Apache-2.0 pure-Rust research control. It is not currently a dependency or release asset.
+- **microWakeWord:** Apache-2.0 embedded wake-word research control. It is not currently a dependency or release asset.
+- **sherpa-onnx:** Apache-2.0 keyword-spotting research control. It is not currently a dependency or release asset.
 - **openWakeWord:** Apache-2.0 code/training reference; pretrained model terms are separate and currently
   unsuitable for an assumed commercial default. Neither it nor the archived openWakeWord C++ port is bundled.
 

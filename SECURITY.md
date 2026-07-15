@@ -28,10 +28,14 @@ vulnerability. For the engineering detail behind these claims, see [ARCHITECTURE
    provider you choose. Keep **On-device** selected to stay fully local; the current DMG does not yet install
    that optional Intelligence runtime on a clean Mac, so summary/Ask will fail closed until it is installed or
    a BYOK provider is configured.
-3. **Agent planner preview (preview builds only).** After an explicit request, the selected API-key provider
+3. **Agent proposal and guarded text action (preview builds only).** After an explicit request, the selected API-key provider
    or official external Codex runtime receives the user's instruction plus a fresh bounded Accessibility
    snapshot. It does not receive audio, screenshots, files, shell access, or a persistent snapshot. The
-   result is displayed only; no Apply, click, Send, or other computer mutation exists in this milestone.
+   result is a proposal only; the model has no execution tool. After review, a separate **Apply draft** click
+   can invoke a local native helper for one text insertion or selection replacement. During validation, the
+   helper accepts only the exact captured process of a disposable TextEdit document; all other app proposals
+   remain read-only. It revalidates the exact target and verifies the result. It cannot click, press Return,
+   Send, or perform multiple actions.
    The API-key lane is billed by that provider. The ChatGPT account lane consumes the user's available Codex
    allowance and is not a general OpenAI API entitlement.
 
@@ -78,11 +82,17 @@ The production Agents inspector is read-only and explicit. Clicking **Inspect ap
 runs a signed native Accessibility helper once, returns a bounded structured snapshot to the authenticated
 local UI, and exits. Secure fields omit values. It does not take a screenshot, capture audio, contact a
 model/provider, write the snapshot to disk, or perform a computer action. The helper and Rust endpoint both
-enforce size/time limits. Future model prompts must delimit screen-derived text as untrusted data, and no
-The production surface may configure compute, but the networked planner endpoint and global Agent shortcut
-remain preview-gated. Model output is reduced to a typed draft/replace/no-op display object; unsupported
-actions are rejected and the server forces confirmation. No mutation capability may ship without native
-snapshot revalidation and the confirmation policy in
+enforce size/time limits. Model prompts delimit screen-derived text as untrusted data. The production
+surface may configure compute, but the networked planner, guarded executor, and global Agent shortcut remain
+preview-gated. Model output is reduced to a typed draft/replace/no-op proposal; unsupported actions are
+rejected and confirmation is forced. The native `agent-action` helper accepts only the exact captured
+TextEdit process and a non-secure settable text control after exact fresh-state fingerprinting. The UI names
+the app, window, role, and label before Apply; the process identifier and state fingerprint stay outside the
+browser and planner prompt. The prior value for one Undo lives in Rust
+memory for at most five minutes and never enters browser state, disk, logs, provider requests, or process
+arguments. State drift cancels before mutation. If a target transforms a write, the helper restores and
+verifies the original text and selection; if exact rollback cannot be proven, the UI presents an urgent
+verification failure rather than claiming the action was safe. The complete policy is in
 [`docs/AGENTS_ARCHITECTURE.md`](docs/AGENTS_ARCHITECTURE.md).
 
 The external Codex path only executes a native binary from standard ChatGPT/Codex/CLI locations after

@@ -34,7 +34,8 @@
       "../../stt/meeting-tap": "stt/meeting-tap",
       "../../stt/transcribe-server/transcribe-server": "stt/transcribe-server/transcribe-server",
       "../../meeting-state/meeting-state": "meeting-state/meeting-state",
-      "../../agent-context/agent-context": "agent-context/agent-context"
+      "../../agent-context/agent-context": "agent-context/agent-context",
+      "../../agent-action/agent-action": "agent-action/agent-action"
     },
     "macOS": {
       "signingIdentity": "My Assistant Dev",

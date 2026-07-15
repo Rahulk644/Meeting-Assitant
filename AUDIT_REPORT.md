@@ -2,7 +2,7 @@
 
 **Audit date:** 15 July 2026
 
-**Scope:** Apple-silicon macOS beta, current `codex/agent-compute-providers` branch
+**Scope:** Apple-silicon macOS beta; verified production artifact plus current `codex/agent-actions` source
 
 **Decision:** suitable for a small, explicitly informed beta group; not a general public release
 
@@ -22,7 +22,9 @@ formal third-party penetration test or a promise of zero defects. Product visibi
 | Target | Apple Silicon, macOS 14.4+ |
 | Signing | stable self-signed `My Assistant Dev`, hardened runtime, no Team ID/notarization |
 
-The DMG checksum and `hdiutil verify` pass. A read-only mount contains `My Assistant.app`, an Applications
+This artifact predates the preview-only Agent action helper described below. It remains the last verified
+sendable production build; do not present it as evidence that Agent Apply/Undo ships. The DMG checksum and
+`hdiutil verify` pass. A read-only mount contains `My Assistant.app`, an Applications
 shortcut, and the beta install guide. The app and every nested helper pass strict deep signature
 verification. All five executables are arm64 and depend only on operating-system libraries/frameworks.
 
@@ -41,8 +43,9 @@ Without a paid Developer ID, that is the minimum honest distribution friction; s
   configuration is an action runtime. BYOK uses Keychain and provider model discovery. ChatGPT detects and
   verifies an official external Codex binary, isolates its profile, exposes account model/effort controls,
   and adds nothing to the DMG. Ordinary launch and the Local/API lanes do not touch Codex; status starts only
-  after the user opens Agents with ChatGPT · Codex selected. Draft planning and the global shortcut remain
-  preview-only; no Apply/Send or mutation endpoint exists.
+  after the user opens Agents with ChatGPT · Codex selected. Draft planning, the global shortcut, and the
+  mutation endpoint remain preview-only. Preview Apply is restricted to the exact captured process of a
+  named disposable TextEdit document; every other app remains read-only. Send does not exist.
 - Right Command is the default rebindable dictation trigger. The native AppKit pill is created lazily, does
   not steal focus, states Listening/Polishing, shows elapsed time and the configured finish shortcut, and
   exposes Esc cancellation.
@@ -87,7 +90,8 @@ speech engine and optional local LLM remain on demand. `agent-context` was absen
 its signed binary adds 118,304 bytes to the app and runs only for one inspection. The clean-profile packaged
 launch created no Codex profile or process. A separate user-triggered status probe exited and left no Codex
 process owned by My Assistant resident. Speech residency is
-user-configurable and defaults to ten idle minutes. The installed app contains no Node runtime and no
+user-configurable and defaults to ten idle minutes. The verified production artifact contains no
+`agent-action` helper because it predates that preview milestone. The installed app contains no Node runtime and no
 permanently hidden pill WebView.
 
 ## Verification evidence
@@ -100,6 +104,13 @@ The final artifact was built through `./script/build_release_dmg.sh`, which now 
 - shell/JSON/Python validation plus `meeting-tap`, `meeting-state`, `agent-context`, and `transcribe-server` self-tests;
 - full desktop npm audit: **0 vulnerabilities**;
 - optimized Tauri build, stable helper/app signing, DMG signing/layout/checksum verification.
+
+The newer `codex/agent-actions` source separately passes **31/31** Node tests, **38/38** Rust tests,
+**3/3** acceptance-runner tests, warnings-denied Clippy, WebView asset preparation, and both Agent Swift
+self-tests. Its optimized 28,772 KiB preview `.app` passes strict deep signature verification, embeds both
+signed arm64 Agent helpers, and carries the preview release contract. It was not launched. Those checks were
+intentionally non-mutating. The physical packaged TextEdit isolation, Apply/Undo, rollback, and
+global-shortcut matrix remains open, so this source is not a new sendable artifact.
 
 Additional release checks passed:
 
@@ -146,12 +157,14 @@ no claim that executable code is impossible to reverse engineer.
    thermal, and clean download/cancel/switch/delete measurements.
 7. Generate and automate an SBOM, dependency policy, and complete third-party attribution review.
 8. Design an offline updater signing key, rollback protection, and release channels before enabling updates.
-9. Complete the synthetic/test-account Agent matrix across Gmail, Slack, LinkedIn, Docs, Notes, Slides,
-   Terminal, secure fields, prompt injection, provider errors, permission recovery, full-screen/displays,
-   and the physical preview shortcut. Then implement draft/replace/undo with fresh snapshot revalidation;
-   wake phrase, Send, and multi-step actions remain gated.
-10. Run Porcupine against the Rustpotter lightweight control using the committed opt-in wake-word protocol;
-    do not adopt either before privacy, accuracy, resource, energy, suspension, and licensing evidence.
+9. Complete read-only Agent inspection/drafting across Gmail, Slack, LinkedIn, Docs, Notes, Slides, Terminal,
+   secure fields, prompt injection, provider errors, permission recovery, and full-screen/displays. Separately
+   pass the physical packaged TextEdit exact-process, stale-target, Apply/Undo, rollback, and global-shortcut
+   matrix. Add each future app adapter only after its own synthetic mutation gate; wake phrase, Send, and
+   multi-step actions remain gated.
+10. Run identical Porcupine, microWakeWord, and sherpa-onnx KWS benchmarks using the committed opt-in
+    protocol; do not adopt any engine before privacy, accuracy, resource, energy, suspension, integration,
+    and licensing evidence passes.
 11. Review and merge the stacked draft PR chain into the default branch, then create the first signed/tagged
     GitHub beta release. The repository is still private and has no tag or GitHub release.
 

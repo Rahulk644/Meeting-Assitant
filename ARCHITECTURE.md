@@ -22,21 +22,29 @@ changing capture, transcription, or packaging.
               meeting-state (Swift, Accessibility) ─┘  speaker names, mute/share state
 ```
 
-Agent context is a separate, on-demand read-only path:
+Agents use separate, on-demand observation and action paths:
 
 ```
 Agents view → authenticated POST /api/agent/context → agent-context (Swift, Accessibility) → bounded JSON
 
-preview planner (no executor)
+preview planner (no execution tool)
   ├─ API key → Keychain credential → selected OpenAI-compatible provider/model
   └─ ChatGPT account → verified external Codex → isolated App Server profile/model list
+
+explicit Apply → Rust proposal gate → agent-action (Swift, Accessibility) → verify result → in-memory Undo
 ```
 
-The helper exits after one snapshot, adds no idle memory, redacts secure fields, and performs no screenshot,
-network call, persistence, or computer action. Production may configure compute. The planner and global
-shortcut are preview-gated, and the planner can only display a validated draft/replace/no-op object: it has
-no Apply/Send or Accessibility mutation path. Codex is detected externally and run on demand; it is not
-copied into the app or DMG. The future observe-plan-confirm-act-verify executor is specified
+Both helpers exit after one request and add no idle memory. `agent-context` redacts secure fields and performs
+no screenshot, network call, persistence, or computer action. Production may configure compute. The
+planner, guarded action helper, and global shortcut are preview-gated. The planner emits only a validated
+draft/replace/no-op proposal and cannot execute it. A separate Apply click invokes `agent-action`, which
+currently accepts only the exact captured process of a disposable TextEdit document. It revalidates the
+process, bundle, window, focused role/label, full content, cursor, and selection before one verified text
+mutation. Other apps can still be inspected and drafted against, but receive no executable proposal. Any
+unexpected result is rolled back; an unverified rollback is reported as urgent, never described as safe.
+One exact-value Undo is private and memory-only. Send, Return, clicks, and multi-step actions do not exist.
+Codex is detected externally and run on demand; it is not copied into the app or DMG. The full
+observe-plan-confirm-act-verify contract is specified
 in [`docs/AGENTS_ARCHITECTURE.md`](docs/AGENTS_ARCHITECTURE.md).
 
 Every component is on-device. No bot joins the call; no audio leaves the machine unless the user explicitly
@@ -150,7 +158,7 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   labeled *Requested on first use* with recovery links because this layer does not expose a dependable live
   status for them.
 - **Permission-needing helpers are direct children.** `meeting-state`, `meeting-tap`, and the on-demand
-  `agent-context` helper are spawned directly by Rust, so macOS can associate their checks with the app's
+  `agent-context` / `agent-action` helpers are spawned directly by Rust, so macOS can associate their checks with the app's
   stable identity. `meeting-state` NDJSON is
   forwarded over a tiny authenticated in-process localhost request (no polling or per-update `curl`).
 - **Ad-hoc signing pins the grant to a bare cdhash — it dies on the next rebuild.** swiftc's linker output
@@ -161,7 +169,7 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   difference — both are ad-hoc. The fix is a **real certificate**, not "better ad-hoc."
 - **Sign the app AND every direct-child helper with the same self-signed cert *and the app's identifier*.**
   `tauri.conf.json` sets `bundle.macOS.signingIdentity: "My Assistant Dev"`; `setup.sh` signs `meeting-tap`,
-  `meeting-state`, and `agent-context` with
+  `meeting-state`, `agent-context`, and `agent-action` with
   `codesign --force --identifier com.myassistant.desktop --sign "My Assistant Dev"`.
   Two effects: (1) TCC stores `identifier "com.myassistant.desktop" and certificate leaf = …` —
   **cdhash-independent**, so grants survive rebuilds; (2) because each helper carries the *app's* identifier

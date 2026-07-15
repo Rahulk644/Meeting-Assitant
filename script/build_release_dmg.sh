@@ -10,6 +10,7 @@ APP="$ROOT/desktop/src-tauri/target/release/bundle/macos/My Assistant.app"
 pkill -f "^$APP/Contents/MacOS/app$" >/dev/null 2>&1 || true
 pkill -f "^$APP/Contents/Resources/stt/meeting-tap " >/dev/null 2>&1 || true
 pkill -f "^$APP/Contents/Resources/meeting-state/meeting-state$" >/dev/null 2>&1 || true
+pkill -f "^$APP/Contents/Resources/agent-action/agent-action$" >/dev/null 2>&1 || true
 
 security find-certificate -c "$SIGN_IDENTITY" >/dev/null 2>&1 || {
   echo "Signing certificate not found: $SIGN_IDENTITY" >&2
@@ -39,10 +40,9 @@ xcrun swiftc -O -target arm64-apple-macos14.4 "$ROOT/stt/meeting-tap.swift" -o "
   -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework CoreImage \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$ROOT/stt/Info.plist"
 xcrun swiftc -O "$ROOT/meeting-state/meeting-state.swift" -o "$ROOT/meeting-state/meeting-state"
-xcrun swiftc -O "$ROOT/agent-context/agent-context.swift" -o "$ROOT/agent-context/agent-context"
+bash "$ROOT/script/build_agent_helpers.sh"
 "$ROOT/stt/meeting-tap" --selftest
 "$ROOT/meeting-state/meeting-state" --selftest
-"$ROOT/agent-context/agent-context" --selftest
 "$ROOT/stt/transcribe-server/build.sh"
 
 # Remove local/debug symbols before signing. This reduces the shipped footprint and avoids exposing a
@@ -50,11 +50,13 @@ xcrun swiftc -O "$ROOT/agent-context/agent-context.swift" -o "$ROOT/agent-contex
 /usr/bin/strip -S -x "$ROOT/stt/meeting-tap"
 /usr/bin/strip -S -x "$ROOT/meeting-state/meeting-state"
 /usr/bin/strip -S -x "$ROOT/agent-context/agent-context"
+/usr/bin/strip -S -x "$ROOT/agent-action/agent-action"
 /usr/bin/strip -S -x "$ROOT/stt/transcribe-server/transcribe-server"
 
 codesign --force --options runtime --identifier com.myassistant.desktop --sign "$SIGN_IDENTITY" "$ROOT/stt/meeting-tap"
 codesign --force --options runtime --identifier com.myassistant.desktop --sign "$SIGN_IDENTITY" "$ROOT/meeting-state/meeting-state"
 codesign --force --options runtime --identifier com.myassistant.desktop --sign "$SIGN_IDENTITY" "$ROOT/agent-context/agent-context"
+codesign --force --options runtime --identifier com.myassistant.desktop --sign "$SIGN_IDENTITY" "$ROOT/agent-action/agent-action"
 codesign --force --options runtime --identifier com.myassistant.desktop.transcribe-server --sign "$SIGN_IDENTITY" "$ROOT/stt/transcribe-server/transcribe-server"
 
 (cd "$ROOT/desktop" && npm run build)
@@ -63,6 +65,7 @@ codesign --verify --strict "$APP/Contents/Resources/stt/meeting-tap"
 codesign --verify --strict "$APP/Contents/Resources/stt/transcribe-server/transcribe-server"
 codesign --verify --strict "$APP/Contents/Resources/meeting-state/meeting-state"
 codesign --verify --strict "$APP/Contents/Resources/agent-context/agent-context"
+codesign --verify --strict "$APP/Contents/Resources/agent-action/agent-action"
 
 SIGN_IDENTITY="$SIGN_IDENTITY" "$ROOT/desktop/make-dmg.sh"
 DMG="$(find "$ROOT/desktop/src-tauri/target/release/bundle/dmg" -maxdepth 1 -name 'My_Assistant_*-beta.1_arm64.dmg' -print | sort | tail -n 1)"

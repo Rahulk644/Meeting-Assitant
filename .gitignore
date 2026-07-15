@@ -7,6 +7,7 @@ stt/whisper/bin/
 stt/meeting-tap
 meeting-state/meeting-state
 agent-context/agent-context
+agent-action/agent-action
 stt/transcribe-server/transcribe-server
 stt/transcribe-server/.transcribe.cpp/
 

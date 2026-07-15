@@ -15,6 +15,9 @@ pkill -f "^$APP_BINARY$" >/dev/null 2>&1 || true
 pkill -f "^$APP_BUNDLE/Contents/Resources/stt/meeting-tap " >/dev/null 2>&1 || true
 pkill -f "^$APP_BUNDLE/Contents/Resources/stt/transcribe-server/transcribe-server " >/dev/null 2>&1 || true
 pkill -f "^$APP_BUNDLE/Contents/Resources/meeting-state/meeting-state$" >/dev/null 2>&1 || true
+pkill -f "^$APP_BUNDLE/Contents/Resources/agent-action/agent-action$" >/dev/null 2>&1 || true
+
+SIGN_IDENTITY="My Assistant Dev" "$ROOT_DIR/script/build_agent_helpers.sh"
 
 (
   cd "$DESKTOP_DIR"
