@@ -5,6 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SIGN_IDENTITY="${SIGN_IDENTITY:-My Assistant Dev}"
+RELEASE_LABEL="${RELEASE_LABEL:-beta.2}"
 APP="$ROOT/desktop/src-tauri/target/release/bundle/macos/My Assistant.app"
 
 pkill -f "^$APP/Contents/MacOS/app$" >/dev/null 2>&1 || true
@@ -67,8 +68,8 @@ codesign --verify --strict "$APP/Contents/Resources/meeting-state/meeting-state"
 codesign --verify --strict "$APP/Contents/Resources/agent-context/agent-context"
 codesign --verify --strict "$APP/Contents/Resources/agent-action/agent-action"
 
-SIGN_IDENTITY="$SIGN_IDENTITY" "$ROOT/desktop/make-dmg.sh"
-DMG="$(find "$ROOT/desktop/src-tauri/target/release/bundle/dmg" -maxdepth 1 -name 'My_Assistant_*-beta.1_arm64.dmg' -print | sort | tail -n 1)"
+SIGN_IDENTITY="$SIGN_IDENTITY" RELEASE_LABEL="$RELEASE_LABEL" "$ROOT/desktop/make-dmg.sh"
+DMG="$(find "$ROOT/desktop/src-tauri/target/release/bundle/dmg" -maxdepth 1 -name "My_Assistant_*-${RELEASE_LABEL}_arm64.dmg" -print | sort | tail -n 1)"
 [[ -f "$DMG" ]]
 codesign --verify "$DMG"
 hdiutil verify "$DMG" >/dev/null

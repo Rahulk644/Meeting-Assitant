@@ -5,6 +5,10 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ## Unreleased
 
+No user-visible changes are queued after beta.2.
+
+## [0.1.0-beta.2] - 2026-07-15
+
 ### Added
 
 - Native AppKit dictation status pill with listening and transcribing states.

@@ -866,12 +866,12 @@ fn agent_plan(mut request: Request, shared: Arc<Shared>) {
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        setting_json(&state.settings, "agentCompute").unwrap_or_else(|| json!({"lane":"chatgpt"}))
+        setting_json(&state.settings, "agentCompute").unwrap_or_else(|| json!({"lane":"local"}))
     };
     let lane = compute
         .get("lane")
         .and_then(Value::as_str)
-        .unwrap_or("chatgpt");
+        .unwrap_or("local");
     if lane == "local" {
         return json_response(
             request,

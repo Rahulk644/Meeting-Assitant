@@ -113,33 +113,33 @@ macOS Keychain.
 ## Release status
 
 The latest automated-verified **production** artifact is
-`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,689,064 bytes), SHA-256
-`17dcbf330da329fc0d01ea06d86c5346fea10761a1b5c4101107b7190656c4fd`. The app bundle is 28,508 KiB.
-After the packaged launch settled, the app plus the two meeting helpers measured about 43.1 MiB aggregate
-physical footprint and 40,048 KiB aggregate RSS; the on-demand Agent context helper was not resident and no
-app-owned Speech, LLM, or Codex process was resident. That artifact's release gate was 30/30 Node tests,
-34/34 Rust tests, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, zero desktop npm
-vulnerabilities, and passing transcribe-server, meeting-tap, meeting-state, and agent-context self-tests. All
+`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.2_arm64.dmg` (14,759,965 bytes), SHA-256
+`ace262ed08930aca9206378ee1617f72befe72c0af2248100e0fdc35224acc5a`. The app bundle is 28,704 KiB.
+After the packaged launch settled, the app plus the two meeting helpers measured about 38 MiB aggregate
+physical footprint and 44,736 KiB aggregate RSS; the on-demand Agent helpers were not resident and no
+app-owned Speech, LLM, or Codex process was resident. That artifact's release gate was 33/33 Node tests,
+41/41 Rust tests, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, zero desktop npm
+vulnerabilities, and passing transcribe-server, meeting-tap, meeting-state, agent-context, and agent-action self-tests. All
 12 revision-pinned model endpoints returned the exact catalog content length.
 The DMG passed checksum and deep signature verification, carries the production model picker and
 capability-gated Translation/Agent-compute payload, contains no Codex, Node, model, benchmark, transcript, or source artifact, launched
 successfully, kept unauthenticated loopback access at 401, and rejected a forged Host at 403.
 
-Current `codex/agent-actions` source is newer than that DMG. Its verification is 33/33 Node tests, 41/41 Rust
-tests, 3/3 acceptance-runner tests, warnings-denied Clippy, valid release WebView assets, and passing
-`agent-context` and `agent-action` self-tests. The optimized 28,788 KiB preview `.app` passes strict deep
-signature verification, contains both signed arm64 Agent helpers, and carries the preview release contract.
-The final installed candidate is arm64 UUID `5414F90D-1230-35FC-9A9F-254DBD54E99A` with main-binary
-SHA-256 `fa6cde1a6899394fac7259182c8e7e8c8a267191f2ef9fde90f9dafb2ef49218`. It launched, quit
-cleanly, and relaunched without a new crash report.
+The artifact matches current `codex/agent-actions` source. Its main executable is arm64 UUID
+`CD4A10B1-EC33-3702-B2FC-D86A40D82328`, SHA-256
+`1e42a14b0b0e6e2baa27b311a4554b2b6221d6a7bdd20b96a5ede5463e081dfa`. It launched from the exact
+read-only DMG mount, rendered the production capability contract, defaulted a clean Agent compute profile to
+the zero-network Local lane, opened an empty API-key lane without a Keychain dialog, and left no synthetic
+provider, shortcut, debug, or Keychain item behind.
 AGT-023 passed: three proposals plus model discovery reused one process-only credential copy, and the unchanged
 installed candidate accessed the same disposable Keychain item after relaunch with zero authorization dialogs.
 The controlled packaged TextEdit gate also passes cursor insertion, selection replacement, exact Undo,
 app-switch rejection, stale text/selection rejection, and Undo-after-user-edit refusal (AGT-015/016/017/019/020).
-The preview helper remains process-bound and TextEdit-only. Physical shortcut acceptance, expiry/relaunch
+The production bundle contains the signed preview helper but `agentActions`, draft preview, and the global Agent
+shortcut are disabled by the production release contract. The helper remains process-bound and TextEdit-only.
+Physical shortcut acceptance, expiry/relaunch
 execution-state checks, non-TextEdit/secure-field breadth, and instrumented rollback outcomes remain open.
-Do not distribute the older DMG as evidence of the new Agent action code, and do not enable `agentActions`
-in production.
+Do not describe the DMG as shipping Agent actions, and do not enable `agentActions` in production.
 
 An older comparison build formerly present at `/Applications/My Assistant.app` had a different arm64 UUID and
 was the source of the observed macOS reopen/crash loop. Its evidence was captured and the duplicate bundles

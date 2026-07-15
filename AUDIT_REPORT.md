@@ -2,7 +2,7 @@
 
 **Audit date:** 15 July 2026
 
-**Scope:** Apple-silicon macOS beta; verified production artifact plus current `codex/agent-actions` source
+**Scope:** Apple-silicon macOS beta; verified production artifact built from current `codex/agent-actions` source
 
 **Decision:** suitable for a small, explicitly informed beta group; not a general public release
 
@@ -15,15 +15,16 @@ formal third-party penetration test or a promise of zero defects. Product visibi
 
 | Item | Verified value |
 |---|---|
-| DMG | `desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` |
-| SHA-256 | `17dcbf330da329fc0d01ea06d86c5346fea10761a1b5c4101107b7190656c4fd` |
-| DMG size | 14,689,064 bytes (14.0 MiB) |
-| Installed app | 28,508 KiB (27.8 MiB) |
+| DMG | `desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.2_arm64.dmg` |
+| SHA-256 | `ace262ed08930aca9206378ee1617f72befe72c0af2248100e0fdc35224acc5a` |
+| DMG size | 14,759,965 bytes (14.1 MiB) |
+| Installed app | 28,704 KiB (28.0 MiB) |
 | Target | Apple Silicon, macOS 14.4+ |
 | Signing | stable self-signed `My Assistant Dev`, hardened runtime, no Team ID/notarization |
 
-This artifact predates the preview-only Agent action helper described below. It remains the last verified
-sendable production build; do not present it as evidence that Agent Apply/Undo ships. The DMG checksum and
+This is the latest verified sendable production build. It contains the signed preview-only Agent action
+helper, but the production contract disables draft preview, Apply/Undo, and the Agent shortcut; do not present
+the helper's presence as evidence that those features ship. The DMG checksum and
 `hdiutil verify` pass. A read-only mount contains `My Assistant.app`, an Applications
 shortcut, and the beta install guide. The app and every nested helper pass strict deep signature
 verification. All five executables are arm64 and depend only on operating-system libraries/frameworks.
@@ -80,44 +81,40 @@ Measured after a fresh absolute-path packaged launch and settle, with no Speech/
 
 | Process | Physical footprint | RSS |
 |---|---:|---:|
-| Rust/Tauri app | 36 MiB | 22,048 KiB |
-| `meeting-tap` | 4,994 KiB | 11,440 KiB |
-| `meeting-state` | 2,289 KiB | 6,560 KiB |
-| **Aggregate** | **about 43.1 MiB** | **40,048 KiB (39.1 MiB)** |
+| Rust/Tauri app | 31 MiB | 27,792 KiB |
+| `meeting-tap` | 4,802 KiB | 11,088 KiB |
+| `meeting-state` | 2,129 KiB | 5,856 KiB |
+| **Aggregate** | **about 38 MiB** | **44,736 KiB (43.7 MiB)** |
 
 RSS includes shared/mapped pages; macOS physical footprint is the better memory-pressure indicator. The
-speech engine and optional local LLM remain on demand. `agent-context` was absent from the idle process list;
-its signed binary adds 118,304 bytes to the app and runs only for one inspection. The clean-profile packaged
-launch created no Codex profile or process. A separate user-triggered status probe exited and left no Codex
-process owned by My Assistant resident. Speech residency is
-user-configurable and defaults to ten idle minutes. The verified production artifact contains no
-`agent-action` helper because it predates that preview milestone. The installed app contains no Node runtime and no
+speech engine and optional local LLM remain on demand. Both Agent helpers were absent from the idle process
+list and run only for explicit Agent operations. The cleaned packaged launch defaulted to Local compute and
+created no My Assistant-owned Codex process; unrelated ChatGPT-owned App Server processes were excluded from
+the measurement. Speech residency is user-configurable and defaults to ten idle minutes. The installed app contains no Node runtime and no
 permanently hidden pill WebView.
 
 ## Verification evidence
 
 The final artifact was built through `./script/build_release_dmg.sh`, which now enforces:
 
-- **30/30** Node product/release/parity tests;
-- **34/34** Rust tests, `cargo fmt --check`, `cargo check --locked`, and warnings-denied Clippy;
+- **33/33** Node product/release/parity tests;
+- **41/41** Rust tests, `cargo fmt --check`, `cargo check --locked`, and warnings-denied Clippy;
 - **17/17** speech/corpus/matrix tests and **3/3** acceptance-runner unit tests;
-- shell/JSON/Python validation plus `meeting-tap`, `meeting-state`, `agent-context`, and `transcribe-server` self-tests;
+- shell/JSON/Python validation plus `meeting-tap`, `meeting-state`, `agent-context`, `agent-action`, and `transcribe-server` self-tests;
 - full desktop npm audit: **0 vulnerabilities**;
 - optimized Tauri build, stable helper/app signing, DMG signing/layout/checksum verification.
 
-The newer `codex/agent-actions` source separately passes **33/33** Node tests, **41/41** Rust tests,
-**3/3** acceptance-runner tests, warnings-denied Clippy, WebView asset preparation, and both Agent Swift
-self-tests. Its optimized 28,788 KiB preview `.app` passes strict deep signature verification, embeds both
-signed arm64 Agent helpers, and carries the preview release contract. The installed candidate (arm64 UUID
-`5414F90D-1230-35FC-9A9F-254DBD54E99A`, main-binary SHA-256
-`fa6cde1a6899394fac7259182c8e7e8c8a267191f2ef9fde90f9dafb2ef49218`) launched, quit normally,
-and relaunched without a new crash report. AGT-023 passed with private, hash-pinned
+The optimized production app passes strict deep signature verification, embeds both signed arm64 Agent
+helpers behind disabled production capabilities, and carries the production release contract. The mounted
+candidate (arm64 UUID `CD4A10B1-EC33-3702-B2FC-D86A40D82328`, main-binary SHA-256
+`1e42a14b0b0e6e2baa27b311a4554b2b6221d6a7bdd20b96a5ede5463e081dfa`) launched from the exact DMG,
+defaulted clean Agent compute to Local, and opened an empty API-key lane without a Keychain dialog. AGT-023 passed with private, hash-pinned
 evidence: three proposals and one model-list request produced no repeated Keychain prompt in one process, and
 the unchanged installed candidate reused the credential after relaunch with zero prompts. The physical
 packaged gate now passes cursor insertion, selection replacement, exact Undo, app-switch rejection, stale
 text/selection rejection, and Undo-after-user-edit refusal. Physical shortcut, expiry/relaunch execution
-state, secure/unsupported targets, packaged-helper residency, and instrumented rollback outcomes remain open,
-so this source is not a new sendable artifact.
+state, secure/unsupported targets, packaged-helper residency, and instrumented rollback outcomes remain open;
+those preview capabilities therefore remain disabled in production.
 
 The macOS reopen/crash dialogs observed during this pass were traced to an older comparison binary with a
 different arm64 UUID that was still registered under the same bundle identifier in `/Applications`. Its

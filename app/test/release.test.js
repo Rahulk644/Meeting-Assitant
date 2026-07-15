@@ -57,6 +57,8 @@ test("every release-matrix capability is registered in the server-owned contract
 
 test("external Codex detection is lazy and lane-specific", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.match(html, /store\.get\('agentCompute',\{lane:'local'/, "clean installs must default to zero-network local compute");
+  assert.match(html, /lane=cfg\.lane\|\|'local'/);
   assert.match(html, /if\(name==='agents'\) ensureAgentRuntime\(\)/);
   assert.match(html, /agentComputeCfg\(\)\.lane!=='chatgpt'/);
   assert.match(html, /agentRuntimeStatus\|\|agentRuntimeLoading/);

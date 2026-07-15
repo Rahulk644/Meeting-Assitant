@@ -2113,14 +2113,14 @@ function initCall(){
 }
 
 let agentRuntimeStatus=null,agentRuntimeLoading=false,agentProviderModels={};
-function agentComputeCfg(){ return store.get('agentCompute',{lane:'chatgpt',apiProvider:'openai',apiModel:'',apiBase:'',model:'',effort:'medium',personality:'pragmatic',maxOutput:1200}); }
+function agentComputeCfg(){ return store.get('agentCompute',{lane:'local',apiProvider:'openai',apiModel:'',apiBase:'',model:'',effort:'medium',personality:'pragmatic',maxOutput:1200}); }
 function setAgentCompute(patch){ store.set('agentCompute',Object.assign(agentComputeCfg(),patch)); }
 function agentField(label,control){ const wrap=el('div','agent-config-field'); wrap.append(el('label','',label),control); return wrap; }
 function agentSelect(values,current,onchange){ const select=el('select','selp'); values.forEach(value=>{ const item=typeof value==='string'?{value,label:value}:value; select.add(new Option(item.label,item.value,false,item.value===current)); }); select.onchange=()=>onchange(select.value); return select; }
 function selectedCodexModel(status,cfg){ const models=status?.models||[]; return models.find(item=>(item.id||item.model)===cfg.model)||models.find(item=>item.isDefault)||models[0]||null; }
 function renderAgentCompute(){
   const lanes=$('#agentComputeLanes'),body=$('#agentComputeBody'); if(!lanes||!body)return;
-  const cfg=agentComputeCfg(),lane=cfg.lane||'chatgpt'; lanes.replaceChildren();
+  const cfg=agentComputeCfg(),lane=cfg.lane||'local'; lanes.replaceChildren();
   [['local','Local'],['api','API key'],['chatgpt','ChatGPT · Codex']].forEach(([value,label])=>{ const b=el('button',value===lane?'on':'',label); b.type='button'; b.onclick=()=>{setAgentCompute({lane:value});renderAgentCompute();ensureAgentRuntime()}; lanes.append(b); });
   body.replaceChildren();
   if(lane==='local'){
