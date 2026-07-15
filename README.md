@@ -259,6 +259,7 @@ packaged `.app` gets its own. Flags pass through (`--app all`, `--mic off`, `--m
 | `app/server.js` | developer-only browser harness; not included in the packaged app |
 | `app/index.html` | the UI — nav, live transcript, Library + detail (player), settings; light/dark |
 | `meeting-state/meeting-state.swift` | AX layer: speaker names + in-meeting / mute / share |
+| `agent-context/agent-context.swift` | On-demand, bounded, read-only AX snapshot for the Agents foundation |
 | `data/meetings/` | saved history + `rec/` screen recordings (git-ignored, on-device) |
 
 The optional on-device LLM (LiteRT-LM + Gemma 4 E2B) is installed by the source-only `setup.sh` into
@@ -324,6 +325,7 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 - [x] **Portable `.app` + `.dmg`** — bundles the web app + native helpers, keeps data + models in Application Support, and **asks the user to choose a model** on first run; drag-to-install DMG via `make-dmg.sh`
 - [x] **Rust-native packaged server** — no bundled Node runtime/process; authenticated local routes, Keychain-backed provider secrets, private transient audio, and checksum-verified model download
 - [x] **Native low-overhead status pill** — the compact AppKit panel is created only on first use, appears across full-screen spaces without stealing focus, and leaves no hidden pill WebView resident while idle
+- [x] **Agents foundation** — explicit on-demand, read-only Accessibility context with bounded opaque element IDs, secure-field redaction, no screenshot/network/persistence, and no idle helper process
 
 **Next**
 
@@ -332,6 +334,7 @@ third-party obligations are in [SUPPORT.md](SUPPORT.md), [CODE_OF_CONDUCT.md](CO
 - [ ] Measure every shipped speech model on representative Apple-silicon memory/latency/thermal profiles.
 - [ ] Add cloud Speech as a separate provider contract, beginning with Groq and OpenAI.
 - [ ] Add calendar sync and hardened platform adapters before Live Coach or cross-platform expansion.
+- [ ] Verify Agent context across the app matrix, then add the global shortcut and draft/replace/undo before wake phrase or multi-step actions.
 
 The ordered, compaction-safe backlog is maintained in
 [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md#known-release-blockers-and-follow-ups), not duplicated here.

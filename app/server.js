@@ -34,6 +34,7 @@ let msProc = null, msShutdown = false; // meeting-state child + shutdown flag (r
 const DATA_ROOT = process.env.ASSISTANT_DATA_DIR || path.join(__dirname, "..", "data");
 const MEETINGS_DIR = path.join(DATA_ROOT, "meetings");
 const REC_DIR = path.join(MEETINGS_DIR, "rec"); // screen recordings (.mp4), written by meeting-tap
+const AGENT_CONTEXT = path.join(__dirname, "..", "agent-context", "agent-context");
 // Resolve tool paths explicitly — a packaged (GUI-spawned) node has no shell PATH.
 function findBin(name) { for (const d of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) { const p = path.join(d, name); if (fs.existsSync(p)) return p; } return name; }
 const FFMPEG = findBin("ffmpeg"); // for meeting thumbnails from the screen recording
@@ -705,6 +706,27 @@ http.createServer((req, res) => {
   }
   if (req.url === "/api/dictation/stop" && req.method === "POST") { // pill/tray Stop → meeting-tap finishes (transcribes) the current dictation
     dictStopSeq++; res.writeHead(204); return res.end();
+  }
+  if (req.url === "/api/agent/context" && req.method === "POST") {
+    if (!RELEASE.capabilities.agentContextInspector || !fs.existsSync(AGENT_CONTEXT)) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      return res.end('{"ok":false,"error":"The native screen-context helper is unavailable."}');
+    }
+    execFile(AGENT_CONTEXT, ["--once"], { timeout: 1500, maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: String(stderr || error.message || error).trim().slice(0, 240) }));
+      }
+      try {
+        const snapshot = JSON.parse(stdout);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify(snapshot));
+      } catch {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end('{"ok":false,"error":"Screen context returned invalid JSON."}');
+      }
+    });
+    return;
   }
   if (req.url === "/api/model/status" && req.method === "GET") { // first-run: is the on-device model here yet?
     res.writeHead(200, { "Content-Type": "application/json" });

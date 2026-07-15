@@ -18,7 +18,10 @@ chronological work log.
 - **Meetings:** beta. Dedicated call apps detect from Core Audio activity; browser and multipurpose chat calls
   additionally require meeting-window evidence. Calls are captured without a bot, transcribed locally,
   stored on-device, and summarized with a configured local or cloud model. Manual capture works universally.
-- **Writing Assistant and Agents:** design-preview only. They are not production promises.
+- **Writing Assistant:** design-preview only. It is not a production promise.
+- **Agents:** the production surface now exposes only a foundation preview: an explicit, on-demand,
+  read-only Accessibility snapshot with secure-field redaction and no screenshot, model call, network use,
+  persistence, or computer action. The autonomous runtime and wake phrase remain preview-only.
 - **Local speech models:** shipped as an explicit model library shared by dictation and meetings. Downloads
   are separate from the app and the active model controls languages, translation, output, and preprocessing.
 - **Cloud speech, calendar sync, updates, accounts, teams, sharing, and billing:**
@@ -40,6 +43,7 @@ AppKit/Tauri shell
   ├─ authenticated Rust loopback service at 127.0.0.1:8790
   ├─ meeting-tap (Swift): real-call detection, system audio, mic, optional video
   ├─ meeting-state (Swift): Accessibility-derived speaker/mute/share evidence
+  ├─ agent-context (Swift, on demand): bounded read-only Accessibility snapshot
   └─ transcribe-server (C++): on-demand transcribe.cpp/selected local speech model
 ```
 
@@ -82,17 +86,21 @@ macOS Keychain.
 - Native transcription keeps valid partial text when a model reaches its output limit, reports truncation,
   and guarantees valid UTF-8 JSON.
 - API keys never belong in JSON, SQLite, logs, process arguments, temporary files, or WebView state.
+- Agent context is captured only after an explicit user request, bounded by node/depth/child/time limits,
+  uses opaque request-local element IDs, redacts secure fields, and is neither persisted nor sent to a
+  provider. Screen-derived text must be treated as untrusted input in every future model prompt.
 
 ## Release status
 
 The current automated-verified artifact is
-`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,586,155 bytes), SHA-256
-`9836452224f514765c7f8e7b4bd7d744d89de4dfc942b09322d8a3198a4b20c7`. The app bundle is 28,260 KiB.
-After a short post-launch idle, the app and both meeting helpers measured about 38.2 MiB aggregate physical
-footprint and 49,600 KiB aggregate RSS; no speech or LLM process was resident. Verification is 29/29 Node
-product/release/parity tests, 23/23 Rust tests, warnings-denied Clippy, 17/17 speech/corpus/matrix tests, 3/3
-acceptance-runner tests, zero desktop npm vulnerabilities, and passing transcribe-server, meeting-tap, and
-meeting-state self-tests. All 12 revision-pinned model endpoints returned the exact catalog content length.
+`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.1_arm64.dmg` (14,626,990 bytes), SHA-256
+`45bcb951072f1b72dee742fa45a9e0dec67a71898ad6134663e1422195c45787`. The app bundle is 28,380 KiB.
+After the packaged launch settled, the app plus the two meeting helpers measured about 43.1 MiB aggregate
+physical footprint and 59,792 KiB aggregate RSS; the on-demand Agent context helper was not resident and no
+Speech or LLM process was resident. Verification is 29/29 Node product/release/parity tests, 26/26 Rust
+tests, warnings-denied Clippy, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, zero desktop npm
+vulnerabilities, and passing transcribe-server, meeting-tap, meeting-state, and agent-context self-tests. All
+12 revision-pinned model endpoints returned the exact catalog content length.
 The DMG passed checksum and deep signature verification, carries the production model picker and
 capability-gated Translation payload, contains no model/benchmark/transcript/source artifact, launched
 successfully, kept unauthenticated loopback access at 401, and rejected a forged Host at 403.
@@ -124,7 +132,9 @@ background updates cannot be made trustworthy until a separate updater signing-k
    fallback, and separate future cloud Speech providers from meeting-note Intelligence providers.
 9. Add an in-app local Intelligence install/status/remove flow; until then, clean beta testers use BYOK for
    meeting notes even though dictation and transcription remain fully local.
-10. The verified branch is ahead of `main`; draft PR
+10. Complete the Agent context acceptance matrix across native, browser, Electron, secure-field, permission,
+    full-screen, and multi-display cases before adding the global shortcut or any mutation capability.
+11. The verified branch is ahead of `main`; draft PR
     [#1](https://github.com/Rahulk644/Meeting-Assitant/pull/1) is open. Review/merge it before treating the
     private repository's default branch or community profile as current OSS truth, then create the first tag
     and GitHub beta release.

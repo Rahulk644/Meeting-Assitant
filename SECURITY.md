@@ -59,6 +59,16 @@ are rejected. The transcription helper independently requires authentication and
 The first-run speech model is accepted only when its exact size and pinned SHA-256 match the audited Hugging
 Face artifact. Incomplete or mismatched downloads are deleted and never loaded.
 
+## Agent screen context
+
+The production Agents foundation is read-only and explicit. Clicking **Inspect app behind My Assistant**
+runs a signed native Accessibility helper once, returns a bounded structured snapshot to the authenticated
+local UI, and exits. Secure fields omit values. It does not take a screenshot, capture audio, contact a
+model/provider, write the snapshot to disk, or perform a computer action. The helper and Rust endpoint both
+enforce size/time limits. Future model prompts must delimit screen-derived text as untrusted data, and no
+mutation capability may ship without native snapshot revalidation and the confirmation policy in
+[`docs/AGENTS_ARCHITECTURE.md`](docs/AGENTS_ARCHITECTURE.md).
+
 ## macOS permissions
 
 The app requests the **minimum** macOS permission for each feature, and only when that feature is first

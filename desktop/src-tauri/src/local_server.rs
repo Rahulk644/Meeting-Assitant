@@ -59,6 +59,7 @@ struct Config {
     rec_dir: PathBuf,
     models_dir: PathBuf,
     transcribe_bin: PathBuf,
+    agent_context_bin: PathBuf,
     meeting_notifier: Arc<dyn Fn(String) + Send + Sync>,
 }
 
@@ -409,6 +410,7 @@ pub fn start(
         finalize_generation: 0,
         meeting_last_checkpoint: None,
     };
+    let res_base = PathBuf::from(res_base);
     let shared = Arc::new(Shared {
         cfg: Config {
             token: token.clone(),
@@ -418,7 +420,8 @@ pub fn start(
             meetings_dir,
             rec_dir,
             models_dir,
-            transcribe_bin: PathBuf::from(res_base).join("stt/transcribe-server/transcribe-server"),
+            transcribe_bin: res_base.join("stt/transcribe-server/transcribe-server"),
+            agent_context_bin: res_base.join("agent-context/agent-context"),
             meeting_notifier,
         },
         state: Mutex::new(state),
@@ -604,6 +607,108 @@ fn fresh_ui_location() -> String {
     format!("/?run={}-{}", std::process::id(), now_ms())
 }
 
+fn read_bounded<R: Read>(mut reader: R, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut kept = Vec::new();
+    let mut over_limit = false;
+    let mut chunk = [0u8; 8 * 1024];
+    loop {
+        let count = reader.read(&mut chunk)?;
+        if count == 0 {
+            return Ok((kept, over_limit));
+        }
+        let remaining = limit.saturating_sub(kept.len());
+        if count > remaining {
+            over_limit = true;
+        }
+        if remaining > 0 {
+            kept.extend_from_slice(&chunk[..count.min(remaining)]);
+        }
+    }
+}
+
+fn capture_agent_context(binary: &Path) -> Result<Value, String> {
+    if !binary.is_file() {
+        return Err("The native screen-context helper is missing from this build.".into());
+    }
+    let mut child = Command::new(binary)
+        .arg("--once")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Screen context could not start: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Screen context stdout was unavailable.".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Screen context stderr was unavailable.".to_string())?;
+    // Drain both pipes while polling the process. Waiting for exit before reading can deadlock when a rich
+    // Accessibility tree exceeds the OS pipe buffer, even though it remains below our response limit.
+    let stdout_reader = thread::spawn(move || read_bounded(stdout, 256 * 1024));
+    let stderr_reader = thread::spawn(move || read_bounded(stderr, 16 * 1024));
+    let deadline = Instant::now() + Duration::from_millis(1_500);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(
+                    "Screen context timed out before macOS returned a bounded snapshot.".into(),
+                );
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!("Screen context status failed: {error}"));
+            }
+        }
+    };
+    let (stdout, stdout_over_limit) = stdout_reader
+        .join()
+        .map_err(|_| "Screen context stdout reader failed.".to_string())?
+        .map_err(|error| format!("Screen context stdout failed: {error}"))?;
+    let (stderr, _) = stderr_reader
+        .join()
+        .map_err(|_| "Screen context stderr reader failed.".to_string())?
+        .map_err(|error| format!("Screen context stderr failed: {error}"))?;
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            "Screen context exited without a usable snapshot.".into()
+        } else {
+            format!("Screen context failed: {detail}")
+        });
+    }
+    if stdout_over_limit {
+        return Err("Screen context exceeded the local response limit.".into());
+    }
+    serde_json::from_slice(&stdout)
+        .map_err(|error| format!("Screen context returned invalid JSON: {error}"))
+}
+
+fn agent_context(request: Request, shared: &Shared) {
+    if !release_capability(&shared.cfg.release, "agentContextInspector") {
+        return json_response(
+            request,
+            404,
+            json!({"ok":false,"error":"Agent context is not enabled in this release."}),
+        );
+    }
+    match capture_agent_context(&shared.cfg.agent_context_bin) {
+        Ok(snapshot) => json_response(request, 200, snapshot),
+        Err(error) => json_response(request, 503, json!({"ok":false,"error":error})),
+    }
+}
+
 fn handle(mut request: Request, shared: Arc<Shared>) {
     let host = header(&request, "Host");
     if host != ADDRESS && host != "localhost:8790" {
@@ -695,6 +800,7 @@ fn handle(mut request: Request, shared: Arc<Shared>) {
                 .dict_stop += 1;
             respond(request, 204, "text/plain", Vec::new(), vec![])
         }
+        (Method::Post, "/api/agent/context") => agent_context(request, &shared),
         (Method::Get, "/api/model/status") => json_response(request, 200, model_status(&shared)),
         (Method::Post, "/api/model/download") => model_download(request, shared),
         (Method::Post, "/api/model/select") => model_select(request, shared),
@@ -3453,6 +3559,7 @@ mod tests {
             rec_dir: root.clone(),
             models_dir: root.clone(),
             transcribe_bin: root.join("none"),
+            agent_context_bin: root.join("none"),
             meeting_notifier: Arc::new(|_| {}),
         };
         save_meeting(&cfg, &m).unwrap();
@@ -3490,5 +3597,45 @@ mod tests {
         assert!(first.starts_with("/?run="));
         assert!(!first.contains("bootstrap"));
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn agent_context_fails_closed_when_the_native_helper_is_missing() {
+        let missing = std::env::temp_dir().join(format!(
+            "my-assistant-missing-agent-context-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let error = capture_agent_context(&missing).unwrap_err();
+        assert!(error.contains("missing from this build"));
+    }
+
+    #[test]
+    fn bounded_reader_drains_without_exceeding_its_memory_ceiling() {
+        let (exact, exact_over) = read_bounded(&b"abcd"[..], 4).unwrap();
+        assert_eq!(exact, b"abcd");
+        assert!(!exact_over);
+        let (limited, limited_over) = read_bounded(&b"abcdef"[..], 4).unwrap();
+        assert_eq!(limited, b"abcd");
+        assert!(limited_over);
+    }
+
+    #[test]
+    fn agent_context_process_output_is_parsed() {
+        let path = std::env::temp_dir().join(format!(
+            "my-assistant-agent-context-fixture-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::write(
+            &path,
+            b"#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"status\":\"ready\",\"elementCount\":2}'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        let value = capture_agent_context(&path).unwrap();
+        assert_eq!(value.get("status").and_then(Value::as_str), Some("ready"));
+        assert_eq!(value.get("elementCount").and_then(Value::as_u64), Some(2));
+        let _ = fs::remove_file(path);
     }
 }

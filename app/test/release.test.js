@@ -29,10 +29,12 @@ test("release channel is fail-closed", () => {
   assert.equal(releasePayload(undefined).channel, "production");
 });
 
-test("hidden and unknown saved routes fall back to Meetings", () => {
+test("hidden and unknown saved routes fall back while the Agents foundation remains reachable", () => {
   const production = capabilityMap("production");
   assert.equal(sanitizeRoute("writing", production), "meetings");
-  assert.equal(sanitizeRoute("agents", production), "meetings");
+  assert.equal(sanitizeRoute("agents", production), "agents");
+  assert.equal(production.agents, false, "the autonomous agent runtime is still preview-only");
+  assert.equal(production.agentContextInspector, true);
   assert.equal(sanitizeRoute("unknown", production), "meetings");
   assert.equal(sanitizeRoute("dictation", production), "dictation");
 });

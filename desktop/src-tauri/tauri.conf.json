@@ -33,7 +33,8 @@
       "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../../stt/meeting-tap": "stt/meeting-tap",
       "../../stt/transcribe-server/transcribe-server": "stt/transcribe-server/transcribe-server",
-      "../../meeting-state/meeting-state": "meeting-state/meeting-state"
+      "../../meeting-state/meeting-state": "meeting-state/meeting-state",
+      "../../agent-context/agent-context": "agent-context/agent-context"
     },
     "macOS": {
       "signingIdentity": "My Assistant Dev",

@@ -9,6 +9,8 @@ const CAPABILITIES = Object.freeze({
   settings:                  { state: "shipped", verification: "production settings-handler contract" },
   writingAssistant:          { state: "preview", verification: "implementation and native shortcut required" },
   agents:                    { state: "preview", verification: "agent runtime required" },
+  agentFoundation:           { state: "shipped", verification: "honest read-only Agents foundation surface" },
+  agentContextInspector:     { state: "shipped", verification: "bounded on-demand native Accessibility snapshot and helper self-test" },
   feedbackSupport:           { state: "hidden", verification: "working destinations required" },
   guide:                     { state: "hidden", verification: "published guide required" },
   shareFriend:               { state: "hidden", verification: "working share destination required" },
@@ -117,7 +119,7 @@ const ROUTE_CAPABILITY = Object.freeze({
   meetings: "meetings",
   dictation: "dictation",
   writing: "writingAssistant",
-  agents: "agents",
+  agents: "agentFoundation",
   feedback: "feedbackSupport",
   guide: "guide",
   share: "shareFriend",
@@ -168,7 +170,7 @@ const HANDLED_SETTINGS = Object.freeze([
 const PRODUCTION_CTAS = Object.freeze([
   "meeting-record", "meeting-pause", "meeting-resume", "meeting-stop", "meeting-open", "meeting-rename",
   "meeting-export", "meeting-generate-summary", "meeting-ask", "participant-correct", "transcript-correct",
-  "dictation-vocabulary", "settings-open",
+  "dictation-vocabulary", "settings-open", "agent-context-inspect",
 ]);
 const HANDLED_CTAS = Object.freeze([...PRODUCTION_CTAS]);
 

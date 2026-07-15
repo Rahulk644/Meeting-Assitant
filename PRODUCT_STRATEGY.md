@@ -12,6 +12,12 @@ My Assistant combines three products without making the user operate three produ
 2. private, no-bot meeting capture with Fathom-quality workflow; and
 3. contextual writing and meeting intelligence.
 
+Agents are the fourth product pillar: voice-driven, screen-aware assistance that can draft and later execute
+governed actions without forcing the user to leave the app they are working in. The architecture, safety
+tiers, wake-phrase boundary, and ordered delivery plan live in
+[`docs/AGENTS_ARCHITECTURE.md`](docs/AGENTS_ARCHITECTURE.md). The shipped foundation is read-only; this
+strategy must never be read as evidence that computer actions or a wake phrase are already available.
+
 The core remains useful for free with local processing. Users pay for costs the project incurs or for
 material team/service value, not to unlock basic privacy, reliability, updates, or security fixes.
 

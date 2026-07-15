@@ -6,6 +6,7 @@ stt/whisper/bin/
 # Native build artifacts — built by ./setup.sh
 stt/meeting-tap
 meeting-state/meeting-state
+agent-context/agent-context
 stt/transcribe-server/transcribe-server
 stt/transcribe-server/.transcribe.cpp/
 

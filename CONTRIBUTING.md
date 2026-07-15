@@ -11,6 +11,7 @@ The dependency-free Node service remains a development harness; it is not shippe
 | `app/` | The UI (`index.html`), development server (`server.js`), release contract, and unit-tested domain modules. |
 | `desktop/src-tauri/` | The packaged Rust service and Tauri shell: native AppKit pill/tray, global shortcut/event tap, capture, transcription orchestration, secure settings, and Keychain access. |
 | `meeting-state/` | Swift helper — speaker names + in-call detection via Accessibility. |
+| `agent-context/` | Swift helper — bounded, on-demand, read-only Accessibility context for Agents. |
 | `stt/` | On-device speech-to-text (`transcribe.cpp` / `whisper.cpp` servers). |
 | `benchmarks/speech/` | Pinned model/data qualification, private corpus tooling, and aggregate evidence. |
 | `acceptance/` | Machine-readable physical-shortcut and real two-person meeting acceptance matrices. |
@@ -48,6 +49,7 @@ cargo check --locked && cargo test --locked
 
 # Native helper logic/build checks after touching Swift or C++ capture code
 ./meeting-state/meeting-state --selftest
+./agent-context/agent-context --selftest
 ./stt/transcribe-server/build.sh
 
 # Speech/corpus and acceptance runner unit tests (does not download models or private data)

@@ -22,6 +22,16 @@ changing capture, transcription, or packaging.
               meeting-state (Swift, Accessibility) ─┘  speaker names, mute/share state
 ```
 
+Agent context is a separate, on-demand read-only path:
+
+```
+Agents view → authenticated POST /api/agent/context → agent-context (Swift, Accessibility) → bounded JSON
+```
+
+The helper exits after one snapshot, adds no idle memory, redacts secure fields, and performs no screenshot,
+network call, persistence, or computer action. The future observe-plan-confirm-act-verify design is specified
+in [`docs/AGENTS_ARCHITECTURE.md`](docs/AGENTS_ARCHITECTURE.md).
+
 Every component is on-device. No bot joins the call; no audio leaves the machine unless the user explicitly
 selects a cloud transcription or summary provider. The authenticated Rust server inside the Tauri process
 relays captions over SSE and serves the same UI used by the developer browser harness. No Node runtime or
@@ -125,8 +135,9 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   Accessibility and Screen Recording through `perm_status`. Microphone and System Audio Recording are
   labeled *Requested on first use* with recovery links because this layer does not expose a dependable live
   status for them.
-- **Permission-needing helpers are direct children.** `meeting-state` and `meeting-tap` are spawned directly
-  by Rust, so macOS can associate their checks with the app's stable identity. `meeting-state` NDJSON is
+- **Permission-needing helpers are direct children.** `meeting-state`, `meeting-tap`, and the on-demand
+  `agent-context` helper are spawned directly by Rust, so macOS can associate their checks with the app's
+  stable identity. `meeting-state` NDJSON is
   forwarded over a tiny authenticated in-process localhost request (no polling or per-update `curl`).
 - **Ad-hoc signing pins the grant to a bare cdhash — it dies on the next rebuild.** swiftc's linker output
   *and* Tauri's default bundle output are ad-hoc; ad-hoc code has no stable identity, so when you grant, TCC
@@ -135,8 +146,9 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   → re-prompt on every launch. `flags=0x2` ("proper" ad-hoc) vs `0x20002` (linker-signed) makes **no**
   difference — both are ad-hoc. The fix is a **real certificate**, not "better ad-hoc."
 - **Sign the app AND every direct-child helper with the same self-signed cert *and the app's identifier*.**
-  `tauri.conf.json` sets `bundle.macOS.signingIdentity: "My Assistant Dev"`; `setup.sh` signs `meeting-tap` /
-  `meeting-state` with `codesign --force --identifier com.myassistant.desktop --sign "My Assistant Dev"`.
+  `tauri.conf.json` sets `bundle.macOS.signingIdentity: "My Assistant Dev"`; `setup.sh` signs `meeting-tap`,
+  `meeting-state`, and `agent-context` with
+  `codesign --force --identifier com.myassistant.desktop --sign "My Assistant Dev"`.
   Two effects: (1) TCC stores `identifier "com.myassistant.desktop" and certificate leaf = …` —
   **cdhash-independent**, so grants survive rebuilds; (2) because each helper carries the *app's* identifier
   it satisfies the app's Designated Requirement and **rides the app's single grant** instead of demanding its

@@ -33,6 +33,9 @@ versions will use semantic versioning once the first public beta tag is cut.
   Hinglish. Every entry shows size, best-for guidance, abilities, license, and installed/download state.
 - Per-model language, translation, output-style, and audio-policy controls. Incompatible saved preferences
   are preserved as user intent but fail closed at inference time.
+- An honest Agents foundation view plus a signed, on-demand native Accessibility inspector. It returns a
+  bounded read-only snapshot, redacts secure fields, and exits without screenshot, network, persistence, or
+  computer actions.
 
 ### Changed
 
@@ -77,3 +80,5 @@ versions will use semantic versioning once the first public beta tag is cut.
   process arguments.
 - Model downloads are size- and SHA-256-verified before atomic installation.
 - Local UI, helper, STT, host, origin, filename, and request-size boundaries are fail-closed.
+- Screen-derived Agent context is explicit, local, bounded, treated as untrusted data, and unavailable to
+  future mutation paths without snapshot revalidation and confirmation policy.

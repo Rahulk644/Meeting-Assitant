@@ -169,7 +169,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .tgl-wrap{display:flex;align-items:center;gap:9px;flex-shrink:0;padding-top:8px}
   .tgl-wrap span{font-size:12.5px;font-weight:560;color:var(--ink-2)}
 
-  /* agents empty */
+  /* agents foundation */
   .center{flex:1;overflow:auto;min-height:0;display:flex;align-items:center;justify-content:center}
   .agbox{text-align:center;max-width:400px;padding:40px}
   .agbox .ai{width:56px;height:56px;border-radius:15px;background:var(--accent-soft);display:grid;place-items:center;margin:0 auto}
@@ -178,6 +178,41 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .soonpill{display:inline-block;margin-top:12px;padding:4px 11px;border-radius:999px;background:var(--surface-2);
         color:var(--ink-2);font-size:11.5px;font-weight:600;letter-spacing:.03em}
   .agbox p{font-size:14px;color:var(--ink-2);margin-top:16px;line-height:1.6}
+  .agent-head{display:flex;align-items:flex-start;justify-content:space-between;gap:28px}
+  .agent-kicker{display:inline-flex;align-items:center;gap:7px;color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:5px 10px;font-size:10.5px;font-weight:720;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px}
+  .agent-kicker i{width:6px;height:6px;border-radius:50%;background:currentColor}
+  .agent-status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:28px}
+  .agent-stat{padding:13px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);min-width:0}
+  .agent-stat small{display:block;color:var(--ink-3);font-size:10.5px;font-weight:680;letter-spacing:.05em;text-transform:uppercase}
+  .agent-stat b{display:flex;align-items:center;gap:7px;margin-top:5px;color:var(--ink);font-size:13px;font-weight:620}
+  .agent-stat b i{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+  .agent-stat.muted b i{background:var(--ink-3)}
+  .agent-grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(250px,.7fr);gap:14px;margin-top:14px}
+  .agent-card{border:1px solid var(--line);border-radius:16px;background:var(--surface);padding:20px}
+  .agent-card-top{display:flex;align-items:flex-start;gap:13px}
+  .agent-card-icon{width:39px;height:39px;flex:0 0 auto;border-radius:11px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center}
+  .agent-card-icon svg{width:20px;height:20px}
+  .agent-card h3{font-size:14.5px;color:var(--ink);font-weight:660;margin:0}
+  .agent-card p{font-size:12.5px;line-height:1.55;color:var(--ink-2);margin-top:4px}
+  .agent-action{display:flex;align-items:center;gap:12px;margin-top:18px;flex-wrap:wrap}
+  .agent-action .obtn{margin:0}
+  .agent-privacy{font-size:11.5px;color:var(--ink-3);line-height:1.45;flex:1 1 220px}
+  .agent-result{margin-top:16px;border-top:1px solid var(--line);padding-top:16px}
+  .agent-result[hidden]{display:none!important}
+  .agent-result-head{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--ink-2)}
+  .agent-result-head .state{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .agent-result-head.error .state{background:var(--live)}
+  .agent-result-title{font-size:14px;font-weight:650;color:var(--ink);margin-top:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .agent-result-meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
+  .agent-result-meta span{font-size:10.5px;color:var(--ink-2);padding:4px 7px;border-radius:999px;background:var(--surface-2)}
+  .agent-result-focus{font-size:12px;color:var(--ink-2);margin-top:10px;line-height:1.45;overflow-wrap:anywhere}
+  .agent-steps{display:flex;flex-direction:column;gap:0;margin-top:4px}
+  .agent-step{display:grid;grid-template-columns:25px 1fr;gap:10px;position:relative;padding:8px 0}
+  .agent-step:not(:last-child):before{content:"";position:absolute;left:12px;top:31px;bottom:-7px;width:1px;background:var(--line)}
+  .agent-step .n{width:25px;height:25px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);color:var(--ink-2);font-size:10.5px;font-weight:700;z-index:1}
+  .agent-step b{display:block;color:var(--ink);font-size:12.5px;font-weight:620;margin-top:2px}
+  .agent-step span{display:block;color:var(--ink-3);font-size:11.5px;line-height:1.4;margin-top:2px}
+  @media(max-width:760px){.agent-status{grid-template-columns:1fr}.agent-grid{grid-template-columns:1fr}}
 
   /* feedback grid */
   .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:26px}
@@ -679,11 +714,44 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
 
     <!-- ===== AGENTS ===== -->
     <section id="v-agents" class="view">
-      <div class="center"><div class="agbox">
-        <div class="ai"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l1.5 4.6 4.6 1.5-4.6 1.5L12 15.6l-1.5-4.6L5.9 9.5l4.6-1.5L12 3.4Z"/><path d="M18.4 15.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2Z"/></svg></div>
-        <h2>Agents</h2>
-        <div class="soonpill">COMING SOON</div>
-        <p>Background automations that quietly run your repetitive work — the pieces you shouldn’t have to think about.</p>
+      <div class="scroll"><div class="hero wide">
+        <div class="agent-head"><div>
+          <div class="agent-kicker"><i></i>Foundation preview</div>
+          <div class="h1">Say what you need. Keep your flow.</div>
+          <div class="lead" style="max-width:590px">Agents will understand the app in front of you, draft the right change, and let you stay in control. The first native context layer is ready to inspect; actions are deliberately off.</div>
+        </div></div>
+        <div class="agent-status" aria-label="Agent foundation status">
+          <div class="agent-stat"><small>Screen context</small><b><i></i>On demand</b></div>
+          <div class="agent-stat muted"><small>Computer actions</small><b><i></i>Read-only</b></div>
+          <div class="agent-stat muted"><small>Wake phrase</small><b><i></i>Not enabled</b></div>
+        </div>
+        <div class="agent-grid">
+          <div class="agent-card">
+            <div class="agent-card-top">
+              <div class="agent-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/><path d="M8 9h8M8 12h5"/></svg></div>
+              <div><h3>Screen context</h3><p>Read a small, structured Accessibility snapshot from the active app. Secure fields are redacted. No screenshot is taken.</p></div>
+            </div>
+            <div class="agent-action">
+              <button class="obtn solid" id="agentInspect">Inspect app behind My Assistant</button>
+              <div class="agent-privacy">Runs once on this Mac, keeps nothing, and sends nothing to a model or server.</div>
+            </div>
+            <div class="agent-result" id="agentResult" hidden aria-live="polite">
+              <div class="agent-result-head" id="agentResultHead"><span class="state"></span><span id="agentResultState">Context ready</span></div>
+              <div class="agent-result-title" id="agentResultTitle"></div>
+              <div class="agent-result-meta" id="agentResultMeta"></div>
+              <div class="agent-result-focus" id="agentResultFocus"></div>
+            </div>
+          </div>
+          <div class="agent-card">
+            <h3>Where this goes next</h3>
+            <div class="agent-steps">
+              <div class="agent-step"><span class="n">1</span><div><b>Ask naturally</b><span>Shortcut first; optional local wake phrase later.</span></div></div>
+              <div class="agent-step"><span class="n">2</span><div><b>Understand the screen</b><span>Accessibility first, OCR or pixels only when needed.</span></div></div>
+              <div class="agent-step"><span class="n">3</span><div><b>Preview the change</b><span>Draft or plan before any outside action.</span></div></div>
+              <div class="agent-step"><span class="n">4</span><div><b>Apply with control</b><span>Revalidate, confirm risky steps, verify the result.</span></div></div>
+            </div>
+          </div>
+        </div>
       </div></div>
     </section>
 
@@ -1997,11 +2065,47 @@ function initCall(){
   $('#callChip').addEventListener('mousedown', e=>callBeginDrag(e,$('#callChip')));
 }
 
+function initAgents(){
+  const button=$('#agentInspect'), result=$('#agentResult');
+  if(!button||!result||!hasCap('agentContextInspector'))return;
+  button.onclick=async()=>{
+    const original=button.textContent;
+    button.disabled=true; button.textContent='Inspecting…';
+    result.hidden=true;
+    try{
+      const response=await fetch('/api/agent/context',{method:'POST'});
+      let snapshot={}; try{snapshot=await response.json();}catch{}
+      if(!response.ok||!snapshot.ok)throw new Error(snapshot.error||'Screen context is unavailable.');
+      const heading=$('#agentResultHead'); heading.classList.remove('error');
+      $('#agentResultState').textContent='Context ready · read-only';
+      $('#agentResultTitle').textContent=[snapshot.appName,snapshot.windowTitle].filter(Boolean).join(' — ')||'Current app';
+      const meta=$('#agentResultMeta'); meta.replaceChildren();
+      const chips=[
+        snapshot.elementCount+' elements',
+        snapshot.editable?'Focused field editable':'No editable focus',
+        snapshot.truncated?'Bounded snapshot':'Complete within limits',
+        snapshot.source==='app_behind_assistant'?'App behind My Assistant':'Frontmost app',
+      ];
+      chips.forEach(value=>meta.append(el('span','',value)));
+      const focus=[snapshot.focusedRole,snapshot.focusedLabel].filter(Boolean).join(' · ');
+      $('#agentResultFocus').textContent=focus?('Focused element: '+focus):'No focused element details were exposed.';
+      result.hidden=false;
+    }catch(error){
+      const heading=$('#agentResultHead'); heading.classList.add('error');
+      $('#agentResultState').textContent='Context unavailable';
+      $('#agentResultTitle').textContent=String(error.message||error);
+      $('#agentResultMeta').replaceChildren(); $('#agentResultFocus').textContent='Nothing was captured or sent.';
+      result.hidden=false;
+    }finally{ button.disabled=false; button.textContent=original; }
+  };
+}
+
 /* ---------- boot ---------- */
 async function boot(){
   await Promise.all([hydrateSettings(),loadReleaseSurface()]); // release capabilities come from the server; settings cannot promote them
   setTheme(themePref());                    // re-apply theme + accent now the real values are hydrated (the pre-paint inline read saw empty storage)
   initCall();
+  initAgents();
   setView((()=>{try{const r=localStorage.getItem('route');return safeView((r&&TITLES[r])?r:'meetings')}catch{return 'meetings'}})());
   mtShow('library');
   if(inTauri() && store.get('stealth',false)) setStealth(true);
