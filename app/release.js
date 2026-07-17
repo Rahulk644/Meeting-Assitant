@@ -8,13 +8,13 @@ const CAPABILITIES = Object.freeze({
   dictation:                 { state: "shipped", verification: "native dictation settings and hotkey path" },
   settings:                  { state: "shipped", verification: "production settings-handler contract" },
   writingAssistant:          { state: "preview", verification: "implementation and native shortcut required" },
-  agents:                    { state: "preview", verification: "agent runtime required" },
-  agentFoundation:           { state: "shipped", verification: "honest read-only Agents foundation surface" },
-  agentContextInspector:     { state: "shipped", verification: "bounded on-demand native Accessibility snapshot and helper self-test" },
-  agentComputeConfig:        { state: "shipped", verification: "external Codex detection, isolated profile, device-code auth, and provider model discovery tests" },
-  agentDraftPreview:         { state: "preview", verification: "structured read-only Codex preview requires real-app acceptance before production" },
-  agentActions:              { state: "preview", verification: "TextEdit-only explicit Apply, exact-process revalidation, verified mutation or rollback, bounded in-memory undo, and per-adapter acceptance" },
-  agentGlobalShortcut:       { state: "preview", verification: "native registration, conflict, relaunch, and focus acceptance required" },
+  agents:                    { state: "blocked", verification: "a separate product decision is required before any Agent route exists" },
+  agentFoundation:           { state: "blocked", verification: "launch decision keeps Agents disabled with no product details" },
+  agentContextInspector:     { state: "blocked", verification: "not exposed before the Agents launch gate" },
+  agentComputeConfig:        { state: "blocked", verification: "not exposed before the Agents launch gate" },
+  agentDraftPreview:         { state: "blocked", verification: "inherits the deferred Agents product boundary" },
+  agentActions:              { state: "blocked", verification: "inherits the deferred Agents product boundary" },
+  agentGlobalShortcut:       { state: "blocked", verification: "inherits the deferred Agents product boundary" },
   wakeWord:                  { state: "blocked", verification: "explicit opt-in, real-noise accuracy, resource, suspension, privacy, and licensing gates required" },
   feedbackSupport:           { state: "hidden", verification: "working destinations required" },
   guide:                     { state: "hidden", verification: "published guide required" },
@@ -56,6 +56,7 @@ const CAPABILITIES = Object.freeze({
   soundVolume:               { state: "shipped", verification: "native sound and volume settings" },
   dictationShortcut:         { state: "shipped", verification: "native shortcut registration" },
   recentDictations:          { state: "shipped", verification: "session dictation feed" },
+  smartPolish:               { state: "shipped", verification: "deterministic golden matrix, guarded local model, validator, and fallback path" },
   dictationUpload:           { state: "preview", verification: "voice-note upload pipeline required" },
   documentationLink:         { state: "hidden", verification: "published documentation destination required" },
 
@@ -124,7 +125,7 @@ const ROUTE_CAPABILITY = Object.freeze({
   meetings: "meetings",
   dictation: "dictation",
   writing: "writingAssistant",
-  agents: "agentFoundation",
+  agents: "agents",
   feedback: "feedbackSupport",
   guide: "guide",
   share: "shareFriend",
@@ -140,7 +141,7 @@ const SETTING_CAPABILITY = Object.freeze({
   appearance: "appearance", accent: "accent", start_login: "startupBehavior", start_hidden: "startupBehavior",
   stealth: "screenShareInvisibility", permissions: "permissions", version: "updater", show_tray: "trayVisibility",
   overlay_enabled: "dictationOverlay", overlay_pos: "dictationOverlay", dict_enabled: "dictationSystem",
-  push_to_talk: "dictationSystem", speech_models: "curatedSpeechPicker", dict_lang: "languagePunctuation", punctuation: "languagePunctuation",
+  push_to_talk: "dictationSystem", speech_models: "curatedSpeechPicker", smart_polish: "smartPolish", cleanup_timing: "smartPolish", polish_models: "smartPolish", dict_lang: "languagePunctuation", punctuation: "languagePunctuation",
   clipboard: "clipboardBehavior", custom_vocab: "customVocabulary", dict_sound: "soundVolume", volume: "soundVolume",
   sc_start: "dictationShortcut", sc_cancel: "dictationShortcut", wa_selection: "writingSettings",
   wa_noneditable: "writingSettings", wa_translate_lang: "writingSettings", wa_modes: "writingSettings",
@@ -169,14 +170,14 @@ const PRODUCTION_SETTINGS = Object.freeze(Object.entries(SETTING_CAPABILITY)
   .filter(([, cap]) => CAPABILITIES[cap].state === "shipped").map(([id]) => id));
 const HANDLED_SETTINGS = Object.freeze([
   "appearance", "accent", "stealth", "permissions", "show_tray", "overlay_enabled", "overlay_pos",
-  "dict_enabled", "push_to_talk", "speech_models", "dict_lang", "punctuation", "clipboard", "custom_vocab", "dict_sound",
+  "dict_enabled", "push_to_talk", "speech_models", "smart_polish", "cleanup_timing", "polish_models", "dict_lang", "punctuation", "clipboard", "custom_vocab", "dict_sound",
   "volume", "sc_start", "sc_cancel", "live_indicator", "auto_detect", "deeper", "trans_lang",
   "translate_en", "screen_rec", "templates", "mtg_model", "unload_model", "whisper_idle_minutes",
 ]);
 const PRODUCTION_CTAS = Object.freeze([
   "meeting-record", "meeting-pause", "meeting-resume", "meeting-stop", "meeting-open", "meeting-rename",
   "meeting-export", "meeting-generate-summary", "meeting-ask", "participant-correct", "transcript-correct",
-  "dictation-vocabulary", "settings-open", "agent-context-inspect",
+  "dictation-vocabulary", "settings-open",
 ]);
 const HANDLED_CTAS = Object.freeze([...PRODUCTION_CTAS]);
 

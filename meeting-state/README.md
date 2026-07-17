@@ -5,7 +5,7 @@ browser, or communication app via the macOS **Accessibility API**, and emits new
 for a parent process.
 
 **Role in this project:** it supplies the *speaker names* and *mute / share* signals that enrich the
-transcript. The live caption **text** comes from on-device Whisper (see `../stt`), not here. Core Audio in
+transcript. The live caption **text** comes from the selected on-device speech model (see `../stt`), not here. Core Audio in
 `meeting-tap` is the only authority for automatic meeting start/end. Dedicated conferencing apps use
 active per-app audio; browser/chat platforms require audio plus narrowly scoped meeting-window evidence.
 
@@ -38,8 +38,9 @@ enters the participant roster.
 
 ## Build & run
 
-```bash
-swiftc -O meeting-state.swift -o meeting-state
+```sh
+# Canonical production build from the repository root
+./script/build_native_resources.sh
 
 ./meeting-state             # wait for Core Audio activity, then stream AX state as NDJSON on change
 ./meeting-state --once      # one snapshot, then exit
@@ -47,7 +48,8 @@ swiftc -O meeting-state.swift -o meeting-state
 ./meeting-state --selftest  # validate the derive logic (exit 0/1)
 ```
 
-Requires **Accessibility** permission on the launching process (e.g. your Terminal).
+An isolated direct run requires **Accessibility** permission on the launching process. Production invokes
+the helper only from the signed app bundle.
 
 ## Emits
 

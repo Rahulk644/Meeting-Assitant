@@ -1,120 +1,132 @@
-# Security & Privacy
+# Security and privacy
 
-My Assistant is built to keep your calls and dictation **on your Mac**. This document states exactly what
-runs locally, what (if anything) leaves the machine, where data is stored, and how to report a
-vulnerability. For the engineering detail behind these claims, see [ARCHITECTURE.md](ARCHITECTURE.md).
+My Assistant is designed to keep dictation and meeting audio on the Mac. This document is the product
+privacy contract: what runs locally, what can leave the machine, what is stored, which permissions are used,
+and how to report a vulnerability.
 
-## Privacy model
+## Processing model
 
-- **On-device by default.** Audio capture, voice-activity detection, transcription (Whisper via
-  [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) on the Apple GPU), and post-call
-  summarization (when the optional Gemma/LiteRT-LM runtime has been installed) all run as local processes.
-  **No bot joins your calls, and no audio or transcript leaves the machine** while the local provider is
-  available and selected.
-- **No My Assistant account or telemetry.** There is no My Assistant identity, analytics, or crash/usage
-  reporting. An optional preview can sign into an isolated profile owned by an official external Codex
-  runtime; that is a ChatGPT/Codex account, not a My Assistant account. Network paths are explicit below.
+### Local by default
 
-## What can leave the machine (only when you opt in)
+- Microphone and meeting-app audio capture run locally.
+- Voice activity detection and speech transcription run locally through the selected verified model.
+- Deterministic dictation cleanup runs inside the app.
+- Optional Smart Polish runs through the bundled local runtime only after the user separately downloads a
+  verified Gemma model.
+- Meeting transcripts, notes, corrections, and optional recordings are stored locally.
+- There is no My Assistant account, analytics SDK, usage telemetry, advertising identifier, or automatic
+  crash-report upload.
 
-1. **First-run model download.** On first launch, if no speech model is already present, the app asks the
-   user to choose a 44 MB–1.1 GB revision-pinned model before downloading it from Hugging Face. Decline and
-   nothing is fetched. Cloud speech
-   transcription is not implemented in this beta, so the local model is required for dictation and meeting
-   transcripts. Developers can run `./setup.sh` to fetch it separately.
-2. **Bring-your-own cloud model (optional).** If you select a cloud LLM in *Settings → AI Model*
-   (Groq / OpenAI / Cerebras / custom), the **meeting text** you summarize or ask about is sent to that
-   provider using **your** API key. This is the only path that transmits meeting content, and only to the
-   provider you choose. Keep **On-device** selected to stay fully local; the current DMG does not yet install
-   that optional Intelligence runtime on a clean Mac, so summary/Ask will fail closed until it is installed or
-   a BYOK provider is configured.
-3. **Agent proposal and guarded text action (preview builds only).** After an explicit request, the selected API-key provider
-   or official external Codex runtime receives the user's instruction plus a fresh bounded Accessibility
-   snapshot. It does not receive audio, screenshots, files, shell access, or a persistent snapshot. The
-   result is a proposal only; the model has no execution tool. After review, a separate **Apply draft** click
-   can invoke a local native helper for one text insertion or selection replacement. During validation, the
-   helper accepts only the exact captured process of a disposable TextEdit document; all other app proposals
-   remain read-only. It revalidates the exact target and verifies the result. It cannot click, press Return,
-   Send, or perform multiple actions.
-   The API-key lane is billed by that provider. The ChatGPT account lane consumes the user's available Codex
-   allowance and is not a general OpenAI API entitlement.
+Agents is not part of the initial product. Production exposes only a disabled **Coming soon** label and does
+not package Agent helpers or initialize an Agent runtime.
 
-## Where your data lives
+### Data that can leave the Mac
 
-All runtime data is written under `~/Library/Application Support/My Assistant/` and is **never** part of
-the repository (the whole `data/` tree is git-ignored):
+1. **Model downloads.** After an explicit choice, the app downloads a revision-pinned speech or Smart Polish
+   model from the named model host. The artifact is accepted only when its size and SHA-256 match the built-in
+   catalog. Partial or mismatched downloads are not loaded.
+2. **Optional meeting Intelligence provider.** If the user selects a cloud provider for meeting notes or
+   Ask, the requested meeting text is sent to that provider with the user's Keychain-backed API key. Audio is
+   not sent. The local option sends nothing, but requires its separate runtime/model installation.
+
+Cloud speech transcription, sync, public sharing, telemetry, and a My Assistant account are not implemented
+in the current beta.
+
+## Stored data
+
+Runtime data lives under `~/Library/Application Support/My Assistant/`:
 
 | Path | Contents |
 |---|---|
-| `data/meetings/*.json` | saved transcripts, summaries, and notes |
-| `data/meetings/rec/*.mp4` | screen recordings — only if you enable video recording |
-| `models/` | the downloaded on-device speech model |
-| `settings.json` | non-secret preferences (a durable mirror of the UI's settings) |
-| `data/codex-profile/` | optional private isolated profile managed by the official external Codex runtime; may contain its managed ChatGPT OAuth state until the user chooses **Sign out of Codex** |
-| `data/tmp/` | private (`0700`) short-lived audio/request files, deleted immediately or on next launch |
+| `models/` | separately downloaded, verified speech and Smart Polish model files |
+| `data/settings.json` | non-secret preferences mirrored from the UI |
+| `data/meetings/*.json` | saved transcripts, corrections, summaries, and notes |
+| `data/meetings/rec/*.mp4` | optional meeting screen recordings |
+| `data/tmp/` | private short-lived request/audio files, removed immediately or at next launch |
 
-Dictation history is held **in memory only**. Audio uses a uniquely named `0600` file inside the private
-application directory only while it is being transcribed and is deleted immediately afterwards.
+Production logs live under `~/Library/Logs/com.myassistant.desktop/`. They contain lifecycle phases, model
+IDs, timings, and error categories—not transcript text, focused-field contents, audio, or API keys.
 
-## API keys
+Dictation history is session-only and held in memory. Secure-field dictation is excluded from history,
+visual changes, logs, and model inference. Dictation audio is written only when the authoritative final pass
+needs a WAV; the file uses a unique name and private permissions and is removed immediately afterward.
 
-Bring-your-own API keys are sent directly to **macOS Keychain**, never placed in localStorage or
-`settings.json`, and are sent per request only to the selected provider. Summary, Ask, model-catalog, and
-Agent-preview routes resolve allowlisted providers or validated HTTPS/loopback endpoints server-side.
+The entire repository `data/` tree, local app bundles, DMGs, native binaries, model files, acceptance
+sessions, demo renders, audio, and benchmark corpora are ignored by Git.
 
-ChatGPT device-code authentication is owned by the verified external Codex runtime. My Assistant never
-receives OAuth tokens or account email. It exposes **Sign out of Codex**, which invokes the documented App
-Server logout method for the isolated profile.
+## Secrets
+
+Provider API keys are written directly to macOS Keychain. They never enter `settings.json`, localStorage,
+logs, temporary files, command-line arguments, or committed fixtures. The Rust service reads only the key
+for the provider selected by the current request.
+
+Custom remote providers require HTTPS. Plain HTTP is allowed only for loopback services on the same Mac.
+Provider responses and request bodies are bounded, and unknown provider identifiers fail closed.
 
 ## Local service boundary
 
-The packaged UI/API server runs inside the Tauri process and fails closed if its loopback port is already
-owned. A random per-launch secret is exchanged for an HttpOnly, SameSite cookie; native helpers use the
-same secret through their environment. Requests with an unexpected Origin, missing token, or wrong Host
-are rejected. The transcription helper independently requires authentication and caps uploads at 64 MB.
+The packaged UI and API run inside the Tauri process on `127.0.0.1:8790`. Startup fails closed if another
+process already owns the port. Each launch generates a random secret that is exchanged for an HttpOnly,
+SameSite cookie. Requests with an unexpected Host, Origin, or token are rejected.
 
-The first-run speech model is accepted only when its exact size and pinned SHA-256 match the audited Hugging
-Face artifact. Incomplete or mismatched downloads are deleted and never loaded.
+The transcription and Smart Polish helpers bind only to loopback, require per-launch bearer authentication,
+limit request sizes, and terminate when the owning app exits. Model paths and runtime executables are
+selected server-side; the WebView cannot supply an arbitrary executable path.
 
-## Agent screen context
+The content-security policy denies external scripts, frames, objects, and arbitrary network origins. The
+packaged release payload is generated by the build, validated before the local server starts, and cannot be
+promoted through a URL or saved preference.
 
-The production Agents inspector is read-only and explicit. Clicking **Inspect app behind My Assistant**
-runs a signed native Accessibility helper once, returns a bounded structured snapshot to the authenticated
-local UI, and exits. Secure fields omit values. It does not take a screenshot, capture audio, contact a
-model/provider, write the snapshot to disk, or perform a computer action. The helper and Rust endpoint both
-enforce size/time limits. Model prompts delimit screen-derived text as untrusted data. The production
-surface may configure compute, but the networked planner, guarded executor, and global Agent shortcut remain
-preview-gated. Model output is reduced to a typed draft/replace/no-op proposal; unsupported actions are
-rejected and confirmation is forced. The native `agent-action` helper accepts only the exact captured
-TextEdit process and a non-secure settable text control after exact fresh-state fingerprinting. The UI names
-the app, window, role, and label before Apply; the process identifier and state fingerprint stay outside the
-browser and planner prompt. The prior value for one Undo lives in Rust
-memory for at most five minutes and never enters browser state, disk, logs, provider requests, or process
-arguments. State drift cancels before mutation. If a target transforms a write, the helper restores and
-verifies the original text and selection; if exact rollback cannot be proven, the UI presents an urgent
-verification failure rather than claiming the action was safe. The complete policy is in
-[`docs/AGENTS_ARCHITECTURE.md`](docs/AGENTS_ARCHITECTURE.md).
+## Dictation target boundary
 
-The external Codex path only executes a native binary from standard ChatGPT/Codex/CLI locations after
-strict macOS signature verification confirms OpenAI Team ID `2DC432GLL2`. It runs on demand with a private
-isolated `CODEX_HOME`; it is not bundled and adds no idle process to the app.
+The `dictation-target` helper is a short-lived native Accessibility session tied to the field focused when
+dictation begins. It reads only the focused app/role, non-content identity attributes, selection range, and a
+small prefix needed for sentence-start classification. It does not walk the Accessibility tree, capture a
+screenshot, write field text to disk, or use the network.
+
+For live-capable models, the helper owns one provisional span. Before every update or final replacement it
+revalidates the process, control identity, exact tracked text, and cursor. If any evidence changes, it stops
+mutating. The app copies the final result rather than guessing at a target. Secure, code, terminal,
+non-editable, and selected-text targets do not receive live preview.
+
+## Model and native-code integrity
+
+- Speech and Smart Polish downloads use revision-pinned URLs, exact sizes, and SHA-256.
+- `transcribe.cpp` and `llama.cpp` are built from pinned commits; a changed checkout fails the build.
+- The release app, DMG, and every nested executable are signed and verified with hardened runtime.
+- The main app and microphone capture helper carry the audio-input entitlement required by hardened runtime.
+- The artifact verifier rejects ad-hoc or wrong-authority nested code, packaged model weights, Agent helpers,
+  non-arm64 executables, and a non-production UI contract.
+
+The independent beta uses a stable self-signed certificate. This detects accidental modification and keeps a
+stable local code requirement, but it is not an Apple Developer ID and cannot be notarized. Gatekeeper will
+therefore require **Privacy & Security → Open Anyway** for each distributed build. Public distribution should
+not claim Apple verification until Developer ID notarization and stapling are mandatory.
 
 ## macOS permissions
 
-The app requests the **minimum** macOS permission for each feature, and only when that feature is first
-used — Microphone for your voice, *System Audio Recording Only* for other participants, Accessibility for
-speaker names and dictation paste, and Screen Recording only if you turn on video recording. **Settings →
-General → Permissions** shows live status where macOS exposes a reliable check; Microphone and System Audio
-use accurate **Requested on first use** guidance plus recovery links rather than invented allowed/denied state. Full model:
-[ARCHITECTURE.md → macOS permissions & code-signing](ARCHITECTURE.md#macos-permissions--code-signing--the-biggest-trap).
+| Permission | Purpose | Notes |
+|---|---|---|
+| Microphone | Dictation and the user's meeting audio | Requested on first use |
+| Input Monitoring | Default bare Right Command shortcut outside the app | Combination shortcuts use Carbon and do not require it |
+| Accessibility | Final paste, bounded live-target reconciliation, and meeting speaker/window evidence | Secure fields fail closed |
+| System Audio Recording | Other meeting participants | No meeting bot or virtual audio driver |
+| Screen Recording | Optional meeting video | Not required for audio-only meetings |
+
+Settings shows live state only where macOS exposes a reliable query. For Microphone and System Audio it uses
+honest first-use guidance rather than inventing an allowed/denied result.
 
 ## Recording consent
 
-Recording a call may require the consent of the other participants depending on your jurisdiction — some
-regions require **all-party** consent. Complying with applicable law is **your responsibility** as the
-operator; it is a legal question, not a technical one.
+Recording laws vary. Some jurisdictions require every participant's consent. The operator is responsible for
+obtaining required consent and complying with organizational policies.
 
 ## Reporting a vulnerability
 
-This is a private, single-maintainer project. If you find a security issue, please contact the maintainer
-directly (or open a private issue) rather than disclosing it publicly.
+Do not open a public issue containing a vulnerability, transcript, API key, model token, or other private
+data. Use GitHub's private vulnerability-reporting channel when enabled, or contact the maintainer through a
+private repository channel. Include the affected version, macOS version, reproduction steps, impact, and the
+minimum redacted evidence necessary to investigate.
+
+Supported security fixes target the current beta branch. There is no paid response SLA, but credible reports
+should be acknowledged and triaged before public disclosure.

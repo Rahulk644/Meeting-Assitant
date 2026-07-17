@@ -5,8 +5,76 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ## Unreleased
 
+### Added
+
+- Capability-gated live Dictation for Parakeet Unified and the two Nemotron streaming models. Provisional
+  words appear directly in compatible focused text fields, and the exact tracked span is reconciled to the
+  authoritative final transcript after cleanup and Smart Polish.
+- Experimental **Smart Polish** for Dictation, off by default: deterministic English/Hindi/Hinglish cleanup,
+  spoken punctuation, conservative number formatting, approved filler removal, custom vocabulary,
+  protected spans, target-aware behavior, and a strict lossless model-output validator.
+- A default **After I finish** cleanup-timing control for streaming speech models, plus an experimental
+  **While I speak** mode that mechanically cleans only committed phrases. Tentative words remain untouched,
+  and Gemma/Smart Polish continues to run only after Stop.
+- A separate local polish-model library for Gemma 3 270M, 1B, and 4B with explicit download, resume,
+  progress, cancel, exact-size/SHA-256 verification, atomic install, select, and remove flows. Model weights
+  remain outside the app and DMG.
+- A pinned static llama.cpp runtime with authenticated loopback-only access, one inference slot, recording-time
+  warm-up, a twelve-second cold-path cap, mechanical fallback, and 60-second idle unload.
+- Native Dictation states for Post-processing, visual changes, Inserted, safe fallback, no speech, and error; rich
+  recent-dictation diffs stay in memory for the current session only.
+- A minimal Accessibility helper that classifies the focused target without walking its tree. Secure fields
+  skip model inference and never retain transcript, original text, or diffs.
+- Deterministic cleanup, idempotence, protected-span, validator, model-catalog, and native pill regression
+  coverage.
+
+### Changed
+
+- Agents is now only a greyed-out, non-clickable **Coming soon** navigation label. Production exposes no
+  Agent route, details, settings, shortcut, compute lane, or packaged Agent helper.
+- Meetings remains explicitly labelled **Beta**.
+- Final-only speech models retain the proven single-paste path. Streaming-capable models revise only their
+  tracked provisional span in the focused editor and safely fall back to copying if reconciliation fails.
+- The separate 50 MB live-preview model and its settings/download surface were removed. Whisper remains
+  final-only; live words are available only from selected models with genuine streaming support.
+- The native pill stays compact and status-only during recording and transcription. It never contains the
+  dictated transcript; it may still show one concise before/after Smart Polish change after processing.
+- When live text is already visible, Stop now shows **Post-processing…** for the complete reconciliation and
+  cleanup wait instead of showing a long second **Transcribing…** state followed by a near-instant polish.
+- The native pill uses semantic macOS colors, supports dark/high-contrast appearance, follows the active
+  display, remains non-activating, and can show one concise before/after change.
+- Production builds now use one native-resource pipeline, force the production release channel, require the
+  microphone entitlement, and verify every signed executable and the mounted DMG before handoff.
+- CI now stages the same production resources as the release, pins third-party actions by commit, runs with
+  least-privilege permissions, and receives weekly dependency update proposals.
+
+### Fixed
+
+- Live Parakeet revisions now use verified real text-input events and reacquire the same focused composer
+  after web/Electron re-renders. Editors such as Codex no longer discard apparent Accessibility edits, and
+  final reconciliation no longer degrades to a clipboard-only result in that case.
+- Parakeet Unified now uses its trained 560 ms chunk/lookahead streaming profile, cutting the first visible
+  partial-text delay roughly in half while retaining the same 5.6-second left context and exact final pass.
+- The install/run workflow now byte-verifies `/Applications/My Assistant.app`, unregisters and removes the
+  transient build-tree `.app`, and re-registers only the canonical installation so macOS cannot launch an
+  older indexed build by mistake.
+- A rollback-safe candidate installer now verifies and mounts the DMG, installs that exact app rather than a
+  second rebuild, smoke-tests its authenticated local service, and removes the transient build-tree bundle.
+- Exact `<transcript>…</transcript>` envelopes mirrored by Gemma 3 270M are safely unwrapped before strict
+  validation; commentary, code fences, malformed envelopes, and prompt-injection output still fail closed.
+- A completed dictation no longer holds the serialized finish lock during its success/error animation, so a
+  following dictation can finish promptly.
+- The validator rejects semantic one-letter substitutions while still allowing adjacent transpositions and
+  a small explicit list of common misspellings.
+- Smart Polish model libraries now stay visibly layered above their dimmed settings backdrop in the
+  packaged WebView.
+
 ### Security
 
+- Polish-model output is treated as untrusted data and cannot add, remove, reorder, translate, change
+  protected values/numbers, or bypass the deterministic fallback.
+- The polish runtime binds to loopback, requires the per-launch secret, disables UI/slot/cache endpoints,
+  runs offline, and rejects an occupied port rather than trusting another process.
 - Replaced the external Codex runtime's spoofable signature-text check with a native Security.framework
   requirement anchored to Apple, the `codex` identifier, OpenAI's Developer ID certificate, and Team ID
   `2DC432GLL2`. Cached runtime paths are revalidated immediately before every process launch with a no-follow

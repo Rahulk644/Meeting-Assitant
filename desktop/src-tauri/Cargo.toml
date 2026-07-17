@@ -25,14 +25,14 @@ tauri = { version = "2.11.3", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-notification = "2"               # native meeting-start alerts, emitted only after Core Audio confirms a live call
 # In-app dictation (runs as the app itself, so one Accessibility grant covers it — no fragmented helper):
-tauri-plugin-global-shortcut = "2"          # Carbon hotkey — needs NO Input Monitoring / Accessibility
+tauri-plugin-global-shortcut = "2"          # Carbon ordinary-key combinations; bare modifiers use the Input Monitoring event tap
 core-graphics = "0.23"                      # synth ⌘V (explicit Command flag) to paste — the proven CGEvent method
 core-foundation = "0.9"                     # CFRunLoop that services the bare-modifier event tap (Handy-style right-⌘/Option trigger)
 core-foundation-code-signing = { package = "core-foundation", version = "0.10" } # CFURL bridge for Security.framework's native code-signing validation
 macos-accessibility-client = "0.0.2"        # prompt for Accessibility under the app's own identity
 objc2 = "0.6.4"                             # typed Objective-C ownership for the native AppKit dictation panel
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData", "NSDictionary", "NSGeometry", "NSObject", "NSString", "NSURL"] }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSBitmapImageRep", "NSBox", "NSColor", "NSControl", "NSFont", "NSGraphics", "NSImage", "NSImageRep", "NSPanel", "NSResponder", "NSScreen", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSAttributedString", "NSData", "NSDictionary", "NSGeometry", "NSObject", "NSString", "NSURL", "NSValue"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAccessibility", "NSAppearance", "NSAttributedString", "NSBitmapImageRep", "NSBox", "NSColor", "NSControl", "NSEvent", "NSFont", "NSGraphics", "NSImage", "NSImageRep", "NSPanel", "NSProgressIndicator", "NSResponder", "NSScreen", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
 cpal = "0.15"                               # record the mic IN-PROCESS (like Handy) — no meeting-tap spawn, so no ~300ms start lag
 hound = "3.5"                               # encode the captured audio to a 16-bit PCM WAV for the STT server
 libc = "0.2"                                # validate ownership of an optional user-installed Codex executable
@@ -40,6 +40,8 @@ voice_activity_detector = "0.2"             # Silero VAD (same model family Hand
 tiny_http = "0.12"                          # in-process loopback API/UI server; replaces the 108 MB bundled Node runtime
 security-framework = "3"                    # store optional cloud-provider API keys in the macOS Keychain
 ureq = { version = "3.3", default-features = false, features = ["json", "native-tls-no-default"] } # provider HTTPS in-process; secrets never enter files or process arguments
+regex = "1.11"                               # deterministic command, protected-span, and number parsing
+unicode-normalization = "0.1"               # NFC normalization without damaging Indic joiners or scripts
 
 [profile.release]
 # Developer/debug symbols are useful in local builds but add roughly 9 MB to the shipped executable.

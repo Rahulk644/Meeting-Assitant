@@ -59,6 +59,8 @@ echo "Building transcribe-server (Metal) — first build compiles ggml, ~2–4 m
 cmake -S "$SRC" -B "$SRC/build" -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_EXAMPLES=ON >/dev/null
 cmake --build "$SRC/build" --target transcribe-server -j >/dev/null
 cp "$SRC/build/bin/transcribe-server" "$ROOT/transcribe-server"
-codesign --force --sign - "$ROOT/transcribe-server" 2>/dev/null || true  # stable ad-hoc sig so TCC grants stick
+# Give the freshly linked local binary a valid code directory. Release/local app builds replace this with
+# the configured stable identity and hardened runtime before the executable enters a bundle.
+codesign --force --sign - "$ROOT/transcribe-server" 2>/dev/null || true
 "$ROOT/transcribe-server" --selftest
 echo "✓ transcribe-server → $ROOT/transcribe-server"

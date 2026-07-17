@@ -50,6 +50,53 @@ pub fn resample_16k(samples: &[f32], rate: u32) -> Vec<f32> {
     out
 }
 
+/// Incrementally reads newly completed 16 kHz windows from the recording's accumulated source buffer.
+/// Keeping the output cursor avoids re-resampling the whole utterance on every streaming tick, while
+/// using the same box-window math as the authoritative offline preprocessing path.
+#[derive(Default)]
+pub struct StreamingResampler16k {
+    source_rate: u32,
+    output_index: usize,
+    passthrough_index: usize,
+}
+
+impl StreamingResampler16k {
+    pub fn take_available(&mut self, accumulated: &[f32], source_rate: u32) -> Vec<f32> {
+        if source_rate == 0 {
+            return Vec::new();
+        }
+        if self.source_rate != source_rate {
+            // The device rate is fixed for a capture. Resetting before any samples arrive handles the short
+            // startup window where Recorder still contains its 16 kHz placeholder value.
+            if self.output_index != 0 || self.passthrough_index != 0 {
+                return Vec::new();
+            }
+            self.source_rate = source_rate;
+        }
+        if source_rate <= 16_000 {
+            let start = self.passthrough_index.min(accumulated.len());
+            self.passthrough_index = accumulated.len();
+            return accumulated[start..].to_vec();
+        }
+
+        let ratio = source_rate as f64 / 16_000.0;
+        let available_outputs = (accumulated.len() as f64 / ratio) as usize;
+        if available_outputs <= self.output_index {
+            return Vec::new();
+        }
+        let mut out = Vec::with_capacity(available_outputs - self.output_index);
+        while self.output_index < available_outputs {
+            let start = (self.output_index as f64 * ratio) as usize;
+            let end = (((self.output_index + 1) as f64 * ratio) as usize)
+                .clamp(start + 1, accumulated.len());
+            let window = &accumulated[start..end];
+            out.push(window.iter().sum::<f32>() / window.len() as f32);
+            self.output_index += 1;
+        }
+        out
+    }
+}
+
 // Keep only speech regions so silence and room tone cannot trigger fluent hallucination loops. On detector
 // initialization failure the original samples are retained; losing a user's speech is the worse failure.
 static VAD: Mutex<Option<voice_activity_detector::VoiceActivityDetector>> = Mutex::new(None);
@@ -141,6 +188,32 @@ mod tests {
     fn forty_eight_khz_uses_three_sample_box_average() {
         let samples = vec![0.0, 0.3, 0.6, -0.6, -0.3, 0.0];
         assert_eq!(resample_16k(&samples, 48_000), vec![0.3, -0.3]);
+    }
+
+    #[test]
+    fn streaming_resampler_matches_offline_output_across_chunks() {
+        let samples: Vec<f32> = (0..4_413)
+            .map(|index| ((index % 97) as f32 - 48.0) / 48.0)
+            .collect();
+        let expected = resample_16k(&samples, 44_100);
+        let mut streaming = StreamingResampler16k::default();
+        let mut actual = streaming.take_available(&samples[..1_137], 44_100);
+        actual.extend(streaming.take_available(&samples[..2_889], 44_100));
+        actual.extend(streaming.take_available(&samples, 44_100));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn streaming_resampler_does_not_repeat_native_rate_samples() {
+        let mut streaming = StreamingResampler16k::default();
+        assert_eq!(
+            streaming.take_available(&[0.1, 0.2], 16_000),
+            vec![0.1, 0.2]
+        );
+        assert_eq!(
+            streaming.take_available(&[0.1, 0.2, 0.3], 16_000),
+            vec![0.3]
+        );
     }
 
     #[test]

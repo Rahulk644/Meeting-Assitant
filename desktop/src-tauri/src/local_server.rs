@@ -18,7 +18,7 @@ use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -37,6 +37,18 @@ const MAX_AUDIO_BODY: usize = 64 * 1024 * 1024;
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
 static LLM_HTTP: OnceLock<ureq::Agent> = OnceLock::new();
 static APP_ICONS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+// Model verification + process startup can take several seconds on a cold launch. Keep one warm-up in
+// flight and begin it before the user stops speaking so the visible finishing phase is normally inference,
+// not engine boot. `ensure_stt` still owns the authoritative child/process checks.
+static STT_WARMING: AtomicBool = AtomicBool::new(false);
+// Serialise engine starts without holding the broad application-state lock. UI state, overlay updates, and
+// shortcut events must remain responsive while a large model is being verified or mapped into memory.
+static STT_START: Mutex<()> = Mutex::new(());
+// A selected streaming-capable model uses the same authenticated process and loaded weights as the final
+// pass. The server owns a second session for incremental decoding, so no preview-only model or duplicate
+// model process is needed.
+static STT_STREAM_IO: Mutex<()> = Mutex::new(());
+static STT_STREAM_OWNER: AtomicU64 = AtomicU64::new(0);
 // Provider credentials remain authoritative in Keychain. This process-local cache prevents every
 // proposal/model request from asking macOS to decrypt the same item again. It is never serialized,
 // logged, sent to the WebView, or inherited by a child process, and disappears when the app exits.
@@ -100,6 +112,11 @@ struct State {
     model_downloading: Option<String>,
     model_download_cancel: bool,
     verified_models: HashSet<String>,
+    polish_model_id: String,
+    polish_model_downloading: Option<String>,
+    polish_model_download_cancel: bool,
+    verified_polish_models: HashSet<String>,
+    dictation_active: bool,
     stt_child: Option<Child>,
     stt_last_used: Option<Instant>,
     llm_child: Option<Child>,
@@ -369,7 +386,15 @@ pub fn start(
     let rec_dir = meetings_dir.join("rec");
     let temp_dir = data_dir.join("tmp");
     let models_dir = PathBuf::from(models_dir);
-    for dir in [&data_dir, &meetings_dir, &rec_dir, &temp_dir, &models_dir] {
+    let polish_models_dir = models_dir.join("polish");
+    for dir in [
+        &data_dir,
+        &meetings_dir,
+        &rec_dir,
+        &temp_dir,
+        &models_dir,
+        &polish_models_dir,
+    ] {
         private_dir(dir)?;
     }
     clean_private_temp(&temp_dir);
@@ -399,6 +424,12 @@ pub fn start(
         .cloned()
         .unwrap_or_else(|| crate::speech_models::DEFAULT_MODEL_ID.to_string());
     settings.insert("set.speechModel".into(), speech_model_id.clone());
+    let polish_model_id = settings
+        .get("set.polishModel")
+        .filter(|id| crate::polish_models::polish_model(id).is_some())
+        .cloned()
+        .unwrap_or_else(|| crate::polish_models::DEFAULT_POLISH_MODEL_ID.to_string());
+    settings.insert("set.polishModel".into(), polish_model_id.clone());
     let modules = setting_json(&settings, "modules")
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or(Modules {
@@ -426,6 +457,11 @@ pub fn start(
         model_downloading: None,
         model_download_cancel: false,
         verified_models: HashSet::new(),
+        polish_model_id,
+        polish_model_downloading: None,
+        polish_model_download_cancel: false,
+        verified_polish_models: HashSet::new(),
+        dictation_active: false,
         stt_child: None,
         stt_last_used: None,
         llm_child: None,
@@ -484,6 +520,32 @@ pub fn ingest_local(value: Value) -> bool {
     true
 }
 
+/// Start and authenticate the selected speech engine without blocking the caller.
+///
+/// This is intentionally safe to call both when dictation is enabled and again when recording starts.
+/// Concurrent calls collapse into one warm-up, and a missing/not-yet-downloaded model is simply retried on
+/// the next call.
+pub fn warm_speech_model() {
+    let Some(shared) = SHARED.get().cloned() else {
+        return;
+    };
+    if STT_WARMING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    thread::spawn(move || {
+        let started = Instant::now();
+        let result = ensure_stt(&shared);
+        STT_WARMING.store(false, Ordering::Release);
+        match result {
+            Ok(()) => log::info!(
+                "dictation speech engine ready warmupMs={}",
+                started.elapsed().as_millis()
+            ),
+            Err(error) => log::warn!("dictation speech engine warm-up skipped: {error}"),
+        }
+    });
+}
+
 pub fn shutdown() {
     let Some(shared) = SHARED.get() else { return };
     shared.stopping.store(true, Ordering::Relaxed);
@@ -492,6 +554,7 @@ pub fn shutdown() {
             let _ = child.kill();
             let _ = child.wait();
         }
+        STT_STREAM_OWNER.store(0, Ordering::Release);
         if let Some(mut child) = state.llm_child.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -527,6 +590,7 @@ fn start_maintenance(shared: Arc<Shared>) {
                 let _ = child.wait();
             }
             state.stt_last_used = None;
+            STT_STREAM_OWNER.store(0, Ordering::Release);
         }
         let llm_due = state
             .llm_last_used
@@ -758,7 +822,9 @@ fn capture_agent_context(binary: &Path) -> Result<Value, String> {
         "--once",
         None,
         "Screen context",
-        Duration::from_millis(1_500),
+        // Accessibility can briefly stall while macOS is servicing other TCC clients. Keep this bounded but
+        // leave enough scheduler headroom for a loaded machine and the parallel release test suite.
+        Duration::from_secs(3),
     )
 }
 
@@ -768,7 +834,7 @@ fn run_agent_action(binary: &Path, input: &Value) -> Result<Value, String> {
         "--request",
         Some(input),
         "Agent action",
-        Duration::from_secs(2),
+        Duration::from_secs(5),
     )
 }
 
@@ -1591,6 +1657,13 @@ fn handle(mut request: Request, shared: Arc<Shared>) {
         (Method::Post, "/api/model/select") => model_select(request, shared),
         (Method::Post, "/api/model/delete") => model_delete(request, shared),
         (Method::Post, "/api/model/cancel") => model_cancel(request, shared),
+        (Method::Get, "/api/polish-model/status") => {
+            json_response(request, 200, polish_model_status(&shared))
+        }
+        (Method::Post, "/api/polish-model/download") => polish_model_download(request, shared),
+        (Method::Post, "/api/polish-model/select") => polish_model_select(request, shared),
+        (Method::Post, "/api/polish-model/delete") => polish_model_delete(request, shared),
+        (Method::Post, "/api/polish-model/cancel") => polish_model_cancel(request, shared),
         (Method::Post, "/api/open-settings") => open_settings(request),
         (Method::Post, "/api/open-external") => open_external(request),
         (Method::Get, "/api/meetings") => meetings_list(request, &shared),
@@ -1730,7 +1803,31 @@ fn ingest_event(shared: Arc<Shared>, mut value: Value) {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
         {
-            let item = json!({"text": clean(text, 4000), "ts": value.get("ts").and_then(Value::as_u64).unwrap_or_else(now_ms), "ms": value.get("ms").and_then(Value::as_u64).unwrap_or(0)});
+            let changes = value
+                .get("changes")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().take(80).cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            let cleanup_trace = value
+                .get("cleanupTrace")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().take(80).cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            let item = json!({
+                "text": clean(text, 4000),
+                "original": clean(value.get("original").and_then(Value::as_str).unwrap_or(text), 4000),
+                "ts": value.get("ts").and_then(Value::as_u64).unwrap_or_else(now_ms),
+                "ms": value.get("ms").and_then(Value::as_u64).unwrap_or(0),
+                "processingMs": value.get("processingMs").and_then(Value::as_u64).unwrap_or(0),
+                "smartPolish": value.get("smartPolish").and_then(Value::as_bool).unwrap_or(false),
+                "modelId": clean(value.get("modelId").and_then(Value::as_str).unwrap_or(""), 100),
+                "modelAccepted": value.get("modelAccepted").and_then(Value::as_bool).unwrap_or(false),
+                "fallback": value.get("fallback").and_then(Value::as_bool).unwrap_or(false),
+                "decision": clean(value.get("decision").and_then(Value::as_str).unwrap_or(""), 180),
+                "targetKind": clean(value.get("targetKind").and_then(Value::as_str).unwrap_or("unknown"), 40),
+                "changes": changes,
+                "cleanupTrace": cleanup_trace
+            });
             let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
             state.recent_dictations.insert(0, item);
             state.recent_dictations.truncate(50);
@@ -1739,6 +1836,15 @@ fn ingest_event(shared: Arc<Shared>, mut value: Value) {
         return;
     }
     if kind == "dictation-state" {
+        let phase = value.get("phase").and_then(Value::as_str).unwrap_or("");
+        shared
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .dictation_active = !matches!(
+            phase,
+            "idle" | "error" | "no-speech" | "inserted" | "fallback"
+        );
         broadcast(&shared, &value);
         return;
     }
@@ -1970,6 +2076,7 @@ fn new_meeting(state: &Map<String, Value>) -> Meeting {
 fn recompute_lifecycle(shared: Arc<Shared>, action: Option<&str>) {
     let mut finalized = None;
     let mut schedule = None;
+    let mut ensure_speech_engine = false;
     {
         let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.gate.recording() {
@@ -1977,7 +2084,7 @@ fn recompute_lifecycle(shared: Arc<Shared>, action: Option<&str>) {
             if state.current.is_none() {
                 state.current = Some(new_meeting(&state.last_state));
             }
-            let _ = ensure_stt(&shared.cfg, &mut state);
+            ensure_speech_engine = true;
         } else if state.current.is_some() {
             if state.gate.paused() {
                 state.finalize_generation += 1;
@@ -1988,6 +2095,9 @@ fn recompute_lifecycle(shared: Arc<Shared>, action: Option<&str>) {
                 schedule = Some(state.finalize_generation);
             }
         }
+    }
+    if ensure_speech_engine {
+        let _ = ensure_stt(&shared);
     }
     if let Some(id) = finalized {
         after_finalize(shared.clone(), id);
@@ -2432,11 +2542,11 @@ fn transcribe_proxy(mut request: Request, shared: Arc<Shared>) {
         Ok(b) => b,
         Err(e) => return json_response(request, 413, json!({"error":e})),
     };
+    if let Err(error) = ensure_stt(&shared) {
+        return json_response(request, 503, json!({"error":error}));
+    }
     let (language, punctuation, vocab) = {
         let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Err(error) = ensure_stt(&shared.cfg, &mut state) {
-            return json_response(request, 503, json!({"error":error}));
-        }
         state.stt_last_used = Some(Instant::now());
         let model = active_speech_model(&state);
         (
@@ -2545,6 +2655,49 @@ pub(crate) fn active_speech_preprocessing_policy() -> crate::speech_audio::Speec
         .unwrap_or_else(|| crate::speech_models::default_speech_model().preprocessing)
 }
 
+pub(crate) fn active_speech_supports_live_streaming() -> bool {
+    SHARED
+        .get()
+        .map(|shared| {
+            let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+            crate::speech_models::supports_live_streaming(active_speech_model(&state))
+        })
+        .unwrap_or(false)
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LiveStreamSnapshot {
+    pub full: String,
+    pub committed: String,
+    pub tentative: String,
+    pub is_final: bool,
+}
+
+fn live_stream_snapshot(value: &Value) -> Option<LiveStreamSnapshot> {
+    let snapshot = LiveStreamSnapshot {
+        full: value
+            .get("full")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        committed: value
+            .get("committed")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        tentative: value
+            .get("tentative")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        is_final: value.get("final").and_then(Value::as_bool).unwrap_or(false),
+    };
+    (!snapshot.full.trim().is_empty()
+        || !snapshot.committed.trim().is_empty()
+        || !snapshot.tentative.trim().is_empty())
+    .then_some(snapshot)
+}
+
 fn inject_multipart_fields(
     mut body: Vec<u8>,
     content_type: &str,
@@ -2570,21 +2723,71 @@ fn inject_multipart_fields(
     body
 }
 
-fn ensure_stt(cfg: &Config, state: &mut State) -> Result<(), String> {
-    if let Some(child) = state.stt_child.as_mut() {
-        if child.try_wait().map_err(|e| e.to_string())?.is_none() {
-            state.stt_last_used = Some(Instant::now());
+fn ensure_stt(shared: &Shared) -> Result<(), String> {
+    // This lock is intentionally narrower than Shared::state: startup can map and authenticate an 845 MB
+    // model without blocking dictation-state delivery, settings, or the native overlay.
+    let _start = STT_START.lock().unwrap_or_else(|error| error.into_inner());
+    let existing_running = {
+        let mut state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        match state.stt_child.as_mut() {
+            Some(child) => match child.try_wait().map_err(|error| error.to_string())? {
+                None => true,
+                Some(_) => {
+                    state.stt_child = None;
+                    false
+                }
+            },
+            None => false,
+        }
+    };
+    if existing_running {
+        if authenticated_health(STT_PORT, &shared.cfg.token) {
+            shared
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .stt_last_used = Some(Instant::now());
             return Ok(());
         }
-        state.stt_child = None;
+        // A live-but-unhealthy engine should be replaced now instead of causing every future dictation to
+        // repeat the same long read timeout.
+        let child = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .stt_child
+            .take();
+        if let Some(mut child) = child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
-    let spec = active_speech_model(state);
-    let model = model_path(cfg, spec).ok_or_else(|| format!("{} is not downloaded", spec.name))?;
-    if !state.verified_models.contains(spec.id) {
+    let (spec, model, needs_verification) = {
+        let mut state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let spec = active_speech_model(&state);
+        let model = model_path(&shared.cfg, spec)
+            .ok_or_else(|| format!("{} is not downloaded", spec.name))?;
+        let needs_verification = !state.verified_models.contains(spec.id);
+        // Prevent the maintenance loop from considering a startup attempt idle.
+        state.stt_last_used = Some(Instant::now());
+        (spec, model, needs_verification)
+    };
+    if needs_verification {
         verify_model(&model, spec)?;
-        state.verified_models.insert(spec.id.to_string());
+        shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .verified_models
+            .insert(spec.id.to_string());
     }
-    if !cfg.transcribe_bin.is_file() {
+    if !shared.cfg.transcribe_bin.is_file() {
         return Err("bundled transcription engine is missing".into());
     }
     if port_open(STT_PORT) {
@@ -2593,7 +2796,7 @@ fn ensure_stt(cfg: &Config, state: &mut State) -> Result<(), String> {
                 .into(),
         );
     }
-    let child = Command::new(&cfg.transcribe_bin)
+    let child = Command::new(&shared.cfg.transcribe_bin)
         .args([
             "-m",
             model.to_string_lossy().as_ref(),
@@ -2602,34 +2805,176 @@ fn ensure_stt(cfg: &Config, state: &mut State) -> Result<(), String> {
             "--port",
             &STT_PORT.to_string(),
         ])
-        .env("ASSISTANT_STT_TOKEN", &cfg.token)
+        .env("ASSISTANT_STT_TOKEN", &shared.cfg.token)
         .env("ASSISTANT_PARENT_PID", std::process::id().to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| e.to_string())?;
-    state.stt_child = Some(child);
+    {
+        let mut state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.stt_child = Some(child);
+        state.stt_last_used = Some(Instant::now());
+    }
     for _ in 0..150 {
-        if authenticated_health(STT_PORT, &cfg.token) {
-            state.stt_last_used = Some(Instant::now());
+        if authenticated_health(STT_PORT, &shared.cfg.token) {
+            shared
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .stt_last_used = Some(Instant::now());
             return Ok(());
         }
-        if state
+        let exited = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
             .stt_child
             .as_mut()
-            .and_then(|c| c.try_wait().ok())
+            .and_then(|child| child.try_wait().ok())
             .flatten()
-            .is_some()
-        {
+            .is_some();
+        if exited {
             break;
         }
         thread::sleep(Duration::from_millis(100));
     }
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     if let Some(mut child) = state.stt_child.take() {
         let _ = child.kill();
         let _ = child.wait();
     }
+    state.stt_last_used = None;
     Err("transcription engine did not start securely".into())
+}
+
+fn post_stt_runtime(port: u16, token: &str, path: &str, body: &[u8]) -> Result<Vec<u8>, String> {
+    let mut stream = TcpStream::connect_timeout(
+        &format!("127.0.0.1:{port}").parse().unwrap(),
+        Duration::from_secs(2),
+    )
+    .map_err(|error| error.to_string())?;
+    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(3))).ok();
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(head.as_bytes())
+        .and_then(|_| stream.write_all(body))
+        .map_err(|error| error.to_string())?;
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|error| error.to_string())?;
+    let split = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or_else(|| "invalid live transcription response".to_string())?;
+    if !response.starts_with(b"HTTP/1.1 200") {
+        return Err(String::from_utf8_lossy(&response[..split]).to_string());
+    }
+    Ok(response[split + 4..].to_vec())
+}
+
+fn live_stream_request(shared: &Shared, path: &str, pcm: &[f32]) -> Result<Value, String> {
+    ensure_stt(shared)?;
+    let mut body = Vec::with_capacity(pcm.len() * 2);
+    for sample in pcm {
+        let sample = ((*sample).clamp(-1.0, 1.0) * 32767.0).round() as i16;
+        body.extend_from_slice(&sample.to_le_bytes());
+    }
+    let bytes = post_stt_runtime(STT_PORT, &shared.cfg.token, path, &body)?;
+    shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .stt_last_used = Some(Instant::now());
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+}
+
+pub fn live_stream_begin(generation: u64) -> Result<(), String> {
+    let _io = STT_STREAM_IO
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let shared = SHARED
+        .get()
+        .cloned()
+        .ok_or_else(|| "local app server is not ready".to_string())?;
+    let language = {
+        let state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let model = active_speech_model(&state);
+        if !crate::speech_models::supports_live_streaming(model) {
+            return Err(format!(
+                "{} does not support live transcription",
+                model.name
+            ));
+        }
+        model_decode_language(model, &state.dictation.language)
+    };
+    live_stream_request(&shared, &format!("/stream/begin?language={language}"), &[])?;
+    STT_STREAM_OWNER.store(generation, Ordering::Release);
+    Ok(())
+}
+
+pub fn live_stream_feed(
+    generation: u64,
+    pcm16k: &[f32],
+) -> Result<Option<LiveStreamSnapshot>, String> {
+    if pcm16k.is_empty() {
+        return Ok(None);
+    }
+    let _io = STT_STREAM_IO
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if STT_STREAM_OWNER.load(Ordering::Acquire) != generation {
+        return Ok(None);
+    }
+    let shared = SHARED
+        .get()
+        .ok_or_else(|| "local app server is not ready".to_string())?;
+    let value = live_stream_request(shared, "/stream/feed", pcm16k)?;
+    Ok(live_stream_snapshot(&value))
+}
+
+pub fn live_stream_finalize(generation: u64) -> Result<Option<LiveStreamSnapshot>, String> {
+    let _io = STT_STREAM_IO
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if STT_STREAM_OWNER.load(Ordering::Acquire) != generation {
+        return Ok(None);
+    }
+    let shared = SHARED
+        .get()
+        .ok_or_else(|| "local app server is not ready".to_string())?;
+    let result = live_stream_request(shared, "/stream/finalize", &[]);
+    let _ = STT_STREAM_OWNER.compare_exchange(generation, 0, Ordering::AcqRel, Ordering::Acquire);
+    let value = result?;
+    Ok(live_stream_snapshot(&value))
+}
+
+pub fn live_stream_reset(generation: u64) {
+    let _io = STT_STREAM_IO
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if STT_STREAM_OWNER.load(Ordering::Acquire) != generation {
+        return;
+    }
+    let Some(shared) = SHARED.get() else { return };
+    if authenticated_health(STT_PORT, &shared.cfg.token) {
+        let _ = post_stt_runtime(STT_PORT, &shared.cfg.token, "/stream/reset", &[]);
+    }
+    let _ = STT_STREAM_OWNER.compare_exchange(generation, 0, Ordering::AcqRel, Ordering::Acquire);
 }
 
 fn authenticated_health(port: u16, token: &str) -> bool {
@@ -2639,6 +2984,8 @@ fn authenticated_health(port: u16, token: &str) -> bool {
     ) else {
         return false;
     };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
     let request = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).is_ok() && {
         let mut head = [0u8; 12];
@@ -2653,7 +3000,8 @@ fn forward_stt(token: &str, content_type: &str, body: &[u8]) -> Result<Vec<u8>, 
         Duration::from_secs(2),
     )
     .map_err(|e| e.to_string())?;
-    stream.set_read_timeout(Some(Duration::from_secs(120))).ok();
+    stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
     let head = format!("POST /inference HTTP/1.1\r\nHost: 127.0.0.1:{STT_PORT}\r\nAuthorization: Bearer {token}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     stream
         .write_all(head.as_bytes())
@@ -2762,6 +3110,7 @@ fn stop_stt(state: &mut State) {
         let _ = child.wait();
     }
     state.stt_last_used = None;
+    STT_STREAM_OWNER.store(0, Ordering::Release);
 }
 
 fn model_status(shared: &Shared) -> Value {
@@ -2793,6 +3142,7 @@ fn model_status(shared: &Shared) -> Value {
                 "supportedLanguages": model.supported_languages,
                 "supportsLanguageDetection": model.supports_language_detection,
                 "supportsTranslation": model.supports_translation,
+                "supportsLiveStreaming": crate::speech_models::supports_live_streaming(model),
                 "fixedLanguage": model.fixed_language,
                 "outputStyle": model.output_style,
                 "audioProfile": model.audio_profile,
@@ -2811,6 +3161,7 @@ fn model_status(shared: &Shared) -> Value {
         "downloadingModelId": state.model_downloading.clone(),
         "activeModelId": active_id,
         "activeModelName": active.name,
+        "activeSupportsLiveStreaming": crate::speech_models::supports_live_streaming(active),
         "models": models,
     })
 }
@@ -2933,6 +3284,7 @@ fn model_status_unlocked(shared: &Shared, state: &State) -> Value {
         "downloading": state.model_downloading.is_some(),
         "activeModelId": active.id,
         "activeModelName": active.name,
+        "activeSupportsLiveStreaming": crate::speech_models::supports_live_streaming(active),
     })
 }
 
@@ -3170,6 +3522,415 @@ fn model_cancel(request: Request, shared: Arc<Shared>) {
     )
 }
 
+fn polish_model_dir(cfg: &Config) -> PathBuf {
+    cfg.models_dir.join("polish")
+}
+
+fn polish_model_path(
+    cfg: &Config,
+    model: &crate::polish_models::PolishModelSpec,
+) -> Option<PathBuf> {
+    let path = polish_model_dir(cfg).join(model.filename);
+    fs::metadata(&path)
+        .ok()
+        .filter(|meta| meta.is_file() && meta.len() == model.size)
+        .map(|_| path)
+}
+
+fn verify_polish_model(
+    path: &Path,
+    model: &crate::polish_models::PolishModelSpec,
+) -> Result<(), String> {
+    let meta = fs::metadata(path).map_err(|error| error.to_string())?;
+    if meta.len() != model.size {
+        return Err(format!(
+            "polish model size mismatch: expected {}, got {}",
+            model.size,
+            meta.len()
+        ));
+    }
+    let output = Command::new("/usr/bin/shasum")
+        .args(["-a", "256", path.to_string_lossy().as_ref()])
+        .output()
+        .map_err(|error| error.to_string())?;
+    let digest = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    if !output.status.success() || digest != model.sha256 {
+        return Err("polish model checksum mismatch".into());
+    }
+    Ok(())
+}
+
+fn requested_polish_model(
+    body: &Value,
+) -> Result<&'static crate::polish_models::PolishModelSpec, String> {
+    let id = body
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "model id is required".to_string())?;
+    crate::polish_models::polish_model(id).ok_or_else(|| "unknown polish model".to_string())
+}
+
+fn polish_model_status(shared: &Shared) -> Value {
+    let state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    polish_model_status_unlocked(shared, &state)
+}
+
+fn polish_model_status_unlocked(shared: &Shared, state: &State) -> Value {
+    let active_id = crate::polish_models::polish_model(&state.polish_model_id)
+        .map(|model| model.id)
+        .unwrap_or(crate::polish_models::DEFAULT_POLISH_MODEL_ID);
+    let directory = polish_model_dir(&shared.cfg);
+    let models = crate::polish_models::POLISH_MODELS
+        .iter()
+        .map(|model| {
+            let partial_bytes = fs::metadata(directory.join(format!("{}.part", model.filename)))
+                .map(|meta| meta.len().min(model.size))
+                .unwrap_or(0);
+            json!({
+                "id": model.id,
+                "name": model.name,
+                "tier": model.tier,
+                "parameters": model.parameters,
+                "sizeBytes": model.size,
+                "expectedMemoryMb": model.expected_memory_mb,
+                "minimumMemoryGb": model.minimum_memory_gb,
+                "recommendedMemoryGb": model.recommended_memory_gb,
+                "languages": model.languages,
+                "quantization": model.quantization,
+                "runtimeProfile": model.runtime_profile,
+                "promptProfile": model.prompt_profile,
+                "license": model.license,
+                "licenseUrl": model.license_url,
+                "sourceUrl": model.source_url,
+                "description": model.description,
+                "capabilities": model.capabilities,
+                "benchmarkStatus": model.benchmark_status,
+                "downloaded": polish_model_path(&shared.cfg, model).is_some(),
+                "verified": state.verified_polish_models.contains(model.id),
+                "active": active_id == model.id,
+                "downloading": state.polish_model_downloading.as_deref() == Some(model.id),
+                "partialBytes": partial_bytes
+            })
+        })
+        .collect::<Vec<_>>();
+    let active = crate::polish_models::polish_model(active_id)
+        .unwrap_or_else(crate::polish_models::default_polish_model);
+    json!({
+        "present": polish_model_path(&shared.cfg, active).is_some(),
+        "downloading": state.polish_model_downloading.is_some(),
+        "downloadingModelId": state.polish_model_downloading,
+        "activeModelId": active.id,
+        "activeModelName": active.name,
+        "models": models
+    })
+}
+
+fn polish_model_download(request: Request, shared: Arc<Shared>) {
+    let (request, body) = match model_request(request) {
+        Ok(value) => value,
+        Err(error) => {
+            let (request, error) = *error;
+            return json_response(request, 400, json!({"error":error}));
+        }
+    };
+    let model = match requested_polish_model(&body) {
+        Ok(model) => model,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let select = body.get("select").and_then(Value::as_bool).unwrap_or(false);
+    {
+        let mut state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(current) = state.polish_model_downloading.as_deref() {
+            return json_response(
+                request,
+                409,
+                json!({"error":format!("another polish model is downloading: {current}")}),
+            );
+        }
+        if state.dictation_active && select {
+            return json_response(
+                request,
+                409,
+                json!({"error":"finish dictation before switching polish models"}),
+            );
+        }
+        if let Some(path) = polish_model_path(&shared.cfg, model) {
+            if let Err(error) = verify_polish_model(&path, model) {
+                let _ = fs::remove_file(path);
+                state.verified_polish_models.remove(model.id);
+                return json_response(request, 422, json!({"error":error}));
+            }
+            state.verified_polish_models.insert(model.id.to_string());
+            if select {
+                crate::polish_runtime::shutdown();
+                state.polish_model_id = model.id.to_string();
+                state
+                    .settings
+                    .insert("set.polishModel".into(), model.id.into());
+                let _ = save_settings(&shared.cfg, &state.settings);
+            }
+            return json_response(request, 200, polish_model_status_unlocked(&shared, &state));
+        }
+        state.polish_model_downloading = Some(model.id.to_string());
+        state.polish_model_download_cancel = false;
+    }
+    broadcast(
+        &shared,
+        &json!({"type":"polish-model-progress","modelId":model.id,"pct":0,"bytes":0,"total":model.size}),
+    );
+    let worker = shared.clone();
+    thread::spawn(move || run_polish_model_download(worker, model, select));
+    json_response(request, 202, polish_model_status(&shared));
+}
+
+fn run_polish_model_download(
+    shared: Arc<Shared>,
+    model: &'static crate::polish_models::PolishModelSpec,
+    select: bool,
+) {
+    let directory = polish_model_dir(&shared.cfg);
+    let destination = directory.join(model.filename);
+    let partial = directory.join(format!("{}.part", model.filename));
+    if fs::metadata(&partial).map(|meta| meta.len()).unwrap_or(0) > model.size {
+        let _ = fs::remove_file(&partial);
+    }
+    let existing_complete = fs::metadata(&partial).map(|meta| meta.len()).ok() == Some(model.size);
+    let mut cancelled = false;
+    let result = if existing_complete {
+        verify_polish_model(&partial, model)
+    } else {
+        let mut child = Command::new("/usr/bin/curl")
+            .args([
+                "--fail",
+                "--location",
+                "--silent",
+                "--show-error",
+                "--continue-at",
+                "-",
+                model.url,
+                "--output",
+                partial.to_string_lossy().as_ref(),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        match child.as_mut() {
+            Ok(child) => loop {
+                let should_cancel = shared.stopping.load(Ordering::Relaxed) || {
+                    let state = shared
+                        .state
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    state.polish_model_download_cancel
+                        && state.polish_model_downloading.as_deref() == Some(model.id)
+                };
+                if should_cancel {
+                    cancelled = true;
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err("download cancelled".into());
+                }
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        break if status.success() {
+                            verify_polish_model(&partial, model)
+                        } else {
+                            Err("polish model download failed".into())
+                        };
+                    }
+                    Ok(None) => {
+                        let bytes = fs::metadata(&partial)
+                            .map(|meta| meta.len())
+                            .unwrap_or(0)
+                            .min(model.size);
+                        let pct = ((bytes.saturating_mul(100) / model.size).min(99)) as u64;
+                        broadcast(
+                            &shared,
+                            &json!({"type":"polish-model-progress","modelId":model.id,"pct":pct,"bytes":bytes,"total":model.size}),
+                        );
+                        thread::sleep(Duration::from_millis(400));
+                    }
+                    Err(error) => break Err(error.to_string()),
+                }
+            },
+            Err(error) => Err(error.to_string()),
+        }
+    };
+
+    match result.and_then(|_| {
+        fs::set_permissions(&partial, fs::Permissions::from_mode(0o600))
+            .map_err(|error| error.to_string())?;
+        fs::rename(&partial, &destination).map_err(|error| error.to_string())
+    }) {
+        Ok(()) => {
+            let mut selected = false;
+            {
+                let mut state = shared
+                    .state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                state.verified_polish_models.insert(model.id.to_string());
+                if select && !state.dictation_active {
+                    crate::polish_runtime::shutdown();
+                    state.polish_model_id = model.id.to_string();
+                    state
+                        .settings
+                        .insert("set.polishModel".into(), model.id.into());
+                    let _ = save_settings(&shared.cfg, &state.settings);
+                    selected = true;
+                }
+            }
+            broadcast(
+                &shared,
+                &json!({"type":"polish-model-progress","modelId":model.id,"pct":100,"bytes":model.size,"total":model.size,"done":true,"selected":selected}),
+            );
+        }
+        Err(error) => {
+            if fs::metadata(&partial).map(|meta| meta.len()).unwrap_or(0) >= model.size {
+                let _ = fs::remove_file(&partial);
+            }
+            broadcast(
+                &shared,
+                &json!({"type":"polish-model-progress","modelId":model.id,"error":error,"cancelled":cancelled}),
+            );
+        }
+    }
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if state.polish_model_downloading.as_deref() == Some(model.id) {
+        state.polish_model_downloading = None;
+        state.polish_model_download_cancel = false;
+    }
+}
+
+fn polish_model_select(request: Request, shared: Arc<Shared>) {
+    let (request, body) = match model_request(request) {
+        Ok(value) => value,
+        Err(error) => {
+            let (request, error) = *error;
+            return json_response(request, 400, json!({"error":error}));
+        }
+    };
+    let model = match requested_polish_model(&body) {
+        Ok(model) => model,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let Some(path) = polish_model_path(&shared.cfg, model) else {
+        return json_response(request, 409, json!({"error":"download this model first"}));
+    };
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if state.dictation_active {
+        return json_response(
+            request,
+            409,
+            json!({"error":"finish dictation before switching polish models"}),
+        );
+    }
+    if !state.verified_polish_models.contains(model.id) {
+        if let Err(error) = verify_polish_model(&path, model) {
+            return json_response(request, 422, json!({"error":error}));
+        }
+        state.verified_polish_models.insert(model.id.to_string());
+    }
+    crate::polish_runtime::shutdown();
+    state.polish_model_id = model.id.to_string();
+    state
+        .settings
+        .insert("set.polishModel".into(), model.id.into());
+    let _ = save_settings(&shared.cfg, &state.settings);
+    json_response(request, 200, polish_model_status_unlocked(&shared, &state));
+}
+
+fn polish_model_delete(request: Request, shared: Arc<Shared>) {
+    let (request, body) = match model_request(request) {
+        Ok(value) => value,
+        Err(error) => {
+            let (request, error) = *error;
+            return json_response(request, 400, json!({"error":error}));
+        }
+    };
+    let model = match requested_polish_model(&body) {
+        Ok(model) => model,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if state.polish_model_downloading.as_deref() == Some(model.id) {
+        return json_response(
+            request,
+            409,
+            json!({"error":"cancel the download before deleting it"}),
+        );
+    }
+    if state.dictation_active && state.polish_model_id == model.id {
+        return json_response(
+            request,
+            409,
+            json!({"error":"finish dictation before removing the active polish model"}),
+        );
+    }
+    if state.polish_model_id == model.id {
+        crate::polish_runtime::shutdown();
+    }
+    let directory = polish_model_dir(&shared.cfg);
+    let _ = fs::remove_file(directory.join(model.filename));
+    let _ = fs::remove_file(directory.join(format!("{}.part", model.filename)));
+    state.verified_polish_models.remove(model.id);
+    if state.polish_model_id == model.id {
+        state.polish_model_id = crate::polish_models::POLISH_MODELS
+            .iter()
+            .find(|candidate| polish_model_path(&shared.cfg, candidate).is_some())
+            .map(|candidate| candidate.id)
+            .unwrap_or(crate::polish_models::DEFAULT_POLISH_MODEL_ID)
+            .to_string();
+        let selected = state.polish_model_id.clone();
+        state.settings.insert("set.polishModel".into(), selected);
+        let _ = save_settings(&shared.cfg, &state.settings);
+    }
+    json_response(request, 200, polish_model_status_unlocked(&shared, &state));
+}
+
+fn polish_model_cancel(request: Request, shared: Arc<Shared>) {
+    let (request, body) = match model_request(request) {
+        Ok(value) => value,
+        Err(error) => {
+            let (request, error) = *error;
+            return json_response(request, 400, json!({"error":error}));
+        }
+    };
+    let id = body.get("id").and_then(Value::as_str).unwrap_or("");
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if state.polish_model_downloading.as_deref() == Some(id) {
+        state.polish_model_download_cancel = true;
+        return json_response(request, 202, json!({"cancelling":true,"id":id}));
+    }
+    json_response(
+        request,
+        409,
+        json!({"error":"that polish model is not downloading"}),
+    )
+}
+
 fn verify_model(path: &Path, model: &crate::speech_models::SpeechModelSpec) -> Result<(), String> {
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
     if meta.len() != model.size {
@@ -3204,6 +3965,7 @@ fn open_settings(mut request: Request) {
         pane,
         "Privacy_Microphone"
             | "Privacy_AudioCapture"
+            | "Privacy_ListenEvent"
             | "Privacy_ScreenCapture"
             | "Privacy_Accessibility"
     );
@@ -3230,6 +3992,7 @@ fn open_external(mut request: Request) {
     };
     let url = match body.get("target").and_then(Value::as_str).unwrap_or("") {
         "chatgpt_download" => "https://chatgpt.com/download",
+        "gemma_terms" => "https://ai.google.dev/gemma/terms",
         _ => {
             return json_response(
                 request,
@@ -4321,6 +5084,22 @@ fn parse_byte_range(value: &str, len: u64) -> Result<Option<(u64, u64)>, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_stream_snapshot_preserves_stability_boundaries() {
+        let snapshot = live_stream_snapshot(&json!({
+            "full": "send twenty five percent now",
+            "committed": "send twenty five percent",
+            "tentative": "now",
+            "final": false
+        }))
+        .expect("non-empty stream snapshot");
+        assert_eq!(snapshot.full, "send twenty five percent now");
+        assert_eq!(snapshot.committed, "send twenty five percent");
+        assert_eq!(snapshot.tentative, "now");
+        assert!(!snapshot.is_final);
+        assert!(live_stream_snapshot(&json!({"full":""})).is_none());
+    }
+
     #[test]
     fn gate_matches_product_contract() {
         let mut g = Gate::new();

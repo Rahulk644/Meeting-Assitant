@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build the two short-lived native Accessibility helpers used by Agents.
+# Dormant Agent research only. Production builds use build_native_resources.sh and must never package these
+# helpers. See docs/AGENTS_ARCHITECTURE.md before changing this boundary.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

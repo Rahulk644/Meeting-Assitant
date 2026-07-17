@@ -1,217 +1,195 @@
-# Project state
+# Durable project state
 
-**Current as of:** 16 July 2026
+Read this file first after a context compaction, task handoff, or long pause. It records the stable product
+contract, architecture invariants, source-of-truth map, and remaining work. It deliberately does not record
+dates, commit-by-commit history, transient test counts, artifact hashes, or branch narratives.
 
-**Canonical repository:** `/Users/rahulkhatri/Meeting-Assitant`
+## Authority order
 
-**Target:** Apple-silicon macOS 14.4+
-**Distribution:** self-signed independent beta; no paid Apple Developer ID
+When documents disagree, resolve them in this order:
 
-This is the shortest durable entry point for resuming work. It describes current product truth, not a
-chronological work log.
+1. [`PRODUCT_RELEASE_MATRIX.md`](../PRODUCT_RELEASE_MATRIX.md) — what production may expose.
+2. Executable contracts in `app/release.js`, its tests, and `desktop/src-tauri/tauri.conf.json` — what the
+   current build actually enables and packages.
+3. This file — the durable implementation state and priorities.
+4. [`ARCHITECTURE.md`](../ARCHITECTURE.md) and [`SECURITY.md`](../SECURITY.md) — design and trust boundaries.
+5. [`PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md) — direction, not proof that a capability shipped.
+6. [`CHANGELOG.md`](../CHANGELOG.md) and Git history — historical record only.
 
-## Product boundary
+## Product contract
 
-- **Dictation:** primary beta. Right Command starts/stops system-wide, on-device dictation. The native
-  AppKit status pill is non-activating, works across full-screen spaces, names the configured finish
-  shortcut, and exposes Esc cancellation.
-- **Meetings:** beta. Dedicated call apps detect from Core Audio activity; browser and multipurpose chat calls
-  additionally require meeting-window evidence. Calls are captured without a bot, transcribed locally,
-  stored on-device, and summarized with a configured local or cloud model. Manual capture works universally.
-- **Writing Assistant:** design-preview only. It is not a production promise.
-- **Agents:** production exposes the on-demand read-only Accessibility inspector plus honest Local, API-key,
-  and ChatGPT account/Codex compute configuration. API keys go directly to Keychain. Codex is a verified
-  external runtime with an isolated profile and live account model controls; it is not bundled. The
-  structured draft planner, global Agent shortcut, and one guarded text Apply/Undo boundary are preview-only.
-  The model cannot execute; Apply is a separate click and is restricted to the exact captured process of a
-  named disposable TextEdit document. Other apps remain read-only. The helper revalidates the complete field
-  state and verifies the write or exact rollback; Send/Return/click/multi-step actions do not exist. Wake word
-  remains blocked.
-- **Local speech models:** shipped as an explicit model library shared by dictation and meetings. Downloads
-  are separate from the app and the active model controls languages, translation, output, and preprocessing.
-- **Cloud speech, calendar sync, updates, My Assistant accounts, teams, sharing, and billing:**
-  not shipped.
-- **Meeting Intelligence:** Groq, OpenAI, Cerebras, and custom OpenAI-compatible BYOK paths are shipped.
-  The optional local Gemma/LiteRT-LM runtime works when installed by source setup, but the DMG has no in-app
-  Intelligence-model installer yet; do not describe local notes as clean-install ready.
+- **Dictation is the primary feature.** It must start from the configured global shortcut while another app
+  is frontmost, display a compact native status pill on the active display, capture the microphone locally,
+  transcribe locally, and place the result in the original target safely.
+- **Meetings is Beta.** It captures calls without a bot, stores transcripts locally, and must remain visibly
+  labelled Beta wherever represented as a product surface.
+- **Agents is not an initial product feature.** Production shows exactly one greyed-out, disabled **Coming
+  soon** navigation label. It has no route, details, settings, shortcut, boot initialization, compute lane,
+  or packaged native helper. Dormant research source is not a release claim.
+- Writing, commercial, updater, calendar, support, and other unfinished surfaces stay outside production
+  until their release-matrix rows are explicitly promoted with evidence.
 
-The exact visibility contract is [`PRODUCT_RELEASE_MATRIX.md`](../PRODUCT_RELEASE_MATRIX.md). Product and
-provider sequencing lives in [`PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md). Competitive decisions live in
-[`COMPETITIVE_INTELLIGENCE.md`](COMPETITIVE_INTELLIGENCE.md). Speech-model evidence and the current Hinglish
-decision live in [`SPEECH_MODEL_BENCHMARK.md`](SPEECH_MODEL_BENCHMARK.md).
+The release build forces `ASSISTANT_RELEASE_CHANNEL=production`; ambient shell state cannot accidentally
+produce a preview DMG. Saved WebView state is sanitized against the server-owned capability map.
 
-## Current architecture
+## Runtime shape
 
 ```text
-AppKit/Tauri shell
-  ├─ native Right Command event tap, mic capture, VAD, paste, tray, and status pill
-  ├─ authenticated Rust loopback service at 127.0.0.1:8790
-  ├─ meeting-tap (Swift): real-call detection, system audio, mic, optional video
-  ├─ meeting-state (Swift): Accessibility-derived speaker/mute/share evidence
-  ├─ agent-context (Swift, on demand): bounded read-only Accessibility snapshot
-  ├─ agent-action (Swift, on demand, preview): confirmed draft/selection edit and guarded Undo
-  ├─ codex_runtime (Rust, on demand): verified external Codex App Server, isolated auth/model/preview lane
-  └─ transcribe-server (C++): on-demand transcribe.cpp/selected local speech model
+My Assistant.app
+├─ Rust/Tauri main process
+│  ├─ authenticated loopback UI/API on 127.0.0.1:8790
+│  ├─ native AppKit pill and tray
+│  ├─ global shortcut and bare-modifier event tap
+│  ├─ in-process microphone capture and Silero VAD
+│  └─ dictation/meeting/model/settings orchestration
+├─ dictation-target
+│  └─ bounded Accessibility session for target classification and live-span reconciliation
+├─ transcribe-server
+│  └─ pinned transcribe.cpp with separate final and capability-gated streaming sessions
+├─ polish-runtime
+│  └─ pinned static llama.cpp server; optional Gemma weights are downloaded separately
+├─ meeting-tap
+│  └─ Core Audio process tap and optional ScreenCaptureKit recording
+└─ meeting-state
+   └─ bounded meeting-window, speaker, mute, and sharing evidence
 ```
 
-The packaged app contains no Node runtime. `app/server.js` is a developer-only behavioural harness. Speech
-models and user data live outside the app bundle under Application Support. Provider credentials live in
-macOS Keychain.
+The app bundle contains the minified WebView, licenses, and those five native executables. It contains no
+Node runtime, speech/polish model weights, telemetry client, or Agent helper.
 
-## Reliability invariants
+## Dictation state and safety invariants
 
-- The pill and tray are native; there is no secondary or hidden pill WebView.
-- Every authenticated UI launch redirects to a non-secret per-launch URL so WKWebView cannot restore a stale
-  blank or partially hidden DOM from an older build.
-- The packaged release contract is validated before any window or helper starts; invalid core navigation
-  fails startup instead of degrading to a partial UI.
-- The audio detector is the only automatic meeting start/end authority. Dedicated apps require active
-  per-app audio; browser/chat apps require that plus meeting-window evidence. An open app, YouTube tab, or
-  notification sound is insufficient.
-- A meeting-start notification is emitted only on the false-to-true real-call edge.
-- Meeting JSON is owner-only and atomically replaced. The first transcript line is persisted immediately,
-  subsequent lines are checkpointed at most two seconds apart, and a 10-second maintenance checkpoint is a
-  second safety net.
-- Meeting-title precedence is user rename → calendar/scheduled metadata → valid meeting-window title →
-  `Impromptu meeting`. Transcript text is never guessed into a title.
-- Video meetings write their first-frame thumbnail natively; non-video cards use the installed native app
-  icon, with a platform identity tile fallback.
-- Incomplete meeting JSON is finalized as interrupted on the next launch; transcript survival does not
-  depend on summary generation.
-- App-started helpers receive the parent PID and must exit when the parent disappears.
-- Whisper unload is user-configurable and defaults to 10 idle minutes.
-- Automatic speech language is preserved end-to-end; the app must never rewrite `auto` to English. Roman,
-  natural mixed script, ordinary English, and English translation are separate model/evaluation tracks.
-- Audio preprocessing is a model policy, not a global toggle. Whisper uses compact speech/noise protection;
-  Parakeet, Nemotron, and the Oriserve fine-tunes use a speech gate that preserves specialist-model input.
-- Model downloads are explicit, revision-pinned, exact-size and SHA-256 verified, resumable, cancellable,
-  private (owner-only), atomically installed, removable, and never bundled into the DMG.
-- Language intent is preserved across switches and resolved against the active model at inference time.
-  English-only and Roman-Hinglish models cannot receive an incompatible decoder language.
-- Translation is visible only for Whisper Medium multilingual and Large v3. Turbo, English-only models,
-  Parakeet, Nemotron, and Oriserve fail closed in both the UI and Rust service.
-- Native transcription keeps valid partial text when a model reaches its output limit, reports truncation,
-  and guarantees valid UTF-8 JSON.
-- API keys never belong in JSON, SQLite, logs, process arguments, temporary files, or WebView state. Startup
-  settings never decrypt Keychain items. An explicit provider request reads the credential at most once per
-  app process, holds it only in process memory, and reuses that copy until quit.
-- Agent context is captured only after an explicit user request, bounded by node/depth/child/time limits,
-  uses opaque request-local element IDs, and redacts secure fields. Inspection alone is neither persisted nor
-  sent to a provider. A preview request explicitly sends the instruction and fresh bounded snapshot only to
-  the selected API/Codex lane; screen text is untrusted and output is reduced to draft/replace/no-op proposal
-  data. The preview-only executor is a separate on-demand helper: it accepts only explicit Apply to the exact
-  captured TextEdit process, revalidates bundle/window/role/label/full text/cursor/selection, and verifies the
-  final value. Non-TextEdit drafts never receive an executable proposal. A transformed write is restored and
-  verified; a rollback that cannot be proven is surfaced as urgent. A single prior value stays in Rust memory
-  for at most five minutes and is restored only if the applied value is unchanged. Draft/original text never
-  enters process arguments or logs.
-- External Codex is accepted only from standard installed locations after native Security.framework
-  validation of its `codex` identifier, Apple trust anchor, Developer ID certificate, and OpenAI Team ID
-  `2DC432GLL2`. Cached paths are revalidated with a no-follow file handle held across every spawn, and the
-  actual child process is validated before RPC; symlinks and replaced files fail closed. It is not touched
-  during ordinary app launch: opening Agents with the
-  ChatGPT · Codex lane selected triggers on-demand status, isolated device-code sign-in/out, model discovery,
-  or a preview. Login polling cannot create competing processes, and no Codex process remains resident afterward.
+1. **Shortcut.** The default bare Right Command shortcut is implemented by a native event tap and therefore
+   requires Input Monitoring. Configured ordinary key combinations use Carbon and do not require Input
+   Monitoring. Accessibility is independently required for insertion.
+2. **Capture.** Microphone capture begins in the Rust process. The status pill is a non-activating AppKit
+   panel on all Spaces; it must not steal the text target. The waveform is derived from the measured audio
+   level, not an ornamental animation.
+3. **Target.** `dictation-target` classifies only the focused role and a tiny prefix near the cursor. It never
+   walks the full Accessibility tree, captures screenshots, logs field text, or processes secure fields.
+4. **Live text.** Only selected model artifacts whose runtime implements native incremental streaming are
+   eligible. Whisper remains final-only. A compatible field receives a tracked provisional span; tentative
+   words may change, while committed words form the only stable cleanup boundary.
+5. **Stop.** If live text is visible, the complete final-recognition and reconciliation wait is labelled
+   **Post-processing…**. Final-only models show **Transcribing…** until recognition completes. Smart Polish,
+   when enabled, always runs after Stop.
+6. **Cleanup.** Mechanical cleanup is conservative, Unicode-aware, idempotent, and target-aware. The local
+   Gemma pass is optional and guarded by a lossless validator. Any runtime, validation, or semantic failure
+   preserves the deterministic result.
+7. **Commit.** The app replaces only the exact provisional span it owns. Target or cursor drift fails closed;
+   the final text is copied rather than pasted into an uncertain location. Final-only models use one
+   Accessibility-authorized paste and restore the previous clipboard when configured.
+8. **Timeout.** One atomic terminal owner prevents a slow worker from inserting text after the watchdog has
+   reported a timeout or after a newer dictation has taken ownership of the UI.
+9. **Privacy.** Secure-field text never enters recent history, visual diffs, logs, or model inference.
+   Dictation audio uses a private temporary file and is removed immediately after transcription.
 
-## Release status
+## Meetings Beta invariants
 
-The last fully automated-verified **production** artifact is
-`desktop/src-tauri/target/release/bundle/dmg/My_Assistant_0.1.0-beta.2_arm64.dmg` (14,759,965 bytes), SHA-256
-`ace262ed08930aca9206378ee1617f72befe72c0af2248100e0fdc35224acc5a`. The app bundle is 28,704 KiB.
-That artifact predates the 16 July anchored Codex signature correction and is held from new distribution.
-The current branch rejects the former ad-hoc Team-ID substring spoof, accepts the official installed runtime,
-and passes 44/44 Rust tests plus fmt, check, warnings-denied Clippy, and 33/33 Node tests. Build a new immutable
-DMG and rerun the release pipeline before restoring sendable status.
-After the packaged launch settled, the app plus the two meeting helpers measured about 38 MiB aggregate
-physical footprint and 44,736 KiB aggregate RSS; the on-demand Agent helpers were not resident and no
-app-owned Speech, LLM, or Codex process was resident. That artifact's release gate was 33/33 Node tests,
-41/41 Rust tests, 17/17 speech/corpus/matrix tests, 3/3 acceptance-runner tests, zero desktop npm
-vulnerabilities, and passing transcribe-server, meeting-tap, meeting-state, agent-context, and agent-action self-tests. All
-12 revision-pinned model endpoints returned the exact catalog content length.
-The DMG passed checksum and deep signature verification, carries the production model picker and
-capability-gated Translation/Agent-compute payload, contains no Codex, Node, model, benchmark, transcript, or source artifact, launched
-successfully, kept unauthenticated loopback access at 401, and rejected a forged Host at 403.
+- Automatic recording follows authoritative Core Audio state. Browser and communication-app calls also
+  require meeting-window evidence; calendar presence alone never starts recording.
+- The user can always start and stop manually. Pause/resume and call-end transitions have one recording
+  lifecycle authority.
+- Recoverable transcript checkpoints are private. Corrections increment transcript revision and mark stale
+  derived notes rather than silently presenting them as current.
+- Meeting notes can use an optional local runtime or an explicitly selected BYOK provider. Provider keys live
+  in macOS Keychain and are never stored in settings or browser state.
+- Meeting audio remains local. Optional screen recording is separately permission-gated.
 
-The artifact matched `codex/agent-actions` at build time but no longer matches current source after the
-security correction. Its main executable is arm64 UUID
-`CD4A10B1-EC33-3702-B2FC-D86A40D82328`, SHA-256
-`1e42a14b0b0e6e2baa27b311a4554b2b6221d6a7bdd20b96a5ede5463e081dfa`. It launched from the exact
-read-only DMG mount, rendered the production capability contract, defaulted a clean Agent compute profile to
-the zero-network Local lane, opened an empty API-key lane without a Keychain dialog, and left no synthetic
-provider, shortcut, debug, or Keychain item behind.
-AGT-023 passed: three proposals plus model discovery reused one process-only credential copy, and the unchanged
-installed candidate accessed the same disposable Keychain item after relaunch with zero authorization dialogs.
-The controlled packaged TextEdit gate also passes cursor insertion, selection replacement, exact Undo,
-app-switch rejection, stale text/selection rejection, and Undo-after-user-edit refusal (AGT-015/016/017/019/020).
-The production bundle contains the signed preview helper but `agentActions`, draft preview, and the global Agent
-shortcut are disabled by the production release contract. The helper remains process-bound and TextEdit-only.
-Physical shortcut acceptance, expiry/relaunch
-execution-state checks, non-TextEdit/secure-field breadth, and instrumented rollback outcomes remain open.
-Do not describe the DMG as shipping Agent actions, and do not enable `agentActions` in production.
+## Repository and release invariants
 
-An older comparison build formerly present at `/Applications/My Assistant.app` had a different arm64 UUID and
-was the source of the observed macOS reopen/crash loop. Its evidence was captured and the duplicate bundles
-were removed after the final candidate passed; `/Applications/My Assistant.app` is now the only installed copy.
-Never infer test identity from the display name alone.
+- `main` is the integration and release branch. A release starts from a clean worktree whose `main` matches
+  `origin/main`.
+- Models, native binaries, app bundles, DMGs, local meetings/settings, acceptance sessions, demo renders,
+  and benchmark corpora are generated or private artifacts and remain outside Git.
+- `script/build_native_resources.sh` is the single production-native build entry point. Local install and
+  release scripts both call it so a stale helper cannot silently enter one build path.
+- `script/build_and_run.sh --verify` atomically replaces `/Applications/My Assistant.app`, unregisters and
+  removes the transient build-tree bundle, and verifies the installed app. There should be exactly one
+  launchable app bundle.
+- `script/install_verified_dmg.sh` performs the same atomic/rollback-safe installation from the mounted
+  candidate, proving the installed app is byte-identical to the artifact rather than another local rebuild.
+- `script/build_release_dmg.sh` runs the quality gates, builds pinned runtimes, forces production assets,
+  signs with hardened runtime, and calls `script/verify_release_artifact.sh`.
+- The artifact verifier mounts the DMG read-only and rejects missing/adhoc/wrong-authority nested code,
+  non-arm64 executables, missing microphone entitlement, packaged model weights, Agent helpers, or a
+  non-production release payload.
+- The independent beta uses the stable self-signed `My Assistant Dev` identity. It is integrity-signed but
+  not Apple-notarized; recipients must use Privacy & Security → Open Anyway.
 
-The corrected source remains a small-beta candidate, but beta.2 is not the current sendable artifact. A newly
-verified build will remain subject to the documented **Privacy & Security → Open Anyway** installation flow.
-The physical Right-Command matrix and real two-person meeting matrix below remain human acceptance work; do
-not describe the beta as zero-bug or notarized.
+## Verification commands
 
-Rebuild and remeasure after any native/helper change; do not send an older artifact merely because it exists.
-The beta has no Apple Developer ID, so current macOS recipients must attempt launch and use **Privacy &
-Security → Open Anyway** once. Automatic
-background updates cannot be made trustworthy until a separate updater signing-key design is completed.
+```sh
+# Complete source gate
+cd app && npm test
+cd ../desktop && npm audit
+cd src-tauri
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo check --locked
+cargo test --locked
+cargo audit
 
-## Known release blockers and follow-ups
+# Corpus/acceptance-runner unit tests
+cd ../../..
+./script/benchmark_speech.sh test
 
-1. Build and verify a new immutable DMG containing the anchored Codex runtime validation; do not newly
-   distribute beta.2.
-2. Add bounded audio recovery checkpoints; transcript recovery exists, but an utterance in flight during a
-   hard crash can still be lost.
-3. Add a user-triggered, redacted diagnostic archive and support ID.
-4. Complete the physical Right-Command rapid-toggle/cancel/failure/focus/full-screen/multi-display acceptance
-   session defined in `acceptance/cases.json`; automation and synthetic key events are not evidence.
-5. Add explicit per-meeting Off / Transcript / Audio / Video choice and complete the real two-person
-   platform/version acceptance matrix for every advertised native/browser/chat adapter.
-6. Generate a dependency SBOM and complete third-party notice packaging.
-7. Add signed update manifests only after an offline update-key and rollback design is documented and tested.
-8. Complete quality evidence without blocking user choice: real café/wind/traffic recordings, long-form
-   fixtures, a physical model switch matrix, and representative RAM/latency/thermal measurements. Keep
-   Whisper Large v3 Turbo as the recommended default; never market proxy WER as human Hinglish accuracy.
-9. Add and benchmark macOS 26 SpeechAnalyzer as an optional system Speech adapter, retain the local catalog
-   fallback, and separate future cloud Speech providers from meeting-note Intelligence providers.
-10. Add an in-app local Intelligence install/status/remove flow; until then, clean beta testers use BYOK for
-   meeting notes even though dictation and transcription remain fully local.
-11. Complete read-only Agent inspection/drafting across Gmail, Slack, LinkedIn, Docs, Notes, Slides, Terminal,
-    secure/unsupported fields, permission recovery, prompt injection, providers, full-screen, and displays.
-    Cursor Apply, selection replacement, app-switch/stale-state rejection, exact Undo, Undo-after-drift refusal,
-    and unchanged-build Keychain authorization now pass on the packaged preview candidate. Still close physical
-    global-shortcut, expiry/relaunch execution-state, secure/unsupported-target, packaged-helper residency,
-    verified rollback, and urgent rollback-failure cases. Do not add another app adapter, Send, or multi-step
-    mutation until those gates pass.
-12. Run the identical Porcupine, microWakeWord, and sherpa-onnx KWS wake-word suite. Adopt none until real
-    accents/noise, false accepts, latency, CPU/RAM, energy, suspension, privacy, integration, and licensing
-    gates pass.
-13. The verified work is a stacked draft-PR chain ahead of `main`: PR #1 `craft/cleanup-tests-docs`, PR #2
-    `codex/agent-context-foundation`, PR #3 `codex/agent-compute-providers`, then PR #4
-    `codex/agent-actions`. Review and merge them in that order before treating the private repository's
-    default branch or community profile as current OSS truth, then create the first tag and GitHub beta
-    release.
+# Exact installed development build
+./script/build_and_run.sh --verify
+
+# Complete signed and mounted DMG validation
+./script/build_release_dmg.sh
+```
+
+Machine tests establish logic and packaging contracts. They do not substitute for a physical Right Command,
+real microphone, real target app, clean-machine permission, or real two-person meeting test.
+
+## Prioritized next work
+
+### P0 — distribution and physical reliability
+
+1. Obtain an Apple Developer ID, add notarization credentials in CI or a protected release environment, and
+   make stapling mandatory for a public channel. Keep the self-signed channel explicitly beta-only.
+2. Run the physical dictation matrix from [`ACCEPTANCE_TESTS.md`](ACCEPTANCE_TESTS.md) on the mounted DMG:
+   background apps, full-screen Spaces, multiple displays, sleep/wake, permission revoke/regrant, rapid
+   start/stop, clipboard modes, and supported/unsupported live editors.
+3. Run real microphone streaming tests for every catalog model marked live-capable. Record first-text latency,
+   stable-prefix behavior, final reconciliation, target drift, and final-only fallback.
+4. Run a clean-macOS-user install: Gatekeeper path, model download/verification, Input Monitoring,
+   Microphone, Accessibility, System Audio, and optional Screen Recording.
+5. Add a privacy-safe diagnostic export containing versions, permission state, model IDs, timings, and error
+   codes but never audio, transcript text, API keys, focused-field text, or identities.
+6. Resolve or explicitly target-scope RustSec maintenance warnings inherited through Tauri. Linux-only GTK3
+   lockfile entries do not execute in the macOS artifact, while active cross-platform transitive warnings
+   should be tracked to an upstream upgrade. Vulnerability findings remain release-blocking.
+7. Generate an SPDX or CycloneDX SBOM and a consolidated dependency-license bundle, then include or publish
+   both with every public binary release.
+
+### P1 — Meetings Beta graduation
+
+1. Complete the real two-person meeting matrix across Zoom, Meet, Teams, FaceTime, Slack, input/output device
+   changes, browser tabs, sleep/wake, pause/resume, and call-end recovery.
+2. Package or implement a first-class install/status/remove lifecycle for local meeting Intelligence so clean
+   Macs do not require BYOK for notes.
+3. Add diarization quality evidence, editable identity mapping coverage, audio muxing for optional video,
+   bounded crash recovery, calendar truth, and local cross-meeting search.
+
+### P2 — product expansion
+
+1. Ship updater, signed release feed, versioned release notes, and rollback only after notarized artifacts are
+   stable.
+2. Define and validate the Writing Assistant as a separate reversible selection workflow.
+3. Keep Agents disabled until a new product brief explicitly defines scope, safety, packaging, privacy, and
+   physical acceptance. Do not infer a launch from dormant code.
 
 ## Resume protocol
 
-1. Read this file, `PRODUCT_RELEASE_MATRIX.md`, and `git status` before editing.
-2. Preserve unrelated working-tree changes and inspect the current branch before making release changes.
-3. Run `./script/prepare_web_assets.sh` before desktop checks/builds.
-4. Use `./script/build_release_dmg.sh` as the release gate; it owns Node, benchmark, Rust format/Clippy/check/test,
-   native helper, dependency audit, signing, build, and DMG verification.
-5. Pin the exact candidate UUID/hash before launch. The repo bundle and `/Applications/My Assistant.app` may
-   otherwise refer to different builds with the same bundle identifier and display name.
-6. Update this state page and the release matrix when product truth changes; keep historical detail in Git
-   and user-facing changes in `CHANGELOG.md`.
+At the start of resumed work:
 
-Human acceptance truth is defined in [`ACCEPTANCE_TESTS.md`](ACCEPTANCE_TESTS.md). Speech corpus collection
-and double-review truth is defined in
-[`benchmarks/speech/CORPUS_PROTOCOL.md`](../benchmarks/speech/CORPUS_PROTOCOL.md).
+1. Read this file and `PRODUCT_RELEASE_MATRIX.md`.
+2. Run `git status --short --branch` and compare `main` with `origin/main`; never assume a summarized branch
+   or artifact is current.
+3. Inspect the working diff before editing. Preserve unrelated user files and never commit ignored runtime or
+   demo artifacts.
+4. Re-run the narrow tests for the touched contract, then the complete release gate before claiming a DMG.
+5. Put artifact-specific SHA-256, size, version, date, and evidence in release notes or CI output—not here.

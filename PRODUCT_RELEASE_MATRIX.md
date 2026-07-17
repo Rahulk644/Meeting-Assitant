@@ -1,15 +1,17 @@
 # Product Release Matrix
 
-This file is the release authority for My Assistant. It separates the complete product design from the
-surface that is safe to expose in a production build. The full design remains in `app/index.html`; the
-server-owned registry in `app/release.js` decides what the browser may render.
+This file is the release authority for My Assistant. It separates implemented product behavior from the
+surface that is safe to expose in a production build. The server-owned registry in `app/release.js` decides
+what the browser may render. The Agents label is a deliberate exception: it is always present only as a
+greyed-out, disabled **Coming soon** navigation placeholder. It is not a route and exposes no Agent details.
 
 ## Release channels
 
 - `ASSISTANT_RELEASE_CHANNEL=production` — default for every packaged and ordinary local run. Unknown
-  capabilities fail closed.
+  capabilities fail closed. The DMG pipeline overrides any ambient value and always generates production.
 - `ASSISTANT_RELEASE_CHANNEL=preview` — internal design review only. It preserves the complete designed
-  surface, including unfinished and blocked work. It cannot be enabled by URL or a saved UI preference.
+  surface, including unfinished and blocked work. It cannot be enabled by URL or a saved UI preference and
+  is never accepted by the release pipeline.
 
 ## Capability states
 
@@ -25,22 +27,18 @@ passing the production-surface contract tests. “Designed” and “shipped” 
 
 | Capability key | Surface | State | Production | Preview | Backend / desktop support | Known limitation | Required verification / reopening condition |
 |---|---|---:|---:|---:|---|---|---|
-| `dictation` | Dictation navigation and view | shipped | Yes | Yes | Native global shortcut, mic capture, STT, paste | Session history only | Native hotkey, paste, and settings contract |
-| `meetings` | Meetings navigation and view | shipped | Yes | Yes | Automatic/manual capture, SSE, local meeting store | Automatic browser/chat detection requires both active audio and meeting-window evidence | Recording lifecycle and meeting-library tests |
+| `dictation` | Dictation navigation and view | shipped | Yes | Yes | Native global shortcut, mic capture, STT, capability-gated in-field live text, deterministic cleanup, optional guarded local polish, one final commit | Live text requires a selected streaming-capable model and a compatible editable field; recent dictations and diffs are session-only | Native hotkey, final-only paste, live-span reconciliation, cleanup, validator, and settings contracts |
+| `meetings` | Meetings navigation and view, labelled Beta | shipped | Yes | Yes | Automatic/manual capture, SSE, local meeting store | Automatic browser/chat detection requires both active audio and meeting-window evidence | Recording lifecycle and meeting-library tests |
 | `writingAssistant` | Writing Assistant navigation and view | preview | No | Yes | Design only | No system-wide writing runtime | Implement native selection/action runtime and test every action |
-| `agentFoundation` | Agents navigation and honest foundation view | shipped | Yes | Yes | Native read-only context status and roadmap | No model planning or computer actions | Production-surface contract and packaged release-payload verification |
-| `agentContextInspector` | On-demand screen-context inspection | shipped | Yes | Yes | Bounded native Accessibility snapshot; secure-field redaction; no screenshot/network/persistence | Reads the active or topmost app behind My Assistant; full multi-app matrix and OCR/vision fallback remain | Swift self-test, Rust fail-closed test, direct Chrome snapshot smoke, and signed-resource verification |
-| `agentComputeConfig` | Agent compute source and model controls | shipped | Yes | Yes | Optional local lane disclosure; Keychain BYOK provider/model discovery with startup-safe, once-per-process credential reads; native Apple-anchored OpenAI Codex validation at discovery, across spawn, and on the running child before RPC; isolated profile, device-code sign-in, and account-visible model controls | Local Agent runtime has no install lifecycle; configuration alone does not run or mutate an Agent; a differently rebuilt self-signed developer binary is a new Keychain authorization subject | Ad-hoc file/running-process signature-spoof regression, official-runtime positive control, secret-sanitization, model-discovery, production-surface contract tests, and AGT-023 unchanged-build acceptance |
-| `agentDraftPreview` | Structured draft planner | preview | No | Yes | API-key and ChatGPT account/Codex lanes; fresh bounded Accessibility context; typed draft/replace/no-op result; planner has no execution tool | Preview requires a configured compute lane; real-app matrix remains incomplete | Pass `agent-context` acceptance suite, prompt-injection controls, provider error/retry, and stale-snapshot tests before production |
-| `agentActions` | Guarded Apply and one-step Undo | preview | No | Yes | Separate Swift AX executor; explicit Apply click; behind-dashboard app check; exact process/bundle/window/role/label/content/selection revalidation; verified mutation or verified rollback; five-minute in-memory undo | Executable Apply is limited to a named disposable TextEdit document; other apps remain read-only; proposal expires after two minutes; no Send/Return/click/multi-step action | Pass the TextEdit isolation/rollback matrix, then require a separate synthetic acceptance gate before adding each app adapter |
-| `agentGlobalShortcut` | Configurable global Agent shortcut | preview | No | Yes | Native global-shortcut registration opens Agents and focuses the request field | Physical conflicts, relaunch restoration, focus, Spaces, and multi-display behavior remain unverified | Pass AGT-012 on a packaged build and add conflict/relaunch evidence |
-| `wakeWord` | Optional hands-free Agent activation | blocked | No | No | Research and acceptance contract only | sherpa-onnx is the leading open-runtime candidate but is heavier and tuning-sensitive; Porcupine is much smaller but requires an AccessKey and vendor-term review; microWakeWord is embedded-first; no engine, model, or secret is bundled | Pass the identical sherpa-onnx, Porcupine, and microWakeWord benchmark plus privacy, suspension, resource, integration, and licensing gates |
-| `agents` | Autonomous Agent action runtime | preview | No | Yes | Single explicit text draft/replace/undo chokepoint exists behind `agentActions` | No Send, click, wake phrase, multi-step action, audit history, OCR/vision fallback, or broad real-app acceptance | Complete the packaged action matrix before adding any new action class |
+| `agents` | Disabled Coming soon navigation label | blocked | Label only | Internal only | No production route, initialization, settings, shortcut, helper, or details; saved route is sanitized | Agents is not an initial product feature | Make a new explicit product decision and release plan before exposing anything beyond the label |
 | `feedbackSupport` | Feedback & Support | hidden | No | Yes | No destinations | Cards do not open real support targets | Wire and verify every destination |
 | `guide` | Guide | hidden | No | Yes | No published guide | Placeholder content | Publish a real guide and verify link handling |
 | `shareFriend` | Share with a friend | hidden | No | Yes | No share destination | Placeholder content | Add a real share action and verify it |
 | `settings` | Settings navigation and view | shipped | Yes | Yes | Server-mirrored preferences plus native handlers | Only verified rows render in production | Production setting-handler contract |
 | `pro` | Pro card and commercial claims | blocked | No | Yes | None | No billing, entitlement, cloud plan, or team sharing | Complete billing and entitlement verification |
+
+Internal registry keys retained for dormant Agent research inherit the single blocked Agents contract above.
+They are intentionally not itemized as product capabilities and cannot expand production packaging or UI.
 
 ## Meetings
 
@@ -89,6 +87,7 @@ passing the production-surface contract tests. “Designed” and “shipped” 
 | `soundVolume` | Sound and volume | shipped | Yes | Yes | Native cues | System sound assets | Native config test |
 | `dictationShortcut` | Shortcut configuration | shipped | Yes | Yes | Carbon combination or bare modifier | Limited supported key set | Registration and invalid-input tests |
 | `recentDictations` | Recent dictations | shipped | Yes | Yes | In-memory session list | Not persisted by design | Session feed test |
+| `smartPolish` | Experimental Smart Polish | shipped | Yes | Yes | Off by default; cleanup timing defaults to After I finish; live speech models may mechanically clean only committed prefixes; Gemma remains final-only; optional Gemma 3 270M/1B/4B via authenticated loopback llama.cpp; strict lossless validator; mechanical fallback; visual diff; target-aware handling | Model quality varies by language and hardware; tentative live words are never mechanically rewritten; secure fields never enter history or model inference | ≥250 exact golden cases, committed/tentative boundary tests, property tests, real 270M runtime smoke, download lifecycle, target/focus, and packaged physical acceptance |
 | `dictationUpload` | Upload voice note | preview | No | Yes | None | Placeholder action | Implement file import, transcription, and recovery |
 | `documentationLink` | Documentation link | hidden | No | Yes | None | No real destination | Publish and verify the destination |
 
@@ -136,7 +135,7 @@ A production build is releasable only when:
 
 - every visible capability is `shipped` and names verification evidence;
 - every visible CTA performs its advertised action and every visible setting has an application handler;
-- no production action resolves to “coming soon”;
+- no enabled production action resolves to “coming soon” (the disabled Agents navigation label is not an action);
 - hidden routes are sanitized to Meetings and local state cannot promote a capability;
 - transcript and participant mistakes are repairable and corrections stale derived notes visibly;
 - privacy copy updates with the selected processing mode;

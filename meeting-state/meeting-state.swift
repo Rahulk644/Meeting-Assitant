@@ -371,7 +371,7 @@ private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], evidenc
     return (names, evidence, active, activeEvidence, ignored)
 }
 
-// NOTE: live caption TEXT comes from on-device Whisper (see ../stt). This layer's job is meeting
+// NOTE: live caption TEXT comes from the selected on-device speech model (see ../stt). This layer's job is meeting
 // STATE — in-meeting / mute / share (from menu-bar labels) and participant/active-speaker NAMES.
 
 // MARK: - meeting-only Accessibility observation

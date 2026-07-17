@@ -14,38 +14,19 @@ changing capture, transcription, or packaging.
                                 │     • audio-only ⇒ "System Audio Recording Only"; Screen Recording = video
                                 │     • energy gate → splits speech into WHOLE utterances (natural pauses)
                             ▼
-              transcribe-server (transcribe.cpp + Metal · large-v3-turbo)   ← on demand, unloaded when idle
-                            │  POST /inference → {"text": …}
+              transcribe-server (transcribe.cpp + Metal · selected final model) ← on demand
+                            │  POST /inference → authoritative {"text": …}
                             ▼
               Rust local_server ──Server-Sent Events──▶ http://127.0.0.1:8790  (the UI, app/index.html)
                             ▲
               meeting-state (Swift, Accessibility) ─┘  speaker names, mute/share state
 ```
 
-Agents use separate, on-demand observation and action paths:
-
-```
-Agents view → authenticated POST /api/agent/context → agent-context (Swift, Accessibility) → bounded JSON
-
-preview planner (no execution tool)
-  ├─ API key → Keychain credential → selected OpenAI-compatible provider/model
-  └─ ChatGPT account → verified external Codex → isolated App Server profile/model list
-
-explicit Apply → Rust proposal gate → agent-action (Swift, Accessibility) → verify result → in-memory Undo
-```
-
-Both helpers exit after one request and add no idle memory. `agent-context` redacts secure fields and performs
-no screenshot, network call, persistence, or computer action. Production may configure compute. The
-planner, guarded action helper, and global shortcut are preview-gated. The planner emits only a validated
-draft/replace/no-op proposal and cannot execute it. A separate Apply click invokes `agent-action`, which
-currently accepts only the exact captured process of a disposable TextEdit document. It revalidates the
-process, bundle, window, focused role/label, full content, cursor, and selection before one verified text
-mutation. Other apps can still be inspected and drafted against, but receive no executable proposal. Any
-unexpected result is rolled back; an unverified rollback is reported as urgent, never described as safe.
-One exact-value Undo is private and memory-only. Send, Return, clicks, and multi-step actions do not exist.
-Codex is detected externally and run on demand; it is not copied into the app or DMG. The full
-observe-plan-confirm-act-verify contract is specified
-in [`docs/AGENTS_ARCHITECTURE.md`](docs/AGENTS_ARCHITECTURE.md).
+Agents are outside the initial product boundary. Production always renders one greyed-out, disabled
+**Coming soon** navigation label; it exposes no Agent route, settings, shortcut, helper, compute lane, or
+details. Older experimental source remains isolated for future research, but the Agent helpers are not
+packaged and no Agent initialization runs at app boot. Reopening that surface requires a separate product
+and release decision.
 
 Every component is on-device. No bot joins the call; no audio leaves the machine unless the user explicitly
 selects a cloud transcription or summary provider. The authenticated Rust server inside the Tauri process
@@ -81,24 +62,29 @@ second always-on server process is shipped.
   timeout (transcription is user-configurable, 10 min default; LLM ~5 min), so nothing heavy must sit
   resident indefinitely between calls.
   This mirrors Handy's `model_unload_timeout`.
-- **External Codex, never a bundled Node/package runtime.** The ChatGPT account lane verifies an official
-  native Codex binary from a standard installed ChatGPT/Codex/CLI location, creates a private isolated
-  `CODEX_HOME`, and starts App Server only after the user opens the ChatGPT · Codex lane for status,
-  sign-in/out, or preview planning. The official runtime
-  owns OAuth tokens. The UI receives sanitized plan/model capability data, not account email or tokens.
-  During device-code sign-in, status polling does not launch competing App Server processes. The core DMG
-  therefore keeps its idle footprint and does not absorb the roughly 300 MB optional Codex distribution.
 
 ## transcribe-server
 
-A ~130-line HTTP wrapper (`stt/transcribe-server/transcribe-server.cpp`, using single-header cpp-httplib)
-around transcribe.cpp's C API. It loads a GGUF once, holds it hot, and serves `POST /inference`
+A small authenticated HTTP wrapper (`stt/transcribe-server/transcribe-server.cpp`, using single-header
+cpp-httplib) around transcribe.cpp's C API. It loads a GGUF once, holds it hot, and serves `POST /inference`
 **byte-compatible with whisper.cpp's `whisper-server`** — multipart `file` + `language` + `translate` +
 `prompt` (custom-vocabulary bias → the whisper run-ext's `initial_prompt`), returns `{"text": …}` and may
 add `"truncated": true` when the engine returns valid partial text at its output limit. The response path
 validates UTF-8 before JSON escaping, so a byte-limited Indic transcript cannot corrupt the protocol. Because
 the interface matches, the capturer and Rust server are engine-agnostic; swapping engines is a spawn-path
 change, not a client change.
+
+For selected models whose loaded architecture exposes genuine incremental decoding, `/stream/begin`,
+`/stream/feed`, `/stream/finalize`, and `/stream/reset` use a second session over the same loaded model.
+The revisable hypothesis is written into one Accessibility-tracked span in a compatible focused editor;
+the pill remains status-only. The helper reacquires the same content-free field identity after web/Electron
+re-renders and uses verified Unicode input events, because those editors can falsely report success for a
+direct Accessibility text mutation while discarding it. When the user explicitly selects **While I speak**,
+only the streaming engine's committed prefix receives deterministic cleanup; its tentative tail remains an
+untouched speech hypothesis. After stop, whole-utterance transcription remains authoritative, full cleanup
+and Smart Polish run against that result, and the helper replaces only the exact provisional span it owns.
+Whisper and every other model without streaming hooks use the final-only single-paste path. A generation
+owner and serialized stream requests prevent an older dictation from resetting or updating a newer one.
 
 - **Build:** `stt/transcribe-server/build.sh` fetches transcribe.cpp at a **pinned commit**
   (`PINNED_COMMIT`), drops our `.cpp` + `httplib.h` in as a CMake example target, builds with Metal, and
@@ -157,9 +143,9 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   Accessibility and Screen Recording through `perm_status`. Microphone and System Audio Recording are
   labeled *Requested on first use* with recovery links because this layer does not expose a dependable live
   status for them.
-- **Permission-needing helpers are direct children.** `meeting-state`, `meeting-tap`, and the on-demand
-  `agent-context` / `agent-action` helpers are spawned directly by Rust, so macOS can associate their checks with the app's
-  stable identity. `meeting-state` NDJSON is
+- **Permission-needing helpers are direct children.** `meeting-state`, `meeting-tap`, and the minimal
+  on-demand `dictation-target` classifier are spawned directly by Rust, so macOS can associate their checks
+  with the app's stable identity. `meeting-state` NDJSON is
   forwarded over a tiny authenticated in-process localhost request (no polling or per-update `curl`).
 - **Ad-hoc signing pins the grant to a bare cdhash — it dies on the next rebuild.** swiftc's linker output
   *and* Tauri's default bundle output are ad-hoc; ad-hoc code has no stable identity, so when you grant, TCC
@@ -168,8 +154,8 @@ Get these wrong and the double-click app silently fails or nags on every launch.
   → re-prompt on every launch. `flags=0x2` ("proper" ad-hoc) vs `0x20002` (linker-signed) makes **no**
   difference — both are ad-hoc. The fix is a **real certificate**, not "better ad-hoc."
 - **Sign the app AND every direct-child helper with the same self-signed cert *and the app's identifier*.**
-  `tauri.conf.json` sets `bundle.macOS.signingIdentity: "My Assistant Dev"`; `setup.sh` signs `meeting-tap`,
-  `meeting-state`, `agent-context`, and `agent-action` with
+  `tauri.conf.json` sets `bundle.macOS.signingIdentity: "My Assistant Dev"`; the build scripts sign
+  `meeting-tap`, `meeting-state`, and `dictation-target` with
   `codesign --force --identifier com.myassistant.desktop --sign "My Assistant Dev"`.
   Two effects: (1) TCC stores `identifier "com.myassistant.desktop" and certificate leaf = …` —
   **cdhash-independent**, so grants survive rebuilds; (2) because each helper carries the *app's* identifier
@@ -299,14 +285,36 @@ per-keypress helper spawn. The loop:
    configured language, including **`language=auto`**, and uses the transcribe task (`translate=false`).
    Automatic must never be rewritten to English: doing so damages mixed Hindi-English recognition and
    confuses a language-selection control with the separate translation task.
-5. **Paste** — synthesize **⌘V** as a `CGEvent` with an explicit Command flag (core-graphics), authorized
-   by the **app's own Accessibility grant**. Use the raw keycode 9 (`kVK_ANSI_V`), never a character —
-   character→keycode goes through HIToolbox, whose layout query is main-thread-only and aborts the app when
-   called from the transcription thread.
+5. **Classify the target** — while the user is speaking, `dictation-target` performs one bounded
+   Accessibility query against the focused control. It reads only app/role metadata and at most eight
+   characters immediately before the cursor, then classifies the target as natural language, code/terminal,
+   secure, or unknown. It never walks the Accessibility tree. Secure targets skip model inference and all
+   transcript/history retention.
+6. **Deterministic cleanup** — when experimental Smart Polish is enabled, Rust performs an idempotent,
+   lossless pass: spoken punctuation, spacing, conservative numbers/dates/times/currency, approved fillers,
+   capitalization, user vocabulary, Hindi/English/Hinglish handling, and protected URLs/emails/code/file
+   paths. **After I finish** is the default. With **While I speak**, the same lightweight pass may update only
+   a positively classified natural-language stream's committed prefix; it never edits the tentative tail.
+   Code and secure targets receive spacing-only safety cleanup at the final pass.
+7. **Optional guarded model edit** — only positively classified natural-language targets may go through the separately
+   downloaded Gemma 3 270M, 1B, or 4B model in a pinned static `llama-server`. The server binds only
+   `127.0.0.1:9380`, requires the per-launch bearer token, has one inference slot, starts warming when
+   recording begins, and unloads after 60 idle seconds. Startup plus inference has a twelve-second hard cap.
+   Output is untrusted: a strict validator rejects commentary, wrappers other than one exact mirrored
+   envelope, additions, removals, reorderings, translations, script changes, number/protected-span changes,
+   repetition, and unsafe spelling edits. Every rejection or runtime failure uses the deterministic result.
+8. **Diff then one authoritative commit** — Rust computes token-level visual changes for the pill and
+   session history. If a streaming session owns an exact provisional span, the helper selects and replaces
+   that span with verified Unicode input so native and controlled web editors receive one real edit. Otherwise
+   Rust synthesizes **⌘V** exactly once as a `CGEvent` with an
+   explicit Command flag (core-graphics), authorized by the **app's own Accessibility grant**. Use raw
+   keycode 9 (`kVK_ANSI_V`), never a character — character→keycode goes through HIToolbox, whose layout
+   query is main-thread-only and aborts the app when called from the transcription thread.
 
 Progress and results ride the existing SSE channel: `emit_dstate()` POSTs `dictation-state` to `/ingest`
-(drives the main Dictation view), while Rust updates the native status pill directly. The final text POSTs
-`{type:'dictation'}` to populate Dictation history.
+(drives the main Dictation view), while Rust updates the native status pill directly. Non-secure final text,
+original text, cleanup trace, model decision, timing, and visual changes POST as `{type:'dictation'}` into a
+session-only in-memory history. Secure fields emit private metadata only and never retain text.
 
 **Settings are real, and split by who applies them.** The server owns only what it applies at transcription
 time — **language** and **punctuation** (Off strips it) — via `/api/config`. Everything the app process owns
@@ -324,16 +332,18 @@ It uses `NSScreenSaverWindowLevel`, `canJoinAllSpaces | fullScreenAuxiliary`, an
 stealing focus from the text field. It is allocated lazily on first use and reused after being ordered out.
 No hidden pill WebView or WebKit renderer remains resident while the app is idle.
 
-**Setup:** none of the old friction — no Input Monitoring grant, no 🌐/Fn-key remap. Microphone
-auto-prompts on first use; Accessibility is the single shared grant (with Meetings) for the paste.
+**Setup:** the default bare **Right Command** trigger requires Input Monitoring because it is implemented by
+an event tap. A configured ordinary key combination uses Carbon and does not require Input Monitoring.
+Microphone prompts on first use; Accessibility authorizes final insertion and bounded live-target recovery.
 
 ## Packaging & portability
 
 A packaged `.app` is self-contained for **code**, and resolves **data + model** to writable, per-user
 locations — so it runs when moved off the repo:
 
-- **Bundled into `Contents/Resources/`** (via `bundle.resources`): minified web assets (`webui/`) and the
-  Swift/STT binaries (`stt/`, `meeting-state/`). The server itself is compiled into the Rust app binary.
+- **Bundled into `Contents/Resources/`** (via `bundle.resources`): minified web assets (`webui/`), the
+  Swift/STT binaries (`stt/`, `meeting-state/`, `dictation-target/`), and the pinned static
+  `polish-runtime/llama-server`. Agent helpers are intentionally excluded. The server itself is compiled into the Rust app binary.
   `init_paths()` points `RES_BASE` at the Resources dir in a release build and at the repo in dev; helpers
   spawn from there. The web dir is staged as
   `webui/`, **not** `app/` — a top-level `app/` resource collides with the crate's own `app` binary during
@@ -346,12 +356,19 @@ locations — so it runs when moved off the repo:
   `[models dir → legacy repo layout]`; if none is present the UI **asks first** (never silent):
   `GET /api/model/status` → the model library → `POST /api/model/download` streams the selected artifact
   from a revision-pinned Hugging Face URL into `models/`, with progress over SSE and cancel/resume support.
+- **Polish models are also NOT bundled** (about 241 MB, 720 MB, or 2.49 GB). They live under
+  `models/polish/` and use a separate authenticated status/download/select/cancel/delete API. Each artifact
+  is revision-pinned, exact-size and SHA-256 verified before an owner-only atomic install. Switching or
+  removing the active model is blocked while dictation is processing.
 - **The `.dmg`** is built by `desktop/make-dmg.sh` (plain `hdiutil`, a drag-to-Applications installer) —
   **not** Tauri's DMG step, whose create-dmg fork always runs a Finder AppleScript that fails in any
   non-interactive shell. So `bundle.targets` is `["app"]`: `npm run build` makes the signed `.app`,
   `make-dmg.sh` makes the installer. Signing uses the stable self-signed **My Assistant Dev** identity
   (`bundle.macOS.signingIdentity`). The DMG includes a short install guide for the one-time current-macOS
   **Privacy & Security → Open Anyway** approval required by this no-paid-account distribution route.
+  `script/build_release_dmg.sh` is the canonical entry point: it forces production assets, builds every native
+  resource through `script/build_native_resources.sh`, signs with hardened runtime, validates the main audio
+  entitlement, then mounts the DMG read-only and inspects the exact recipient artifact.
 
 ## Traps checklist (the landmines)
 
@@ -364,10 +381,12 @@ locations — so it runs when moved off the repo:
 - Don't put permission-needing helpers behind an intermediary process — spawn them directly from Rust.
 - Don't match off-screen meeting windows in detection — gate secondary windows on `isOnScreen`.
 - Don't set `excludesCurrentProcessAudio = true` — it wedges SCK into silent capture.
-- Don't run the on-device LLM as a raw GGUF — use LiteRT-LM, or it hangs an 8 GB Mac.
-- Don't move dictation back into a helper binary or spawn one per keypress — it runs **in the app process**
-  (cpal mic + Carbon global shortcut + CGEvent paste), so the app's *own* Accessibility grant covers the
-  paste and there's no spawn lag. The Carbon global shortcut needs **no** permission (not Input Monitoring).
+- Don't run the large post-call Intelligence LLM as a raw GGUF — use LiteRT-LM, or it hangs an 8 GB Mac.
+  Smart Polish is a separate bounded short-text workload using explicitly selected small GGUF models.
+- Don't move microphone capture back into a per-keypress helper — cpal capture runs **in the app process** so
+  recording starts without spawn latency. Ordinary combination shortcuts use Carbon without Input
+  Monitoring; the default bare Right Command deliberately uses one native event tap and requires Input
+  Monitoring. The short-lived `dictation-target` helper is only the bounded Accessibility target session.
 - Don't paste with `enigo`/character keys off the main thread, and don't give the pill a plain NSWindow —
   use raw keycode 9 for ⌘V (no HIToolbox layout lookup → no SIGTRAP), and a non-activating `NSPanel` for
   the pill (a plain NSWindow won't float over another app's full-screen space at any level).
@@ -382,6 +401,11 @@ locations — so it runs when moved off the repo:
 - Don't ship a Settings row that does nothing — every dictation control maps to real behavior (sound ·
   volume · clipboard · overlay · rebindable hotkey via `set_dictation`; language · punctuation via the
   server). If it can't be honored on-device, remove it rather than fake it.
+- Don't let model output bypass deterministic cleanup or the strict validator. A live hypothesis may occupy
+  only the helper-owned provisional span; optional live cleanup is deterministic and limited to the
+  engine-confirmed prefix. The tentative tail never enters cleanup, and no live text enters Gemma or history.
+  Smart Polish remains final-only and has one authoritative commit point: replace that exact span, or use
+  the final-only single-paste path.
 
 ## Repo layout
 
@@ -392,9 +416,15 @@ locations — so it runs when moved off the repo:
 | `stt/transcribe-server/` | our transcribe.cpp HTTP wrapper (source + pinned-commit `build.sh`) |
 | `stt/whisper/` | GGUF model (git-ignored; fetched by `setup.sh`) |
 | `meeting-state/meeting-state.swift` | Accessibility layer: speaker names, mute/share |
+| `dictation-target/dictation-target.swift` | Bounded focused-control classifier; secure/code/natural-language target evidence only |
+| `desktop/src-tauri/src/dictation_cleanup.rs` | Deterministic, idempotent cleanup and protected-span trace |
+| `desktop/src-tauri/src/polish_runtime.rs` | Authenticated one-slot local Gemma lifecycle and hard timeout/fallback boundary |
+| `polish-runtime/` | Pinned static llama.cpp build boundary; the generated runtime and all models are ignored |
 | `desktop/src-tauri/src/local_server.rs` | packaged authenticated UI/API + SSE relay + meeting store + on-demand STT/LLM + model verification + streaming video |
 | `app/server.js` | developer-only browser harness; never bundled in the release app |
 | `app/index.html` | the UI — nav, live transcript, Library + detail, settings; light/dark |
 | `desktop/src-tauri/src/native_pill.rs` | native AppKit dictation status pill (the menu-bar dropdown is also native) |
+| `script/build_native_resources.sh` | single production build/signing path for every bundled native executable |
+| `script/verify_app_bundle.sh` | production payload, entitlement, architecture, nested-signature, and resource inspection |
 | `desktop/make-dmg.sh` | portable drag-to-install `.dmg` (hdiutil; bypasses Tauri's AppleScript DMG step) |
 | `run.sh` · `setup.sh` | dev launcher · one-time build + model download |

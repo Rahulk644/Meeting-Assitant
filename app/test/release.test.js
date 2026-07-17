@@ -29,12 +29,12 @@ test("release channel is fail-closed", () => {
   assert.equal(releasePayload(undefined).channel, "production");
 });
 
-test("hidden and unknown saved routes fall back while the Agents foundation remains reachable", () => {
+test("hidden, Agents, and unknown saved routes fall back to a shipped surface", () => {
   const production = capabilityMap("production");
   assert.equal(sanitizeRoute("writing", production), "meetings");
-  assert.equal(sanitizeRoute("agents", production), "agents");
-  assert.equal(production.agents, false, "the autonomous agent runtime is still preview-only");
-  assert.equal(production.agentContextInspector, true);
+  assert.equal(sanitizeRoute("agents", production), "meetings");
+  assert.equal(production.agents, false, "Agents is outside the initial product");
+  assert.equal(production.agentContextInspector, false);
   assert.equal(sanitizeRoute("unknown", production), "meetings");
   assert.equal(sanitizeRoute("dictation", production), "dictation");
 });
@@ -55,27 +55,55 @@ test("every release-matrix capability is registered in the server-owned contract
   for (const key of matrixKeys) assert.ok(CAPABILITIES[key], `${key} is missing from app/release.js`);
 });
 
-test("external Codex detection is lazy and lane-specific", () => {
+test("Agents stays visibly disabled and does not initialize at boot", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-  assert.match(html, /store\.get\('agentCompute',\{lane:'local'/, "clean installs must default to zero-network local compute");
-  assert.match(html, /lane=cfg\.lane\|\|'local'/);
-  assert.match(html, /if\(name==='agents'\) ensureAgentRuntime\(\)/);
-  assert.match(html, /agentComputeCfg\(\)\.lane!=='chatgpt'/);
-  assert.match(html, /agentRuntimeStatus\|\|agentRuntimeLoading/);
-  const initAgents = html.slice(html.indexOf("function initAgents()"), html.indexOf("window.addEventListener('my-assistant-agent-shortcut'"));
-  assert.doesNotMatch(initAgents, /refreshAgentRuntime\(\)/, "app boot must not probe Codex unconditionally");
+  assert.match(html, /data-view="agents" disabled aria-disabled="true"/);
+  assert.match(html, /Coming soon/);
+  const boot = html.slice(html.indexOf("async function boot()"), html.indexOf("\/\* ---------- on-device speech models"));
+  assert.doesNotMatch(boot, /initAgents\(\)|syncAgentShortcut\(\)|ensureAgentRuntime\(\)/);
 });
 
-test("packaged Agent shortcut has a durable route and focus entrypoint", () => {
+test("Agents cannot be restored through a saved route", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-  assert.match(html, /window\.__myAssistantOpenAgents=openAgentsFromShortcut/);
-  assert.match(html, /setView\('agents'\)/);
-  assert.match(html, /target\?\.focus\(\)/);
+  assert.match(html, /function safeView\(name\).*hasCap\(cap\)\?name:'meetings'/);
+  assert.match(html, /if\(n\.dataset\.view==='agents'\).*n\.disabled=true/);
+});
+
+test("settings model libraries remain visibly layered above their scrim", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const modalCss = html.match(/\.mcardm\{([^}]*)\}/)?.[1] || "";
+  assert.match(modalCss, /position:relative/);
+  assert.match(modalCss, /z-index:1/);
+  assert.match(modalCss, /opacity:1/);
+  assert.match(modalCss, /visibility:visible/);
+  assert.match(html, /@keyframes modalRise/);
+  assert.match(html, /<div class="mscrim" id="mScrim" hidden>[\s\S]*?<div class="mcardm" id="mCard"/);
 });
 
 test("screen-share privacy is deterministically restored on every native boot", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   assert.match(html, /if\(inTauri\(\)\) setStealth\(store\.get\('stealth',false\)\)/);
+});
+
+test("live dictation is selected-model capability gated and has no preview-model setup", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const pill = fs.readFileSync(path.join(__dirname, "../../desktop/src-tauri/src/native_pill.rs"), "utf8");
+  assert.match(html, /model\.supportsLiveStreaming/);
+  assert.match(html, /Live in text fields/);
+  assert.doesNotMatch(html, /live_transcript_model|\/api\/live-model|onLiveModelProgress|Moonshine/);
+  assert.doesNotMatch(pill, /set_live|live_transcript|LIVE_WIDTH/);
+});
+
+test("live cleanup is opt-in, stable-chunk only, and Smart Polish remains after stop", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const native = fs.readFileSync(path.join(__dirname, "../../desktop/src-tauri/src/lib.rs"), "utf8");
+  assert.match(html, /cleanup_timing:'After I finish'/);
+  assert.match(html, /options:\['After I finish','While I speak'\]/);
+  assert.match(html, /supportsLiveStreaming\|\|!store\.get\('smart_polish',false\)/);
+  assert.match(html, /Smart Polish still waits until you stop/);
+  assert.match(native, /snapshot\.committed/);
+  assert.match(native, /DictFeedback::PostProcessing/);
+  assert.doesNotMatch(native, /DictFeedback::Polishing/);
 });
 
 test("preview Agent actions remain TextEdit-isolated and report unknown final state honestly", () => {

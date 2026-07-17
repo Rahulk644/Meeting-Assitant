@@ -14,7 +14,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/desktop/src-tauri/target/release/bundle/macos/My Assistant.app"
 OUT_DIR="$ROOT/desktop/src-tauri/target/release/bundle/dmg"
 VERSION="$(/usr/bin/plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" 2>/dev/null || echo 0.1.0)"
-RELEASE_LABEL="${RELEASE_LABEL:-beta.2}"
+RELEASE_LABEL="${RELEASE_LABEL:-beta.4}"
 DMG="$OUT_DIR/My_Assistant_${VERSION}-${RELEASE_LABEL}_arm64.dmg"
 IDENTITY="${SIGN_IDENTITY:-My Assistant Dev}"
 
@@ -27,12 +27,12 @@ rm -f "$OUT_DIR"/rw.*.dmg "$DMG"
 mkdir -p "$OUT_DIR"
 
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
-cp -R "$APP" "$STAGE/"
+/usr/bin/ditto "$APP" "$STAGE/My Assistant.app"
 ln -s /Applications "$STAGE/Applications"   # drag-to-install target
 cp "$ROOT/desktop/DMG-README.txt" "$STAGE/1 — START HERE — INSTALL.txt"
 
 hdiutil create -volname "My Assistant" -srcfolder "$STAGE" -ov -format UDZO -fs HFS+ "$DMG" >/dev/null
-codesign --force --sign "$IDENTITY" "$DMG" >/dev/null 2>&1 || echo "note: DMG left unsigned (identity '$IDENTITY' not found)"
+codesign --force --sign "$IDENTITY" "$DMG" >/dev/null
 
 echo "✅ built $(basename "$DMG")"
 ls -lah "$DMG"

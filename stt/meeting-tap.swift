@@ -674,8 +674,8 @@ if LIST_APPS {
 
 // Capture is GATED on being in a real call: the mic + system taps run only while we self-detect a call
 // in the ScreenCaptureKit window list (see detectMeetingApp), and are torn down (releasing the mic)
-// otherwise — so nothing is captured when you're not in a meeting. `--gate off` = always capture
-// (Google Meet, whose window we can't yet recognize).
+// otherwise — so nothing is captured when you're not in a meeting. `--gate off` is an explicit manual
+// always-capture mode for unsupported platforms; browser calls normally use audio plus window evidence.
 final class Capture {
     var stream: SCStream?, sckOut: SCKOut?, videoOut: VideoOut?, rec: VideoRecorder?, mic: Mic?, tap: ProcessTap?
     var running = false, mode = "off", recFile = "", targetBundle = ""
@@ -766,7 +766,7 @@ func parentIsAlive() -> Bool {
 }
 // Fetch UI-set config (video mode + share state) AND the manual override (start/pause/stop) in-process.
 // inMeeting is SELF-DETECTED below; `manual` lets the UI force capture on/off on top of that — e.g. manually
-// record a Google Meet call (no native window to auto-detect), or pause/stop while still in a call.
+// record an unsupported platform manually, or pause/stop while still in a call.
 func fetchConfig() {
     guard !configFetchInFlight,
           let url = URL(string: "http://127.0.0.1:\(guiPort)/api/state") else { return }

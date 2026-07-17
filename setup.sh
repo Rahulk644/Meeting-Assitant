@@ -1,82 +1,64 @@
 #!/usr/bin/env bash
-# One-time setup: build the transcription engine + model, the post-call LLM, and the native helpers.
-set -e
+# One-time developer setup for local models and production native resources.
+set -euo pipefail
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_DIR="$ROOT/stt/whisper"
 GGUF="$MODEL_DIR/whisper-large-v3-turbo-Q8_0.gguf"
-GGUF_URL="https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/whisper-large-v3-turbo-Q8_0.gguf"
+GGUF_PART="$GGUF.part"
+GGUF_URL="https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/d222c9f621c1128299248f2ded4d8a1820519780/whisper-large-v3-turbo-Q8_0.gguf"
 GGUF_SHA256="d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448"
+SIGN_IDENTITY="${SIGN_IDENTITY:-My Assistant Dev}"
 
 command -v swiftc >/dev/null || { echo "Xcode Command Line Tools required: xcode-select --install"; exit 1; }
-command -v brew   >/dev/null || { echo "Homebrew required: https://brew.sh"; exit 1; }
-command -v cmake  >/dev/null || brew install cmake   # transcribe.cpp builds with CMake
-command -v git    >/dev/null || { echo "git required"; exit 1; }
+command -v brew >/dev/null || { echo "Homebrew required: https://brew.sh"; exit 1; }
+command -v cmake >/dev/null || brew install cmake
+command -v git >/dev/null || { echo "git is required"; exit 1; }
 
-echo "1/3  Transcription engine — transcribe.cpp (built from source, Metal GPU) + large-v3-turbo q8 model, ~886 MB…"
+echo "Preparing the default on-device speech model…"
 mkdir -p "$MODEL_DIR"
-[ -f "$GGUF" ] || curl -L --fail --progress-bar -o "$GGUF" "$GGUF_URL"   # GGUF for transcribe.cpp
-ACTUAL_GGUF_SHA256="$(shasum -a 256 "$GGUF" | awk '{print $1}')"
-[[ "$ACTUAL_GGUF_SHA256" == "$GGUF_SHA256" ]] || {
-  echo "Speech-model checksum mismatch; refusing to load $GGUF" >&2
+if [[ -f "$GGUF" ]] && [[ "$(shasum -a 256 "$GGUF" | awk '{print $1}')" != "$GGUF_SHA256" ]]; then
   rm -f "$GGUF"
-  exit 1
-}
-"$ROOT/stt/transcribe-server/build.sh"                                    # → stt/transcribe-server/transcribe-server
-# Fallback engine (optional, auto-used only if present): whisper.cpp —
-#   brew install whisper-cpp && curl -L -o "$MODEL_DIR/ggml-large-v3-turbo-q8_0.bin" \
-#     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin
+fi
+if [[ ! -f "$GGUF" ]]; then
+  curl --location --fail --continue-at - --progress-bar --output "$GGUF_PART" "$GGUF_URL"
+  [[ "$(shasum -a 256 "$GGUF_PART" | awk '{print $1}')" == "$GGUF_SHA256" ]] || {
+    echo "Speech-model checksum mismatch; refusing to install it." >&2
+    rm -f "$GGUF_PART"
+    exit 1
+  }
+  chmod 600 "$GGUF_PART"
+  mv "$GGUF_PART" "$GGUF"
+fi
 
-echo "2/3  Post-call AI — LiteRT-LM + Gemma 4 E2B (text-only; effective-2B ≈ 1 GB RAM, 2.4 GB disk)…"
-command -v uv >/dev/null || brew install uv
-LITERT="$(command -v litert-lm || echo "$HOME/.local/bin/litert-lm")"
-[ -x "$LITERT" ] || uv tool install litert-lm
-"$LITERT" list 2>/dev/null | grep -q gemma4-e2b || \
-  "$LITERT" import --from-huggingface-repo litert-community/gemma-4-E2B-it-litert-lm gemma-4-E2B-it.litertlm gemma4-e2b
-
-echo "3/3  Building native helpers (Swift)…"
-# macOS 14.4 target: meeting-tap uses Core Audio process taps (14.2+) so audio-only meetings capture the
-# other participants via "System Audio Recording Only" (no Screen Recording). Needs the 14.4+ SDK — update
-# Command Line Tools if `xcrun --show-sdk-version` prints < 14.
-( cd "$ROOT/stt" && swiftc -O -target arm64-apple-macos14.4 meeting-tap.swift -o meeting-tap \
-    -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework CoreImage \
-    -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist )
-( cd "$ROOT/meeting-state" && swiftc -O meeting-state.swift -o meeting-state )
-bash "$ROOT/script/build_agent_helpers.sh"
-# TCC keys Screen-Recording / Mic / Accessibility grants on a process's SIGNING IDENTIFIER + code
-# requirement — NOT on who its parent is. These helpers are spawned children of the app, but each is its
-# own binary with its own identity, so the app's grant (identifier "com.myassistant.desktop") does NOT
-# cover them: the capturer would get "user declined" and re-prompt on every launch. Two things fix it,
-# together: (1) sign with the SAME cert the app uses ("My Assistant Dev"), and (2) force the SAME signing
-# identifier as the app (APP_ID) — so each helper satisfies the app's Designated Requirement and RIDES the
-# app's single, already-granted permission. No separate toggle, no re-prompt. (swiftc's default ad-hoc
-# signature can't carry a stable identity at all, which is why it must be re-signed.) ALWAYS do this after
-# rebuilding the helpers.
-SIGN_ID="My Assistant Dev"
-APP_ID="com.myassistant.desktop"        # must match tauri.conf.json "identifier"
-if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
-  codesign --force --options runtime --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/stt/meeting-tap"
-  codesign --force --options runtime --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/meeting-state/meeting-state"
-  codesign --force --options runtime --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/agent-context/agent-context"
-  codesign --force --options runtime --identifier "$APP_ID" --sign "$SIGN_ID" "$ROOT/agent-action/agent-action"
-  echo "     signed native helpers as '$APP_ID' with '$SIGN_ID' — they ride the app's TCC grants (no re-prompt)."
+if [[ "${INSTALL_MEETING_INTELLIGENCE:-0}" == "1" ]]; then
+  echo "Installing the optional local meeting-Intelligence runtime…"
+  command -v uv >/dev/null || brew install uv
+  LITERT="$(command -v litert-lm || echo "$HOME/.local/bin/litert-lm")"
+  [[ -x "$LITERT" ]] || uv tool install litert-lm
+  "$LITERT" list 2>/dev/null | grep -q gemma4-e2b || \
+    "$LITERT" import --from-huggingface-repo \
+      litert-community/gemma-4-E2B-it-litert-lm gemma-4-E2B-it.litertlm gemma4-e2b
 else
-  echo "     ⚠  Signing identity '$SIGN_ID' not found in your keychain. Falling back to ad-hoc —"
-  echo "        macOS will RE-PROMPT for Screen Recording / Mic / Accessibility on every launch."
-  echo "        Create the self-signed cert (Keychain Access → Certificate Assistant, name it exactly"
-  echo "        '$SIGN_ID', type 'Code Signing') and re-run this script to make the prompts stop."
-  codesign --force --options runtime --identifier "$APP_ID" --sign - "$ROOT/stt/meeting-tap"
-  codesign --force --options runtime --identifier "$APP_ID" --sign - "$ROOT/meeting-state/meeting-state"
-  codesign --force --options runtime --identifier "$APP_ID" --sign - "$ROOT/agent-context/agent-context"
-  codesign --force --options runtime --identifier "$APP_ID" --sign - "$ROOT/agent-action/agent-action"
+  echo "Skipping optional meeting Intelligence. Set INSTALL_MEETING_INTELLIGENCE=1 to install it."
+fi
+
+echo "Building native production resources…"
+if security find-certificate -c "$SIGN_IDENTITY" >/dev/null 2>&1; then
+  SIGN_IDENTITY="$SIGN_IDENTITY" "$ROOT/script/build_native_resources.sh"
+else
+  echo "Signing identity '$SIGN_IDENTITY' was not found; native helpers will use ad-hoc signatures." >&2
+  echo "Create a stable code-signing certificate before producing a distributable DMG." >&2
+  SIGN_IDENTITY="-" "$ROOT/script/build_native_resources.sh"
 fi
 
 cat <<'EOF'
 
-✅ Setup complete.
+Setup complete.
 
-One-time macOS permissions (grant to your Terminal, in System Settings → Privacy & Security):
-  • Screen & System Audio Recording   (to hear the other participants)
-  • Accessibility                     (for the speaker-names layer, when enabled)
+The default Right Command shortcut needs Input Monitoring. Dictation also needs Microphone and
+Accessibility; Meetings additionally requests System Audio Recording, and optional video requests Screen
+Recording. macOS prompts on first use and the app links to each Privacy & Security pane.
 
-Then, from your Terminal:   ./run.sh   →   open http://localhost:8790
+Run ./script/build_and_run.sh --verify for the packaged desktop app, or ./run.sh for the developer harness.
 EOF

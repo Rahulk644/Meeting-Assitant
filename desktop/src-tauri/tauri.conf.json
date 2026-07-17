@@ -34,11 +34,12 @@
       "../../stt/meeting-tap": "stt/meeting-tap",
       "../../stt/transcribe-server/transcribe-server": "stt/transcribe-server/transcribe-server",
       "../../meeting-state/meeting-state": "meeting-state/meeting-state",
-      "../../agent-context/agent-context": "agent-context/agent-context",
-      "../../agent-action/agent-action": "agent-action/agent-action"
+      "../../dictation-target/dictation-target": "dictation-target/dictation-target",
+      "../../polish-runtime/llama-server": "polish-runtime/llama-server"
     },
     "macOS": {
       "signingIdentity": "My Assistant Dev",
+      "entitlements": "Entitlements.plist",
       "minimumSystemVersion": "14.4"
     },
     "android": {

@@ -4,13 +4,21 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   server-tests:
     name: Server tests (node --test)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "24"
       - name: Run tests
@@ -23,44 +31,49 @@ jobs:
   desktop-check:
     name: Desktop compile check (cargo)
     runs-on: macos-latest # links Core Audio / CoreGraphics / AppKit — macOS only
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "24"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
+          toolchain: stable
           components: clippy,rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: desktop/src-tauri
+      - name: Install pinned RustSec audit tool
+        run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Install deterministic desktop build tooling
         working-directory: desktop
         run: npm ci
       - name: Prepare packaged WebView assets
+        env:
+          ASSISTANT_RELEASE_CHANNEL: production
         run: ./script/prepare_web_assets.sh
-      - name: Build and test native Swift resources
+      - name: Build and test production Swift resources
         run: |
           xcrun swiftc -O meeting-state/meeting-state.swift -o meeting-state/meeting-state \
             -framework AppKit -framework ApplicationServices
-          xcrun swiftc -O agent-context/agent-context.swift -o agent-context/agent-context \
-            -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CryptoKit
-          xcrun swiftc -O agent-action/agent-action.swift -o agent-action/agent-action \
-            -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CryptoKit
           xcrun swiftc -O stt/meeting-tap.swift -o stt/meeting-tap \
             -framework CoreAudio -framework AudioToolbox -framework AVFoundation \
             -framework ScreenCaptureKit -framework CoreGraphics -framework CoreImage \
             -framework AppKit -framework ApplicationServices
+          xcrun swiftc -O dictation-target/dictation-target.swift -o dictation-target/dictation-target \
+            -framework AppKit -framework ApplicationServices
           meeting-state/meeting-state --selftest
-          agent-context/agent-context --selftest
-          agent-action/agent-action --selftest
           stt/meeting-tap --selftest
-      - name: Stage compile-only transcription resource
+          dictation-target/dictation-target --selftest
+      - name: Stage compile-only model runtimes
         run: |
-          # Tauri validates every configured resource even for `cargo check`. Release builds replace this
-          # explicit CI-only stub by compiling the pinned transcribe.cpp checkout.
+          # Tauri validates every configured resource even for `cargo check`. Release builds replace these
+          # explicit CI-only stubs with pinned transcribe.cpp and llama.cpp executables.
           printf '#!/bin/sh\nexit 1\n' > stt/transcribe-server/transcribe-server
           chmod +x stt/transcribe-server/transcribe-server
+          printf '#!/bin/sh\nexit 1\n' > polish-runtime/llama-server
+          chmod +x polish-runtime/llama-server
       - name: cargo fmt
         working-directory: desktop/src-tauri
         run: cargo fmt --check
@@ -73,3 +86,6 @@ jobs:
       - name: cargo test
         working-directory: desktop/src-tauri
         run: cargo test --locked
+      - name: RustSec advisory audit
+        working-directory: desktop/src-tauri
+        run: cargo audit

@@ -1,84 +1,97 @@
 # Contributing
 
-Thanks for helping improve My Assistant. It is a local-first macOS app with a Tauri/Rust shell, a
-Rust-native packaged HTTP service, native audio/transcription helpers, and a vanilla HTML/CSS/JS interface.
-The dependency-free Node service remains a development harness; it is not shipped in the app bundle.
+Thank you for improving My Assistant. The initial product is a local-first macOS app with two supported
+surfaces: Dictation and Meetings (Beta). Agents is a disabled **Coming soon** label; contributions must not
+expose Agent details, routes, settings, runtimes, or helpers in a production build.
 
-## Repository layout
+Read [README.md](README.md), [ARCHITECTURE.md](ARCHITECTURE.md), and
+[docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) before changing runtime behavior. The project-state document
+is the durable handoff contract; update it only when a lasting invariant or release gate changes.
 
-| Path | What it is |
+## Repository map
+
+| Path | Responsibility |
 |---|---|
-| `app/` | The UI (`index.html`), development server (`server.js`), release contract, and unit-tested domain modules. |
-| `desktop/src-tauri/` | The packaged Rust service and Tauri shell: native AppKit pill/tray, global shortcut/event tap, capture, transcription orchestration, secure settings, and Keychain access. |
-| `meeting-state/` | Swift helper — speaker names + in-call detection via Accessibility. |
-| `agent-context/` | Swift helper — bounded, on-demand, read-only Accessibility context for Agents. |
-| `stt/` | On-device speech-to-text (`transcribe.cpp` / `whisper.cpp` servers). |
-| `benchmarks/speech/` | Pinned model/data qualification, private corpus tooling, and aggregate evidence. |
-| `acceptance/` | Machine-readable physical-shortcut and real two-person meeting acceptance matrices. |
+| `app/` | HTML/CSS/JS interface, server-owned release contract, development harness, and Node tests. |
+| `desktop/src-tauri/` | Tauri shell and packaged Rust service: shortcuts, audio, transcription, target-safe insertion, settings, and local APIs. |
+| `stt/` | Meeting capture and the pinned local transcription runtime. |
+| `meeting-state/` | Bounded native meeting-state helper. |
+| `dictation-target/` | Bounded native helper for focused-field classification and live-text reconciliation. |
+| `polish-runtime/` | Build destination for the pinned Smart Polish runtime; model weights are never committed or bundled. |
+| `benchmarks/speech/` | Reproducible model qualification and aggregate-only evidence. |
+| `acceptance/` | Product-level physical acceptance cases and runner tests. |
+| `script/` | Canonical build, verification, benchmark, and packaging entry points. |
 
-Architecture and the macOS permission model live in [ARCHITECTURE.md](ARCHITECTURE.md); the privacy model in
-[SECURITY.md](SECURITY.md).
+`agent-context/`, `agent-action/`, and their Rust/UI integration are dormant research. They are not part of
+the initial product or release payload. Do not expand or expose them without a separate product decision and
+an update to the release contract.
 
 ## Prerequisites
 
-- macOS (the app links Core Audio / CoreGraphics / AppKit — it does not build on Linux).
-- Node ≥ 18 (uses the built-in `node:test` runner; no npm dependencies).
-- Rust stable; the repository-pinned npm Tauri CLI is installed with `npm ci` in `desktop/`.
-- Xcode Command Line Tools and the macOS 14.4 SDK target for the Swift helpers.
+- Apple Silicon Mac running macOS 14.4 or later.
+- Xcode Command Line Tools.
+- Rust stable and Node.js 18 or later.
+- The repository-pinned desktop dependencies installed with `cd desktop && npm ci`.
+- `cargo-audit` 0.22.2 for a release (`cargo install cargo-audit --version 0.22.2 --locked`).
+- For signed local bundles, the `My Assistant Dev` certificate described in [desktop/README.md](desktop/README.md).
 
-## Build, run, test
+## Development and verification
+
+Use the narrowest useful loop while developing:
 
 ```sh
-# Server + UI only (fast loop — open the printed http://localhost URL)
+# UI and development server
+cd app && npm test
 cd app && npm start
 
-# Run the server test suite (pure modules: the recording gate, multipart splicing)
-cd app && npm test          # → node --test
-
-# Full desktop app (single kill + build + launch entry point)
-./script/build_and_run.sh --verify
-
-# Preview the native dictation pill without recording audio
-ASSISTANT_PILL_PREVIEW=listening cargo run --manifest-path desktop/src-tauri/Cargo.toml
-
-# Rust quality gate without a full release build
+# Rust quality gate
 cd desktop/src-tauri
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo check --locked && cargo test --locked
+cargo check --locked
+cargo test --locked
+cargo audit
 
-# Native helper logic/build checks after touching Swift or C++ capture code
-./meeting-state/meeting-state --selftest
-./agent-context/agent-context --selftest
-./stt/transcribe-server/build.sh
-
-# Speech/corpus and acceptance runner unit tests (does not download models or private data)
+# Speech benchmark and acceptance-runner tests (no model or private-corpus download)
 ./script/benchmark_speech.sh test
+
+# Build every production native resource, then build/install the one canonical app
+SIGN_IDENTITY="My Assistant Dev" ./script/build_native_resources.sh
+./script/build_and_run.sh --verify
+
+# Full signed beta artifact and mounted-image verification
+./script/build_release_dmg.sh
 ```
 
-## Code standards
+`script/build_native_resources.sh` is the only production native-resource build entry point. Adding a
+packaged executable requires updating that script, `tauri.conf.json`, CI staging, code-signing rules, the
+bundle verifier, architecture documentation, and third-party notices together.
 
-- **Comments explain the *present*, not the *past*.** State the invariant or the non-obvious *why* in one or
-  two lines. Do **not** narrate previous implementations, what used to be slow, or how a bug was found — that
-  is what `git log` and [ARCHITECTURE.md](ARCHITECTURE.md) are for. A comment that describes code that no
-  longer exists is a bug.
-- **Prefer a named constant to a magic number** (`NS_SCREEN_SAVER_LEVEL`, not `1000`). Let the code
-  document itself so the comment can shrink or disappear.
-- **Extract pure logic so it can be tested.** New non-trivial decision logic (state machines, parsers,
-  byte-wrangling) should be a pure function/module with a test table — see `app/gate.js` +
-  `app/test/gate.test.js` as the pattern.
-- **Don't swallow errors silently.** An empty `catch {}` / `let _ =` erases the debugging path; at minimum
-  log it (`console.error` / `log::warn!`).
-- **No dead UI.** A setting that doesn't change behaviour shouldn't ship. Wire it or remove it.
-- Keep the development server dependency-free and maintain behavioural parity with the packaged Rust routes.
+## Engineering standards
+
+- Preserve the product boundary. Production exposes Dictation, Meetings (Beta), and a disabled Agents label.
+- Fail closed at privacy, permission, model-integrity, release-channel, code-signing, and focused-target
+  boundaries. A failed target reconciliation copies the final result rather than writing to an uncertain app.
+- Keep comments about present invariants and non-obvious reasons. Historical narration belongs in Git history
+  or the changelog.
+- Extract decision logic into small testable units. Add regression tests for every fixed defect.
+- Do not silently swallow failures that affect recording, transcription, insertion, storage, or security.
+- Keep the Node development harness behaviorally aligned with packaged Rust routes where both exist.
+- Do not commit model weights, native build outputs, audio, transcripts, participant identities, credentials,
+  screenshots containing private data, or human-acceptance evidence with raw speech.
+- Never claim a physical macOS or real-conversation case passed from synthetic input, a helper self-test, or a
+  prerecorded loop. Record unresolved physical coverage as an explicit release risk.
 
 ## Pull requests
 
-1. Add or update tests for any logic change (`cd app && npm test` must pass).
-2. `cargo fmt --check`, Clippy with warnings denied, `cargo check`, and `cargo test` must pass for desktop changes.
-3. Update `PRODUCT_RELEASE_MATRIX.md` when a production capability changes state.
-4. Keep model weights, audio, consent mappings, annotations, transcript-bearing reports, screenshots, and
-   human acceptance sessions outside Git. Commit only aggregate evidence with no speech text or identities.
-5. Never mark a physical/platform case passed from a synthesized key, prerecorded loop, helper self-test,
-   machine transcript, or machine transliteration.
-6. Keep the diff focused; describe the *why* in the PR body, not in a new block comment.
+A pull request should explain the user-facing reason, the invariant being protected, and how the change was
+verified. Update the following when applicable:
+
+- `CHANGELOG.md` for user-visible changes;
+- `PRODUCT_RELEASE_MATRIX.md` and `app/release.js` for capability-state changes;
+- `ARCHITECTURE.md` or `SECURITY.md` for durable runtime or trust-boundary changes;
+- `docs/PROJECT_STATE.md` only for durable product/release invariants;
+- `THIRD_PARTY_NOTICES.md` for a new runtime, model, dataset, or redistributed dependency.
+
+Before requesting review, run the automated gates relevant to the diff and use
+`script/build_release_dmg.sh` for any release, signing, entitlement, resource, or packaging change.

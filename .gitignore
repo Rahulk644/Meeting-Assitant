@@ -2,14 +2,18 @@
 stt/whisper/*.bin
 stt/whisper/*.gguf
 stt/whisper/bin/
+stt/whisper/polish/
 
 # Native build artifacts — built by ./setup.sh
 stt/meeting-tap
 meeting-state/meeting-state
 agent-context/agent-context
 agent-action/agent-action
+dictation-target/dictation-target
+polish-runtime/llama-server
 stt/transcribe-server/transcribe-server
 stt/transcribe-server/.transcribe.cpp/
+.build/
 
 # Packaged app + installer — produced by `tauri build` / desktop/make-dmg.sh
 # (normally only ever under desktop/src-tauri/target/, which is ignored; belt-and-braces
@@ -19,6 +23,9 @@ stt/transcribe-server/.transcribe.cpp/
 
 # Go-to-market pack (business material, not code) — MUST NOT be committed
 gtm-workflows/
+
+# Local product-demo projects and rendered media are maintained separately.
+/videos/
 
 # macOS / editor
 .DS_Store

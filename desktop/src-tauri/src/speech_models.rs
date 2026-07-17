@@ -319,6 +319,18 @@ pub fn default_speech_model() -> &'static SpeechModelSpec {
     speech_model(DEFAULT_MODEL_ID).expect("default speech model is present in the built-in catalog")
 }
 
+/// True only for artifacts whose loaded architecture exposes the runtime's genuine incremental
+/// `stream_begin/feed/finalize` contract. Whisper checkpoints are deliberately excluded: repeatedly
+/// decoding a growing Whisper buffer looks live, but it is slower, unstable, and not model streaming.
+pub fn supports_live_streaming(model: &SpeechModelSpec) -> bool {
+    matches!(
+        model.id,
+        "parakeet-unified-en-0.6b"
+            | "nemotron-speech-streaming-en-0.6b"
+            | "nemotron-3.5-asr-streaming-0.6b"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +364,23 @@ mod tests {
         ] {
             assert!(speech_model(id).is_some(), "missing requested model {id}");
         }
+    }
+
+    #[test]
+    fn live_streaming_is_exposed_only_for_native_streaming_architectures() {
+        let enabled: Vec<&str> = SPEECH_MODELS
+            .iter()
+            .filter(|model| supports_live_streaming(model))
+            .map(|model| model.id)
+            .collect();
+        assert_eq!(
+            enabled,
+            vec![
+                "parakeet-unified-en-0.6b",
+                "nemotron-speech-streaming-en-0.6b",
+                "nemotron-3.5-asr-streaming-0.6b"
+            ]
+        );
+        assert!(!supports_live_streaming(default_speech_model()));
     }
 }

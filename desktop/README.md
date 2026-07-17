@@ -1,82 +1,81 @@
-# My Assistant — desktop app (Tauri)
+# Desktop application
 
-A native macOS window (Rust + the OS WebView) around the Meetings UI. A **release build is self-contained**:
-the authenticated UI/API server runs inside the Rust app process, which starts the gated capturer and
-`meeting-state` directly and cleans them up on quit. Agents use two short-lived native helpers: one bounded
-read-only context inspection and one preview-only, explicitly confirmed text Apply/Undo boundary. Both exit
-after one request. No Node runtime or Node process is shipped. The native
-transcription server starts only when speech needs transcription and unloads after the configured idle
-period, so it never holds the model in RAM indefinitely. The app also adds what a browser tab can't: a **menu-bar tray** (with an
-audio-wave recording indicator) and a **screen-share-invisible** window (`set_content_protected` →
-`NSWindow.sharingType = .none` on macOS, `WDA_EXCLUDEFROMCAPTURE` on Windows).
+`desktop/` contains the Tauri build definition for the native macOS product. The release app is
+self-contained for code: the authenticated UI/API server runs inside Rust, the app owns its tray and AppKit
+dictation pill, and native speech/capture helpers are bundled as signed resources. No Node runtime or model
+weight is shipped.
 
-The window loads the UI from an app-owned loopback server (`http://127.0.0.1:8790`). A random per-launch
-secret protects every route, and the WebView exchanges a one-time bootstrap URL for an HttpOnly cookie.
+The WebView loads from `http://127.0.0.1:8790` only after the Rust listener is ready. A random per-launch
+secret exchanges the one-time bootstrap URL for an HttpOnly cookie. If the port is already owned, startup
+fails closed before a WebView or helper begins.
 
-## Build
+## Canonical workflows
 
-```bash
-npm install                         # once — the Tauri CLI (needs Rust: https://rustup.rs)
-../setup.sh                         # builds + cert-signs the native helpers (its 3/3 step; see below)
-npx tauri build --bundles app       # → src-tauri/target/release/bundle/macos/My Assistant.app
-cp -R "src-tauri/target/release/bundle/macos/My Assistant.app" /Applications/
+Run these from the repository root:
+
+```sh
+# Build all native resources, build/sign the app, atomically install one canonical copy, and verify launch
+./script/build_and_run.sh --verify
+
+# Run every release gate and produce the inspected DMG
+./script/build_release_dmg.sh
+
+# Install the exact mounted candidate atomically and remove the transient build-tree app
+./script/install_verified_dmg.sh desktop/src-tauri/target/release/bundle/dmg/My_Assistant_<version>-<label>_arm64.dmg
+
+# Browser-only developer harness
+./run.sh
 ```
 
-For a locally built copy, double-click it. For a DMG received from another person, drag it to Applications
-and try to open it once. On current macOS, dismiss the unverified-app warning, then use **System Settings →
-Privacy & Security → Open Anyway**, authenticate, and confirm **Open**. Older versions may offer the same
-approval through Control-click → **Open**. First use asks only for permissions needed by the feature being
-used: Microphone for dictation/meetings, System Audio for other participants, Accessibility for paste,
-meeting-window evidence, and speaker names, and Screen Recording only when video capture is enabled.
+Do not copy a build-tree `.app` manually. `build_and_run.sh` replaces `/Applications/My Assistant.app`
+atomically, unregisters and removes the transient build bundle, and verifies that no second launchable copy
+remains.
 
-**Why the signing matters (the TCC trap).** macOS keys each permission grant on the requesting binary's
-*code requirement*. For **ad-hoc** code (swiftc's / Tauri's default "linker-signed" output) there is no
-identity to pin, so TCC pins the raw **cdhash** — which changes on every rebuild, so the grant silently
-stops matching and the app re-prompts *forever* (the Settings toggle stays "on" but is dead). The cure is
-a **stable certificate**: `tauri.conf.json` sets `bundle.macOS.signingIdentity: "My Assistant Dev"`, and
-`setup.sh` signs the four native helpers (`meeting-tap`, `meeting-state`, `agent-context`, `agent-action`) **with the same cert *and* the
-app's identifier** (`com.myassistant.desktop`). That makes every binary's requirement
-`identifier "com.myassistant.desktop" and certificate leaf = …` — **cdhash-independent**, so grants
-survive rebuilds *and* the helpers ride the app's single grant instead of each demanding their own.
+## Native resources
 
-> If you previously ran an **ad-hoc** build, its dead cdhash-pinned grant will block the new one. Clear it
-> once: `tccutil reset ScreenCapture com.myassistant.desktop` (repeat for `Microphone`, `Accessibility`),
-> then relaunch and grant in System Settings. After that it sticks across all future rebuilds.
+`script/build_native_resources.sh` is the single production build path for:
 
-The DMG is portable and contains all application code and native helpers. Speech models (about 44 MB–1.1 GB
-each) are not bundled; the app opens the model library on first use, verifies the selected artifact's exact
-size and SHA-256, and stores it under the current user's Application Support directory.
+- `stt/meeting-tap`
+- `meeting-state/meeting-state`
+- `dictation-target/dictation-target`
+- `stt/transcribe-server/transcribe-server`
+- `polish-runtime/llama-server`
 
-## Dev
+The first three share the app's stable identifier where their TCC behavior requires it. The model runtimes
+use dedicated identifiers. All are signed with hardened runtime before bundling; microphone capture carries
+the audio-input entitlement. Agent helpers are intentionally excluded.
 
-```bash
-../run.sh                    # optional developer-only browser harness
-npm run dev                  # native debug app with the in-process Rust server
-```
+## Signing and permissions
 
-`run.sh` retains the legacy Node browser harness for UI development only. It is not copied into the app or
-DMG. Native debug and release builds use the same Rust server architecture.
+The current independent beta uses the stable self-signed `My Assistant Dev` certificate. Stable signing
+keeps macOS code requirements consistent across local builds; ad-hoc binaries use a changing cdhash and can
+invalidate previous TCC grants.
 
-## Notes
+The main app uses `src-tauri/Entitlements.plist` for hardened microphone access. The default bare Right
+Command shortcut also needs Input Monitoring; combination shortcuts use Carbon without it. Accessibility is
+required for insertion and bounded target reconciliation. Meetings separately uses System Audio Recording,
+and optional video uses Screen Recording.
 
-- `src-tauri/src/lib.rs`:
-  - `local_server` starts before any WebView and owns port 8790. If the port is already occupied, startup
-    fails closed instead of loading content from the other process.
-  - `start_stack()` (release-only) starts the capturer; Rust starts `transcribe-server` on demand.
-  - `start_meeting_state()` spawns `meeting-state` directly and forwards its NDJSON to the authenticated
-    `/ingest` route without a subprocess.
-  - `set_stealth` (screen-share invisibility) and `set_tray_recording` (animates the menu-bar audio-wave
-    while a call records) commands; the tray; children killed on `RunEvent::Exit`. Helper output is not
-    written to world-readable `/tmp` logs.
-  - `on_window_event` → the red **X hides** the window (app stays in the tray; reopen via tray → *Show*),
-    so closing it never tears down capture mid-call. Quit is **Cmd-Q** or the tray's *Quit Assistant*.
-- `src-tauri/Info.plist` — `NSMicrophoneUsageDescription` + narrowly scoped local-network transport support
-  for the packaged WebView's `http://127.0.0.1:8790` origin.
+The self-signed beta is not Apple-notarized. A received DMG therefore requires the documented one-time
+**System Settings → Privacy & Security → Open Anyway** flow. Developer ID notarization is a separate public
+distribution gate.
 
-## Status
+## Build outputs
 
-- [x] Self-contained release build — self-starts the stack; double-click, no dev commands
-- [x] Menu-bar tray + audio-wave recording indicator · full-page **Settings** module · **screen-share stealth** (verified)
-- [x] Portable no-paid-account DMG — native helpers bundled; explicit current-macOS Open Anyway instructions
-- [x] Global dictation shortcut + click-through overlay
-- [ ] Launch at login
+- App: `src-tauri/target/release/bundle/macos/My Assistant.app`
+- DMG: `src-tauri/target/release/bundle/dmg/My_Assistant_<version>-<label>_arm64.dmg`
+
+`script/verify_app_bundle.sh` rejects wrong/adhoc nested signatures, missing hardened runtime, wrong
+architecture, missing microphone entitlement, model weights, Agent helpers, or a non-production release
+payload. `script/verify_release_artifact.sh` repeats the inspection against the read-only mounted DMG.
+
+## Development notes
+
+- Red-X hides the main window; the process remains available in the tray. Cmd-Q or the tray Quit item ends
+  helpers and local servers.
+- The main WebView is created after the local server answers, avoiding a dead recovered WebKit frame.
+- `app/server.js` remains a browser development harness only. Native debug and release builds use the Rust
+  server and the same production capability contract.
+- `npm ci` installs the repository-pinned Tauri CLI and minifier. `npm audit` is part of the release gate.
+- Release builds require pinned `cargo-audit` 0.22.2 and fail on RustSec vulnerability findings. Maintenance
+  warnings remain visible so transitive dependency debt is not silently normalized.

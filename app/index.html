@@ -133,6 +133,15 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .dcard .dc-copy{flex:none;cursor:pointer;color:var(--ink-3);padding:5px;border-radius:8px;transition:.12s;border:0;background:none}
   .dcard .dc-copy:hover{background:var(--accent-soft);color:var(--accent)}
   .dcard .dc-copy svg{width:16px;height:16px;display:block}
+  .dcard .dc-actions{display:flex;align-items:center;gap:5px;flex:none}
+  .dcard .dc-change{border:1px solid var(--line);background:var(--win);color:var(--ink-2);border-radius:8px;padding:5px 8px;font:inherit;font-size:11px;font-weight:600;cursor:pointer}
+  .dcard .dc-change:hover{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 36%,var(--line))}
+  .dc-smart{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font-weight:620}
+  .diff-summary{display:flex;flex-direction:column;gap:11px}
+  .diff-row{padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+  .diff-from{color:var(--live);text-decoration:line-through;text-decoration-thickness:1.5px}
+  .diff-to{color:var(--ok);margin-top:5px;font-weight:590}
+  .diff-full{white-space:pre-wrap;word-break:break-word;line-height:1.55;color:var(--ink-2);font-size:13px;padding:12px;border-radius:10px;background:var(--surface-2)}
   /* onboarding + per-module permission gate */
   .onboard{position:fixed;inset:0;z-index:200;background:var(--win);display:grid;place-items:center;padding:32px;overflow:auto}
   .ob-card{width:min(560px,100%);background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:32px 32px 26px;box-shadow:0 30px 80px rgba(0,0,0,.16)}
@@ -163,6 +172,9 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .ob-go{margin-top:24px;width:100%;padding:12px;border:none;border-radius:12px;background:var(--accent);color:var(--accent-ink);font-size:14.5px;font-weight:620;cursor:pointer;transition:.12s}
   .ob-go:hover{filter:brightness(.96)}
   .nav.locked{opacity:.6}
+  .nav.agent-soon{opacity:.46;cursor:not-allowed;filter:saturate(.2)}
+  .nav.agent-soon:hover{background:transparent;color:inherit}
+  .nav-soon{margin-left:auto;font-size:8.5px;font-weight:720;letter-spacing:.045em;text-transform:uppercase;padding:2px 5px;border:1px solid var(--line);border-radius:999px;color:var(--ink-3)}
   .badge-line{display:inline-flex;align-items:center;gap:9px;margin-top:22px;padding:9px 13px;border-radius:9px;
         background:var(--surface);border:1px solid var(--line)}
   .badge-line .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
@@ -491,10 +503,11 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .qa .a{white-space:pre-wrap;color:var(--ink-2);font-size:14px;line-height:1.6;margin-top:4px}
   .qa .a.spin{color:var(--ink-3)}
   /* ===== settings modals (vocab / templates / modes / permissions) ===== */
+  @keyframes modalRise{from{transform:translateY(8px)}to{transform:translateY(0)}}
   .mscrim{position:fixed;inset:0;z-index:120;background:rgba(15,14,12,.34);display:flex;align-items:center;justify-content:center;padding:24px}
   .mscrim[hidden]{display:none!important}
-  .mcardm{width:440px;max-width:100%;max-height:calc(100vh - 80px);display:flex;flex-direction:column;background:var(--surface);
-    border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.35);padding:19px 20px 20px;animation:maRise .18s ease}
+  .mcardm{position:relative;z-index:1;width:440px;max-width:100%;max-height:calc(100vh - 80px);display:flex;flex-direction:column;background:var(--surface);
+    border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.35);padding:19px 20px 20px;opacity:1;visibility:visible;animation:modalRise .18s ease}
   .mcardm.model-library{width:720px}
   .mcardm.model-library #mContent{min-height:0;flex:1;display:flex;flex-direction:column}
   .mhead{display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
@@ -568,7 +581,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
       <button class="nav" data-view="dictation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/></svg>Dictation</button>
       <button class="nav" data-view="writing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5V14a1.5 1.5 0 0 1-1.5 1.5H9l-4 3.4V5.5Z"/><path d="M8.5 9.2h7M8.5 12h4.5"/></svg>Writing Assistant</button>
       <button class="nav" data-view="meetings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16.5" rx="2.4"/><line x1="3" y1="9.2" x2="21" y2="9.2"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>Meetings<span class="nav-beta">BETA</span><span class="livedot" id="liveDot" hidden></span></button>
-      <button class="nav" data-view="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l1.5 4.6 4.6 1.5-4.6 1.5L12 15.6l-1.5-4.6L5.9 9.5l4.6-1.5L12 3.4Z"/><path d="M18.4 15.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2Z"/></svg>Agents</button>
+      <button class="nav agent-soon" data-view="agents" disabled aria-disabled="true" title="Agents are coming soon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l1.5 4.6 4.6 1.5-4.6 1.5L12 15.6l-1.5-4.6L5.9 9.5l4.6-1.5L12 3.4Z"/><path d="M18.4 15.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2Z"/></svg>Agents<span class="nav-soon">Coming soon</span></button>
       <button class="nav" data-view="feedback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.4"/><line x1="14.4" y1="9.6" x2="18.4" y2="5.6" stroke-linecap="round"/><line x1="5.6" y1="18.4" x2="9.6" y2="14.4" stroke-linecap="round"/><line x1="14.4" y1="14.4" x2="18.4" y2="18.4" stroke-linecap="round"/><line x1="5.6" y1="5.6" x2="9.6" y2="9.6" stroke-linecap="round"/></svg>Feedback &amp; Support</button>
     </nav>
     <div class="spacer"></div>
@@ -737,7 +750,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
     </section>
 
     <!-- ===== AGENTS ===== -->
-    <section id="v-agents" class="view">
+    <section id="v-agents" class="view" hidden aria-hidden="true">
       <div class="scroll"><div class="hero wide">
         <div class="agent-head"><div>
           <div class="agent-kicker"><i></i>Foundation preview</div>
@@ -881,7 +894,10 @@ let RELEASE={channel:'production',capabilities:{meetings:true,dictation:true,set
 function hasCap(key){ return !!(key && Object.prototype.hasOwnProperty.call(RELEASE.capabilities,key) && RELEASE.capabilities[key]===true); }
 function safeView(name){ const cap=RELEASE.routes[name]; return hasCap(cap)?name:'meetings'; }
 function applyReleaseSurface(){
-  document.querySelectorAll('.nav[data-view]').forEach(n=>{ n.hidden=!hasCap(RELEASE.routes[n.dataset.view]); });
+  document.querySelectorAll('.nav[data-view]').forEach(n=>{
+    if(n.dataset.view==='agents'){ n.hidden=false; n.disabled=true; n.setAttribute('aria-disabled','true'); return; }
+    n.hidden=!hasCap(RELEASE.routes[n.dataset.view]);
+  });
   for(const [id,cap] of Object.entries(RELEASE.staticSurfaces||{})){ const node=document.getElementById(id); if(node) node.hidden=!hasCap(cap); }
   document.querySelectorAll('.view').forEach(v=>{ const name=v.id.replace(/^v-/,''); if(RELEASE.routes[name]) v.setAttribute('aria-hidden',String(!hasCap(RELEASE.routes[name]))); });
 }
@@ -919,11 +935,10 @@ function setView(name){
   $('#appTitle').textContent=TITLES[name]||'';
   $('#docLink').hidden=!hasCap('documentationLink')||!(name==='dictation'||name==='writing');
   if(name==='settings') renderSettings();
-  if(name==='agents') ensureAgentRuntime();
   try{localStorage.setItem('route',name);mirror('route',name)}catch{}
 }
 document.querySelectorAll('.nav[data-view]').forEach(n=>{
-  n.onclick=()=>navTo(n.dataset.view);
+  n.onclick=()=>{ if(!n.disabled)navTo(n.dataset.view); };
 });
 $('#proCard').onclick=()=>setView('settings');
 $('#docLink').onclick=()=>setView('feedback');
@@ -933,8 +948,8 @@ $('#fcSupport').onclick=(e)=>{ e.stopPropagation(); toast('Thank you for the sup
 function inTauri(){ return !!(window.__TAURI__ && window.__TAURI__.core); }
 async function setStealth(on){ try{ await window.__TAURI__.core.invoke('set_stealth',{on}); }catch(e){} }
 // In-app dictation: the app process owns the hotkey, recording, paste, sound cues and the pill, so push the
-// FULL config to it (not just on/off). ask=true → prompt for Accessibility on an explicit enable, so a
-// relaunch with dictation already on never nags. The server gets only language+punctuation (pushDictation).
+// FULL config to it (not just on/off). ask=true → prompt for Accessibility on an explicit enable. A selected
+// bare-modifier shortcut separately requests global shortcut listening if it is missing.
 function dictClipMode(){ const c=store.get('clipboard',DEFAULTS.clipboard); return c==='Replace clipboard'?'replace':(c==='Save after dictation'?'save':'restore'); }
 const OVERLAY_POS={'Bottom center':'bottom-center','Bottom right':'bottom-right','Top right':'top-right','Top center':'top-center','Left center':'left-center','Right center':'right-center'};
 // "⌃⇧D" or "⌃+⇧+D" → {mods:['ctrl','shift'], key:'D'} for the app's global-shortcut registrar (Fn is dropped — it can't be a global shortcut).
@@ -974,6 +989,11 @@ function syncDictation(ask){ if(!inTauri()) return;
   hotkey: dictHotkey(scStart),
   cancel: dictHotkey(store.get('sc_cancel',DEFAULTS.sc_cancel)),
   prompt: !!ask,
+  smart_polish: !!store.get('smart_polish',DEFAULTS.smart_polish),
+  live_cleanup: store.get('cleanup_timing',DEFAULTS.cleanup_timing)==='While I speak',
+  polish_model: store.get('polish_model',DEFAULTS.polish_model),
+  language: dictLanguageIntent(),
+  vocabulary: vocabList(),
   };
   // Surface failures instead of swallowing them: a Tauri ACL rejection is a promise REJECTION (not a sync
   // throw), so the old bare try/catch hid "command not allowed by ACL" completely — which silently disabled
@@ -1019,7 +1039,7 @@ paintWa();
 
 /* ---------- dictation (Handy-style; recording + paste run in the desktop app process) ---------- */
 const DICT_PUSH=new Set(['dict_lang','punctuation']);   // selects the SERVER applies (language, punctuation)
-const DICT_SYNC=new Set(['clipboard','overlay_pos']);   // selects the app process applies (clipboard, pill position)
+const DICT_SYNC=new Set(['clipboard','overlay_pos','cleanup_timing']);   // selects the app process applies (clipboard, pill position, live cleanup)
 const LEGACY_DICT_LANG={'Auto-detect':'auto','English':'en','हिन्दी':'hi','Español':'es','Deutsch':'de','Français':'fr'};
 let speechLanguageNames=null;
 function speechLanguageLabel(code){
@@ -1069,12 +1089,26 @@ function renderDictations(){
   for(const d of dictItems){
     const card=el('div','dcard'), body=el('div','dc-body');
     body.append(el('div','dc-text',d.text));
-    body.append(el('div','dc-meta',[dictAgo(d.ts), d.ms?(d.ms/1000).toFixed(1)+'s':''].filter(Boolean).join(' · ')));
+    const meta=el('div','dc-meta');
+    meta.append(document.createTextNode([dictAgo(d.ts), d.ms?(d.ms/1000).toFixed(1)+'s':''].filter(Boolean).join(' · ')));
+    if(d.smartPolish){ const smart=el('span','dc-smart',d.fallback?' · Safe fallback':' · ✦ Smart Polish'); meta.append(smart); }
+    body.append(meta);
     const cp=el('button','dc-copy'); cp.innerHTML=IC_COPY; cp.title='Copy'; cp.setAttribute('aria-label','Copy dictation');
     cp.onclick=()=>{ try{navigator.clipboard.writeText(d.text)}catch{} toast('Copied'); };
-    card.append(body,cp); list.append(card);
+    const actions=el('div','dc-actions');
+    if(Array.isArray(d.changes)&&d.changes.length){ const view=el('button','dc-change','View changes'); view.type='button'; view.onclick=()=>openDictationChanges(d); actions.append(view); }
+    actions.append(cp); card.append(body,actions); list.append(card);
   }
 }
+function openDictationChanges(d){ openModal('Dictation changes',box=>{
+  box.append(el('div','msub',d.modelAccepted?'The local model proposal passed every lossless validator.':d.fallback?'The model result was rejected or unavailable, so the safe deterministic result was used.':'Deterministic on-device cleanup.'));
+  const list=el('div','diff-summary');
+  for(const change of (d.changes||[]).slice(0,40)){
+    const row=el('div','diff-row'); row.append(el('div','diff-from',change.original||'Removed'),el('div','diff-to',change.replacement||'Removed')); list.append(row);
+  }
+  box.append(list);
+  if(d.original&&d.original!==d.text){ box.append(el('div','sec-l','ORIGINAL'),el('div','diff-full',d.original),el('div','sec-l','INSERTED'),el('div','diff-full',d.text)); }
+}); }
 // Empty state adapts: dictation OFF → a button that turns it on (which asks for Accessibility); ON → the hotkey hint.
 function paintDictEmpty(){
   const empty=$('#dictEmpty'); if(!empty) return;
@@ -1086,16 +1120,17 @@ function paintDictEmpty(){
     const b=empty.querySelector('.dict-enable'); if(b) b.onclick=()=>{ setModule('dictation',true); pushDictation(); renderDictations(); toast('Dictation on — allow Accessibility, then relaunch My Assistant.'); };
   }
 }
-function onDictation(m){ if(!m||!m.text) return; dictItems.unshift({text:m.text,ts:m.ts||Date.now(),ms:m.ms||0}); dictItems=dictItems.slice(0,50); renderDictations(); }
+function onDictation(m){ if(!m||!m.text) return; dictItems.unshift({...m,ts:m.ts||Date.now(),ms:m.ms||0}); dictItems=dictItems.slice(0,50); renderDictations(); }
 let dictUiGeneration=0;
 function onDictListening(m){
   const generation=Number(m&&m.generation);
   if(Number.isFinite(generation)){ if(generation<dictUiGeneration)return; dictUiGeneration=generation; }
   const phase=m&&m.phase ? m.phase : (m&&m.listening?'listening':'idle');
-  const on=phase==='listening'||phase==='transcribing';
+  const on=phase!=='idle';
   const p=$('#dictListening'); if(!p)return;
   p.hidden=!on;
-  const label=$('#dictPhaseLabel'); if(label)label.textContent=phase==='transcribing'?'Transcribing…':'Listening…';
+  const labels={listening:'Listening…',transcribing:'Transcribing…','post-processing':'Post-processing…','showing-changes':'Reviewing changes…',inserted:'Inserted',fallback:'Inserted with safe cleanup','no-speech':'No speech detected',error:'Couldn’t finish dictation'};
+  const label=$('#dictPhaseLabel'); if(label)label.textContent=labels[phase]||'Finishing…';
   const cancel=$('#dictCancelHint'); if(cancel)cancel.hidden=phase!=='listening';
 }
 async function initDictation(){
@@ -1120,6 +1155,7 @@ const PANEL_ICONS={
 const DEFAULTS={
   show_tray:true, overlay_enabled:true, overlay_pos:'Bottom center', start_login:false, start_hidden:false, stealth:false,
   dict_enabled:true, dict_lang:'auto', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, volume:70, push_to_talk:false, sc_start:'mod:command_right', sc_cancel:'Esc',
+  smart_polish:false, cleanup_timing:'After I finish', polish_model:'gemma-3-270m-it-qat-q4',
   wa_selection:true, wa_noneditable:true, wa_translate_lang:'English', wa_open:'⌃+Space', wa_close:'Esc',
   mtg_source:'Local', live_indicator:true, auto_detect:true, browser_meet:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, mtg_shortcut:'Not set',
   unload_model:true, whisper_idle_minutes:10, whats_new:true,
@@ -1158,6 +1194,11 @@ const SCHEMA={
       {id:'punctuation',title:'Punctuation',desc:'Automatic keeps the punctuation the model adds; Off inserts plain text.',type:'select',options:['Automatic','Off']},
       {id:'clipboard',title:'Clipboard behaviour',desc:'What happens to your clipboard after the text is pasted.',type:'select',options:['Never save','Save after dictation','Replace clipboard']},
       {id:'custom_vocab',title:'Custom vocabulary',desc:'Teach names, acronyms, and domain terms it should recognise.',type:'button',btn:'Configure'},
+    ]},
+    {label:'SMART POLISH', note:'Experimental · off by default. Smart Polish always runs after you stop.', rows:[
+      {id:'smart_polish',title:'Smart Polish',badge:'EXPERIMENTAL',desc:'Clean spoken punctuation, numbers, fillers, casing, and obvious errors before inserting.',type:'toggle'},
+      {id:'cleanup_timing',title:'Cleanup timing',badge:'EXPERIMENTAL',desc:'While I speak mechanically cleans only committed phrases. Smart Polish still waits until you stop.',type:'segmented',options:['After I finish','While I speak']},
+      {id:'polish_models',title:'Polish model',desc:'Choose a separately downloaded on-device Gemma model.',type:'button',btn:'Choose'},
     ]},
     {label:'SOUND', rows:[
       {id:'dict_sound',title:'Dictation sound',desc:'Play a sound when you start and stop recording.',type:'toggle'},
@@ -1243,6 +1284,7 @@ function renderSettings(){
   for(const sec of (SCHEMA[curPanel]||[])){
     let rows = sec.rows.filter(r=>hasCap(RELEASE.settingCapabilities[r.id]));
     if(!activeSpeechModelInfo()?.supportsTranslation) rows=rows.filter(r=>r.id!=='translate_en');
+    if(!activeSpeechModelInfo()?.supportsLiveStreaming||!store.get('smart_polish',false)) rows=rows.filter(r=>r.id!=='cleanup_timing');
     if(dictOff) rows=rows.filter(r=>r.id==='dict_enabled');
     if(!rows.length) continue; // nothing visible in this section → skip its header too
     const l=document.createElement('div'); l.className='sec-l'; l.textContent=sec.label; body.append(l);
@@ -1296,7 +1338,7 @@ async function exportAll(){
 function srowShell(row){
   const r=document.createElement('div'); r.className='srow';
   const l=document.createElement('div'); l.className='sl';
-  l.innerHTML=`<div class="st">${esc(row.title)}</div>`+(row.desc?`<div class="sd">${esc(row.desc)}</div>`:''); // esc: some rows (Profile) carry user-set name/email
+  l.innerHTML=`<div class="st">${esc(row.title)}${row.badge?` <span class="badge">${esc(row.badge)}</span>`:''}</div>`+(row.desc?`<div class="sd">${esc(row.desc)}</div>`:''); // esc: some rows (Profile) carry user-set name/email
   const c=document.createElement('div'); c.className='sc';
   r.append(l,c); return {r,l,c};
 }
@@ -1342,6 +1384,7 @@ function settingRow(row){
     else if(id==='dict_enabled'){ getV=()=>moduleOn('dictation'); setV=v=>{ setModule('dictation',v); pushDictation(); renderDictations(); renderSettings(); }; }  // master on/off; re-render so dependent rows show/hide
     else if(id==='push_to_talk'){ getV=()=>store.get('push_to_talk',DEFAULTS.push_to_talk); setV=v=>{store.set('push_to_talk',v); syncDictation(false);}; } // push-to-talk vs tap-to-talk
     else if(id==='dict_sound'){ getV=()=>store.get('dict_sound',true); setV=v=>{store.set('dict_sound',v); syncDictation(false)}; }         // start/stop cue on/off
+    else if(id==='smart_polish'){ getV=()=>store.get('smart_polish',false); setV=v=>{ if(v)requestSmartPolishEnable(); else{store.set('smart_polish',false);syncDictation(false);renderSettings();} }; }
     else if(id==='overlay_enabled'){ getV=()=>store.get('overlay_enabled',true); setV=v=>{store.set('overlay_enabled',v); syncDictation(false)}; } // show/hide the dictation pill
     else if(id==='show_tray'){ getV=()=>store.get('show_tray',true); setV=v=>{store.set('show_tray',v); if(inTauri()){try{window.__TAURI__.core.invoke('set_tray_visible',{on:v})}catch(e){}}}; } // menu-bar icon on/off
     else if(id==='stealth'){ gate=!inTauri(); getV=()=>inTauri()&&store.get('stealth',false); setV=v=>{store.set('stealth',v);setStealth(v)};
@@ -1398,7 +1441,7 @@ function settingRow(row){
 
   if(row.type==='button'){
     const b=document.createElement('button'); b.type='button'; b.className='abtn'; b.dataset.setting=id;
-    b.textContent=id==='speech_models'?(speechModelStatus?.activeModelName||row.btn||'Choose'):(row.btn||'Configure');
+    b.textContent=id==='speech_models'?(speechModelStatus?.activeModelName||row.btn||'Choose'):id==='polish_models'?(polishModelStatus?.activeModelName||row.btn||'Choose'):(row.btn||'Configure');
     b.onclick=()=>settingAction(id); c.append(b); return r;
   }
 
@@ -1456,6 +1499,7 @@ const IC_AXS='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke
 
 function settingAction(id){
   if(id==='speech_models') return openSpeechModels(false);
+  if(id==='polish_models') return openPolishModels(false);
   if(id==='custom_vocab') return openVocab();
   if(id==='templates') return openTemplates();
   if(id==='wa_modes') return openModes();
@@ -1466,7 +1510,7 @@ function settingAction(id){
 function grow(){ const d=el('div'); d.style.flex='1'; d.style.minWidth='0'; return d; }
 
 /* Custom vocabulary — real: fed to Whisper as an initial prompt via meeting-tap */
-function saveVocab(list){ store.set('vocab',list); cfg({vocab:vocabPrompt()}); }
+function saveVocab(list){ store.set('vocab',list); cfg({vocab:vocabPrompt()}); syncDictation(false); }
 function openVocab(){ openModal('Custom vocabulary', box=>{
   box.append(el('div','msub','Words it should always get right — names, acronyms, product terms.'));
   const list=el('div','mbody');
@@ -1520,7 +1564,7 @@ function openModes(){ openModal('Assistant modes', box=>{
 const IC_LISTEN='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M7 14.5h10"/></svg>';
 const IC_SYSTEM_AUDIO='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg>';
 const IC_AGENTS='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l1.5 4.6 4.6 1.5-4.6 1.5L12 15.6l-1.5-4.6L5.9 9.5l4.6-1.5L12 3.4Z"/></svg>';
-const PERM_ICON={'Microphone':IC_MIC,'System Audio Recording':IC_SYSTEM_AUDIO,'Screen Recording':IC_SCREEN,'Accessibility':IC_AXS};
+const PERM_ICON={'Microphone':IC_MIC,'System Audio Recording':IC_SYSTEM_AUDIO,'Global Shortcut':IC_LISTEN,'Screen Recording':IC_SCREEN,'Accessibility':IC_AXS};
 function modules(){ const m=store.get('modules',null); const out=(m&&typeof m==='object')?{dictation:m.dictation!==false,meetings:m.meetings!==false,writing:!!m.writing}:{dictation:true,meetings:true,writing:false}; out.writing=hasCap('writingAssistant')&&out.writing; return out; } // Meetings + Dictation default on; release capabilities remain server-owned
 function moduleOn(k){ if(k==='writing'&&!hasCap('writingAssistant'))return false; return !!modules()[k]; }
 function setModule(k,on){ if(k==='writing'&&!hasCap('writingAssistant'))return; const m=modules(); m[k]=!!on; store.set('modules',m); cfg({modules:m}); if(k==='dictation') syncDictation(!!on); paintNav(); }
@@ -1534,6 +1578,7 @@ function paintNav(){ document.querySelectorAll('.nav[data-view]').forEach(n=>n.c
 const ALL_PERMS=[
   {name:'Microphone',pane:'Privacy_Microphone',desc:'Your voice. Requested on first use.',liveKey:null},
   {name:'System Audio Recording',pane:'Privacy_AudioCapture',desc:'Other participants. Requested on first use.',liveKey:null},
+  {name:'Global Shortcut',pane:'Privacy_ListenEvent',desc:'Lets Right ⌘ start dictation while another app is in front.',liveKey:'input_monitoring'},
   {name:'Accessibility',pane:'Privacy_Accessibility',desc:'Speaker names and dictation paste.',liveKey:'accessibility'},
   {name:'Screen Recording',pane:'Privacy_ScreenCapture',desc:'Optional video capture only.',liveKey:'screen_recording'},
 ];
@@ -1541,7 +1586,7 @@ function openPermissions(){ openModal('Permissions', box=>{
   box.append(el('div','msub','My Assistant requests each permission only when the feature first needs it. Live status is shown where macOS exposes a reliable check.'));
   const list=el('div','mbody'); box.append(list);
   box.append(el('div','mnote','macOS also prompts automatically the first time an enabled feature uses a permission.'));
-  // status: object {accessibility, screen_recording} once known · 'checking' in the app before the first result · null in a browser (can't read TCC)
+  // status: object {input_monitoring, accessibility, screen_recording} once known · 'checking' in the app before the first result · null in a browser (can't read TCC)
   const render=(status)=>{
     list.innerHTML='';
     ALL_PERMS.forEach(p=>{
@@ -1972,7 +2017,7 @@ es.onerror=()=>{connEl.textContent='reconnecting…';connEl.className=''};
 es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
   if(m.type==='state'&&m.state)onState(m.state);else if(m.type==='caption')addCaption(m);
   else if(m.type==='dictation')onDictation(m);else if(m.type==='dictation-state')onDictListening(m);
-  else if(m.type==='model-progress')onModelProgress(m);else if(m.type==='meeting-updated')onMeetingUpdated(m)};
+  else if(m.type==='model-progress')onModelProgress(m);else if(m.type==='polish-model-progress')onPolishModelProgress(m);else if(m.type==='meeting-updated')onMeetingUpdated(m)};
 
 /* ================= IN-CALL OVERLAY (Call Panel) =================
    Floats over every view while a real call is being recorded (gated on the live_indicator
@@ -2273,8 +2318,6 @@ async function boot(){
   await Promise.all([hydrateSettings(),loadReleaseSurface()]); // release capabilities come from the server; settings cannot promote them
   setTheme(themePref());                    // re-apply theme + accent now the real values are hydrated (the pre-paint inline read saw empty storage)
   initCall();
-  initAgents();
-  syncAgentShortcut();
   setView((()=>{try{const r=localStorage.getItem('route');return safeView((r&&TITLES[r])?r:'meetings')}catch{return 'meetings'}})());
   mtShow('library');
   // Apply both sides on every fresh native window. Only applying the true case can leave a
@@ -2289,6 +2332,7 @@ async function boot(){
   pushDictation(); initDictation();
   cfg({modules:modules()}); paintNav(); syncDictation(false);
   modelGate();
+  polishModelGate();
 }
 /* ---------- on-device speech models: one curated library, explicit downloads, safe switching ---------- */
 let speechModelStatus=null, speechModelProgress={}, speechModelsOpen=false, speechModelBusy='';
@@ -2335,6 +2379,13 @@ function renderSpeechModelSettings(){
     toggle.onclick=()=>{ const on=!toggle.classList.contains('on'); toggle.classList.toggle('on',on); store.set('translate',on); setTranslate(on); };
     box.append(modelSettingRow('Translate meetings to English','Uses this Whisper model’s translation task.',toggle));
   }else box.append(modelSettingRow('Transcript output','This model controls its output format.',el('div','model-setting-value',model.outputStyle)));
+  box.append(modelSettingRow(
+    'Live dictation',
+    model.supportsLiveStreaming
+      ? 'Provisional words appear directly in compatible focused text fields while you speak.'
+      : 'Final text only — this model does not support reliable live streaming.',
+    el('div','model-setting-value',model.supportsLiveStreaming?'Supported':'Final only')
+  ));
   box.append(modelSettingRow('Audio handling','Calibrated automatically for this model.',el('div','model-setting-value',model.audioProfile)));
 }
 function renderSpeechModels(){
@@ -2351,7 +2402,7 @@ function renderSpeechModels(){
     if(model.active&&model.downloaded)title.append(el('span','model-badge','In use'));
     main.append(title,el('div','model-meta',model.family+' · '+fmtModelSize(model.sizeBytes)+' · '+model.license));
     const best=el('div','model-best'); best.innerHTML='<b>Best for:</b> '+esc(model.bestFor); main.append(best,el('div','model-desc',model.description));
-    const abilities=el('div','model-abilities'), labels=[...(model.abilities||[])]; if(model.supportsTranslation&&!labels.includes('Translate to English'))labels.push('Translate to English'); labels.forEach(a=>abilities.append(el('span','model-ability',a))); main.append(abilities);
+    const abilities=el('div','model-abilities'), labels=[...(model.abilities||[])]; if(model.supportsTranslation&&!labels.includes('Translate to English'))labels.push('Translate to English'); if(model.supportsLiveStreaming&&!labels.includes('Live in text fields'))labels.push('Live in text fields'); labels.forEach(a=>abilities.append(el('span','model-ability',a))); main.append(abilities);
     const actions=el('div','model-actions');
     if(isDownloading){
       const wrap=el('div','model-progress-wrap'), bar=el('div','model-progress'), fill=el('i'); fill.style.width=pct+'%'; bar.append(fill);
@@ -2375,10 +2426,10 @@ async function openSpeechModels(firstRun=false){
   try{ await fetchSpeechModels(); }catch(e){ toast(String(e.message||e)); return; }
   openModal(firstRun?'Choose a speech model':'Speech models',box=>{
     $('#mCard').classList.add('model-library'); speechModelsOpen=true;
-    box.append(el('div','msub',firstRun?'Choose one model to start. You can download or switch models anytime in Dictation settings.':'Download only what you need, then switch anytime. Larger models generally use more memory and take longer.'));
+    box.append(el('div','msub',firstRun?'Choose one model to start. Models marked “Live in text fields” can show provisional words while you speak.':'Download only what you need, then switch anytime. Only models marked “Live in text fields” show provisional words while you speak.'));
     const list=el('div','model-list'); list.id='speechModelList'; box.append(list);
     const settings=el('div','model-settings'); settings.id='speechModelSettings'; box.append(settings);
-    const foot=el('div','model-foot'); foot.append(el('span','', 'Model changes apply to dictation and meeting transcripts.'),el('span','', 'Downloads are verified before use.')); box.append(foot);
+    const foot=el('div','model-foot'); foot.append(el('span','', 'Live words use the selected model and appear in compatible focused text fields.'),el('span','', 'Downloads are verified before use.')); box.append(foot);
     const poll=setInterval(()=>{ if(speechModelStatus?.downloading)refreshSpeechModels(); },1500);
     _modalCleanup=()=>{ clearInterval(poll); speechModelsOpen=false; };
     renderSpeechModels();
@@ -2403,6 +2454,106 @@ function onModelProgress(m){
     if(m.done)toast(m.selected?'Model downloaded and selected.':'Model downloaded.');
     else if(!m.cancelled)toast('Model download failed. You can resume it.');
     setTimeout(async()=>{ delete speechModelProgress[m.modelId]; await refreshSpeechModels(); applySpeechModelRuntimeSettings(); },450);
+  }
+}
+
+/* ---------- Smart Polish models: separate, optional downloads; no model is bundled in the DMG ---------- */
+let polishModelStatus=null, polishModelProgress={}, polishModelsOpen=false, polishModelBusy='', polishPendingEnable=false;
+function updatePolishModelSettingLabel(){ const b=document.querySelector('[data-setting="polish_models"]'); if(b&&polishModelStatus?.activeModelName)b.textContent=polishModelStatus.activeModelName; }
+async function fetchPolishModels(){ const r=await fetch('/api/polish-model/status'); if(!r.ok)throw new Error('Could not load Smart Polish models'); polishModelStatus=await r.json(); if(polishModelStatus.activeModelId)store.set('polish_model',polishModelStatus.activeModelId); updatePolishModelSettingLabel(); return polishModelStatus; }
+function enableSmartPolishNow(){
+  if(!polishModelStatus?.present)return false;
+  store.set('polish_model',polishModelStatus.activeModelId||DEFAULTS.polish_model);
+  store.set('smart_polish',true); polishPendingEnable=false; syncDictation(false);
+  if($('#v-settings')?.classList.contains('on'))renderSettings();
+  return true;
+}
+async function requestSmartPolishEnable(){
+  try{ await fetchPolishModels(); }
+  catch(error){ toast(String(error.message||error)); renderSettings(); return; }
+  if(enableSmartPolishNow()){ toast('Smart Polish enabled.'); return; }
+  store.set('smart_polish',false); syncDictation(false); polishPendingEnable=true; renderSettings(); openPolishModels(true);
+}
+async function polishModelRequest(route,id,extra={}){
+  polishModelBusy=id;
+  try{
+    const response=await fetch('/api/polish-model/'+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,...extra})});
+    let body={}; try{body=await response.json();}catch{}
+    if(!response.ok)throw new Error(body.error||'That Smart Polish model action failed');
+    if(body.models)polishModelStatus=body; else await fetchPolishModels();
+    if(polishModelStatus?.activeModelId)store.set('polish_model',polishModelStatus.activeModelId);
+    if(route==='select'&&polishPendingEnable)enableSmartPolishNow();
+    if(route==='delete'&&store.get('smart_polish',false)&&!polishModelStatus?.present){ store.set('smart_polish',false);syncDictation(false);toast('Smart Polish turned off because its model was removed.'); }
+    syncDictation(false); updatePolishModelSettingLabel(); renderPolishModels(); return true;
+  }catch(error){toast(String(error.message||error));return false}
+  finally{polishModelBusy='';renderPolishModels()}
+}
+function polishDownloadLabel(model,resume){
+  if(resume)return 'Resume download';
+  const size=Math.round(Number(model.sizeBytes||0)/1000000)+' MB';
+  return polishPendingEnable?`Download ${size} & enable`:`Download ${size}`;
+}
+function renderPolishModels(){
+  if(!polishModelsOpen)return;
+  const list=$('#polishModelList'); if(!list||!polishModelStatus)return; list.innerHTML='';
+  const anotherDownloading=!!polishModelStatus.downloading;
+  for(const model of polishModelStatus.models||[]){
+    const progress=polishModelProgress[model.id]||{}, downloading=model.downloading||polishModelStatus.downloadingModelId===model.id;
+    const pct=Math.max(0,Math.min(100,Number(progress.pct??(model.partialBytes?Math.floor(model.partialBytes*100/model.sizeBytes):0))));
+    const card=el('div','model-card'+(model.active&&model.downloaded?' active':'')),main=el('div','model-main'),title=el('div','model-titleline');
+    title.append(el('span','model-name',model.name));
+    if(model.id===DEFAULTS.polish_model)title.append(el('span','model-badge','Recommended'));
+    if(model.active&&model.downloaded)title.append(el('span','model-badge','Selected'));
+    main.append(title,el('div','model-meta',`${model.parameters} · ${model.quantization} · ${fmtModelSize(model.sizeBytes)} · about ${fmtModelSize(Number(model.expectedMemoryMb||0)*1048576)} memory · ${model.minimumMemoryGb} GB Mac minimum · ${model.license}`));
+    main.append(el('div','model-desc',model.description));
+    const abilities=el('div','model-abilities'); if(Array.isArray(model.languages)&&model.languages.length)abilities.append(el('span','model-ability',model.languages.join(' · '))); (model.capabilities||[]).forEach(value=>abilities.append(el('span','model-ability',value))); abilities.append(el('span','model-ability',model.benchmarkStatus||'Qualification pending')); main.append(abilities);
+    const actions=el('div','model-actions');
+    if(downloading){
+      const wrap=el('div','model-progress-wrap'),bar=el('div','model-progress'),fill=el('i');fill.style.width=pct+'%';bar.append(fill);
+      const got=Number(progress.bytes||model.partialBytes||0);wrap.append(bar,el('div','model-progress-label',`${pct}% · ${fmtModelSize(got)} / ${fmtModelSize(model.sizeBytes)}`));actions.append(wrap,modelButton('Cancel','',()=>polishModelRequest('cancel',model.id),polishModelBusy===model.id));
+    }else if(model.downloaded){
+      if(model.active){
+        if(!store.get('smart_polish',false))actions.append(modelButton('Enable Smart Polish','primary',()=>{enableSmartPolishNow();toast('Smart Polish enabled.')}));
+        else actions.append(modelButton('Current model','',()=>{},true));
+      }else actions.append(modelButton('Use','primary',()=>polishModelRequest('select',model.id),!!polishModelBusy));
+      actions.append(modelButton('Remove','danger',()=>{if(confirm('Remove '+model.name+' from this Mac?'))polishModelRequest('delete',model.id)},!!polishModelBusy));
+    }else{
+      const resume=Number(model.partialBytes||0)>0;
+      actions.append(modelButton(polishDownloadLabel(model,resume),'primary',()=>polishModelRequest('download',model.id,{select:true}),!!polishModelBusy||anotherDownloading));
+      if(resume)actions.append(el('div','model-progress-label',fmtModelSize(model.partialBytes)+' saved'));
+    }
+    actions.append(modelButton('Gemma terms','',()=>fetch('/api/open-external',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:'gemma_terms'})}).catch(error=>toast(String(error.message||error)))));
+    card.append(main,actions);list.append(card);
+  }
+}
+async function refreshPolishModels(){try{await fetchPolishModels();renderPolishModels()}catch(error){if(polishModelsOpen)toast(String(error.message||error))}}
+async function openPolishModels(firstEnable=false){
+  if(firstEnable)polishPendingEnable=true;
+  try{await fetchPolishModels()}catch(error){toast(String(error.message||error));return}
+  openModal(firstEnable?'Enable Smart Polish':'Smart Polish models',box=>{
+    $('#mCard').classList.add('model-library');polishModelsOpen=true;
+    box.append(el('div','msub',firstEnable?'The smallest model is preselected. Download it once, then polishing stays entirely on this Mac.':'Models are optional, stored outside the app, checksum-verified before use, and removable at any time.'));
+    const list=el('div','model-list');list.id='polishModelList';box.append(list);
+    const foot=el('div','model-foot');foot.append(el('span','', 'Smart Polish is experimental and off by default.'),el('span','', 'If the model fails, safe cleanup is inserted automatically.'));box.append(foot);
+    const poll=setInterval(()=>{if(polishModelStatus?.downloading)refreshPolishModels()},1500);
+    _modalCleanup=()=>{clearInterval(poll);polishModelsOpen=false};renderPolishModels();
+  });
+}
+async function polishModelGate(){
+  try{await fetchPolishModels()}catch{return}
+  if(store.get('smart_polish',false)&&!polishModelStatus.present){store.set('smart_polish',false);syncDictation(false);polishPendingEnable=true;openPolishModels(true)}
+}
+function onPolishModelProgress(message){
+  if(!message?.modelId)return;polishModelProgress[message.modelId]=message;
+  if(polishModelStatus){
+    polishModelStatus.downloading=!message.done&&!message.error;polishModelStatus.downloadingModelId=polishModelStatus.downloading?message.modelId:null;
+    const model=(polishModelStatus.models||[]).find(value=>value.id===message.modelId);if(model){model.downloading=polishModelStatus.downloading;if(Number.isFinite(Number(message.bytes)))model.partialBytes=Number(message.bytes)}
+  }
+  renderPolishModels();
+  if(message.done||message.error){
+    if(message.done){toast(message.selected?'Smart Polish model is ready.':'Model downloaded.');}
+    else if(!message.cancelled)toast('Model download failed. You can resume it.');
+    setTimeout(async()=>{delete polishModelProgress[message.modelId];await refreshPolishModels();if(message.done&&message.selected&&polishPendingEnable)enableSmartPolishNow();syncDictation(false)},450);
   }
 }
 boot().catch(e=>console.error('boot failed:',e)).finally(()=>document.documentElement.classList.remove('release-pending'));

@@ -38,6 +38,49 @@ Whisper variants are bad. It says different variants solve different jobs:
   establish real café or outdoor quality. The consented field-capture and double-review workflow is ready;
   actual café, wind, traffic, and clean recordings still require people and physical environments.
 
+### Live dictation uses the selected model
+
+Whisper remains the authoritative final dictation model. It does not advertise true streaming through the
+current transcribe.cpp API, and repeated partial decoding of a 1.7-second clip took roughly 4–7 seconds on
+the qualification M1. Sliding-window Whisper is therefore not a credible real-time UI path.
+
+Live words are enabled only for the catalog models whose loaded architecture implements genuine streaming:
+Parakeet Unified English, Nemotron Speech Streaming English, and Nemotron 3.5 ASR Streaming. Their
+provisional hypothesis appears in one tracked span inside a compatible focused text field. Cleanup defaults
+to **After I finish**; an experimental **While I speak** option may mechanically clean only the engine's
+committed prefix while leaving tentative words untouched. Gemma is never invoked during live recognition.
+Stop still runs the selected model's authoritative whole-utterance pass and reconciles that exact span after
+final cleanup and Smart Polish. Once live text is visible, the pill calls this finishing wait
+**Post-processing** rather than presenting it as a second transcription.
+The previous separate small preview-model experiment was removed because its short-utterance quality did
+not meet the product bar. Non-streaming models remain final-only instead of simulating live output.
+
+### Runtime-engine decision: Faster-Whisper
+
+**Decision recorded 17 July 2026:** do not add
+[`SYSTRAN/faster-whisper`](https://github.com/SYSTRAN/faster-whisper) to the macOS product runtime.
+Faster-Whisper is an optimized CTranslate2 implementation of Whisper, not a distinct recognition model.
+Its published speed claims compare primarily with OpenAI's Python implementation on NVIDIA CUDA or Intel
+CPU hardware. CTranslate2's documented prebuilt GPU backend is NVIDIA CUDA; it does not provide the native
+Metal/MPS path needed for the Apple-first product.
+
+The shipped [`transcribe.cpp`](https://github.com/handy-computer/transcribe.cpp) path remains the better fit:
+it is native C/C++, enables Metal automatically on Apple Silicon, preserves the small on-demand server
+architecture, and runs the broader Whisper, Parakeet, Nemotron, and Roman-Hinglish catalog. Adding
+Faster-Whisper directly would introduce a Python/CTranslate2/PyAV packaging path without a demonstrated
+macOS accuracy, latency, RAM, or size improvement. Equivalent Whisper weights and decoder settings should
+not be described as inherently more accurate merely because the runtime changed.
+
+Keep Faster-Whisper only as a future **benchmark candidate**, not a committed product dependency, for:
+
+1. NVIDIA-equipped Windows or Linux systems;
+2. cloud/server batch transcription; and
+3. workflows that specifically require its ecosystem, such as WhisperX-style alignment or diarization.
+
+Any future adoption requires an apples-to-apples benchmark using identical audio, weights, quantization,
+beam size, VAD/preprocessing, thread count, accuracy scoring, cold/warm latency, peak RSS, energy, and
+packaged-size measurements. Do not use upstream headline benchmarks as My Assistant evidence.
+
 ## Fair evaluation tracks
 
 One WER cannot fairly rank these jobs, so the harness keeps four tracks separate:
@@ -196,8 +239,8 @@ SHA-256. A model card claim is never copied into the measured-results table as i
 6. Existing partial-transcript and UTF-8 protections remain: valid partial text survives native truncation,
    and malformed trailing bytes cannot create invalid JSON.
 
-These are source fixes. They belong in a shareable artifact only after the release build and audit recorded
-in `AUDIT_REPORT.md` are refreshed.
+These are source fixes. They belong in a shareable artifact only after the canonical release build and the
+evergreen gates in [`RELEASE_READINESS.md`](../RELEASE_READINESS.md) pass for that artifact.
 
 ## Quality-promotion gate
 
