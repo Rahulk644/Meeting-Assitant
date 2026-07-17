@@ -70,7 +70,8 @@ fn parse_integer(words: &[&str]) -> Option<i64> {
         if let Some(value) = cardinal(word) {
             current += value;
             any = true;
-        } else if let Some(multiplier) = scale(word) {
+        } else {
+            let multiplier = scale(word)?;
             any = true;
             if multiplier == 100 {
                 current = current.max(1) * multiplier;
@@ -78,8 +79,6 @@ fn parse_integer(words: &[&str]) -> Option<i64> {
                 total += current.max(1) * multiplier;
                 current = 0;
             }
-        } else {
-            return None;
         }
     }
     any.then_some(total + current)
