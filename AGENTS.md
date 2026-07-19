@@ -8,8 +8,11 @@ turn it into a chronological work log.
 1. [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) — durable product state, invariants, verification, and
    prioritized work.
 2. [`PRODUCT_RELEASE_MATRIX.md`](PRODUCT_RELEASE_MATRIX.md) — authority for production visibility.
-3. [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`SECURITY.md`](SECURITY.md) — runtime and trust boundaries.
-4. [`CONTRIBUTING.md`](CONTRIBUTING.md) — build, test, review, and documentation standards.
+3. [`docs/IMPLEMENTATION_ROADMAP.md`](docs/IMPLEMENTATION_ROADMAP.md) and
+   [`docs/ENGINEERING_HEALTH.md`](docs/ENGINEERING_HEALTH.md) — future work and structural debt.
+4. [`docs/OSS_COMPONENT_STRATEGY.md`](docs/OSS_COMPONENT_STRATEGY.md) — build/adopt/update policy.
+5. [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`SECURITY.md`](SECURITY.md) — runtime and trust boundaries.
+6. [`CONTRIBUTING.md`](CONTRIBUTING.md) — build, test, review, and documentation standards.
 
 ## Non-negotiable product boundary
 

@@ -9,6 +9,8 @@ terms continue to apply.
   `desktop/package-lock.json` for the exact dependency graph and versions. Their upstream licenses apply.
 - **transcribe.cpp:** pinned by `stt/transcribe-server/PINNED_COMMIT`; MIT license, copyright the
   transcribe.cpp authors. Its license is retained in the verified source checkout used by the build.
+- **cpp-httplib:** single-header MIT-licensed HTTP library compiled into `transcribe-server`; copyright
+  yhirose and contributors. Its license is retained with the pinned transcription source/build inputs.
 - **llama.cpp:** Smart Polish builds `llama-server` from the exact revision recorded in
   `script/build_polish_runtime.sh`; MIT license, copyright the llama.cpp contributors. The release runtime
   is built static for this app and does not include model weights.

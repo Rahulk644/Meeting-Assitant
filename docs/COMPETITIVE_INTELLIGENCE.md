@@ -1,4 +1,9 @@
-# Competitive intelligence and product decisions
+# Competitive intelligence research snapshot
+
+This is point-in-time research evidence, not durable project memory, a current market survey, or proof that a
+capability shipped. Current product direction lives in [`PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md);
+implementation and OSS adoption decisions live in [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md)
+and [`OSS_COMPONENT_STRATEGY.md`](OSS_COMPONENT_STRATEGY.md).
 
 **Observed:** 14 July 2026
 

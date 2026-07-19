@@ -5,7 +5,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SIGN_IDENTITY="${SIGN_IDENTITY:-My Assistant Dev}"
-RELEASE_LABEL="${RELEASE_LABEL:-beta.4}"
+# Artifact labels are release evidence, not a hard-coded product version. An ordinary local run produces an
+# honest "unreleased" candidate; publishing a named beta requires an explicit RELEASE_LABEL from the release
+# operator or CI (for example RELEASE_LABEL=beta.5).
+RELEASE_LABEL="${RELEASE_LABEL:-unreleased}"
 APP="$ROOT/desktop/src-tauri/target/release/bundle/macos/My Assistant.app"
 ENTITLEMENTS="$ROOT/desktop/src-tauri/Entitlements.plist"
 

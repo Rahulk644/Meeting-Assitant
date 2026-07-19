@@ -36,8 +36,6 @@ gtm-workflows/
 # Node
 node_modules/
 desktop/web-dist/
-# Official standalone Node runtime staged for portable macOS bundles.
-desktop/runtime/
 
 # Python benchmark tooling
 __pycache__/

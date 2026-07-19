@@ -2,7 +2,8 @@
 
 This document describes direction and sequencing. It is not evidence that a feature shipped.
 [`PRODUCT_RELEASE_MATRIX.md`](PRODUCT_RELEASE_MATRIX.md) remains the authority for production visibility,
-and [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) owns the prioritized engineering backlog.
+[`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) owns durable priority, and
+[`docs/IMPLEMENTATION_ROADMAP.md`](docs/IMPLEMENTATION_ROADMAP.md) owns detailed future work.
 
 ## Product promise
 
@@ -10,7 +11,8 @@ My Assistant should make spoken work disappear into the workflow:
 
 1. dependable system-wide dictation that feels native, fast, and private;
 2. no-bot meeting capture that produces a trustworthy, correctable record; and
-3. useful local or explicitly selected intelligence built on that record.
+3. optional off-PC attendance when the user explicitly asks for it; and
+4. useful local or explicitly selected intelligence and inspectable knowledge built on that record.
 
 The product should be valuable without an account, cloud processing, or a subscription. Users may choose a
 cloud provider when it offers materially better intelligence, but the app must state exactly what leaves the
@@ -22,8 +24,9 @@ Mac and store the provider key in macOS Keychain.
   priority.
 - **Meetings is Beta.** It is available for real use while its cross-app, cross-device, and recovery matrix is
   completed.
-- **Agents is Coming soon only.** The initial product shows a disabled label and no details. Any future Agent
-  work begins with a new product decision; dormant research does not create an implied roadmap commitment.
+- **Agents is Coming soon only in production.** Rowboat-inspired Markdown memory, meeting prep, and approved
+  follow-up are planned as ordinary meeting capabilities first. A visible Agent mode still requires a
+  separate product decision and release contract; dormant research cannot promote it.
 - Writing, commercial, calendar, updater, and unsupported integration surfaces remain outside production
   until they are implemented, verified, and deliberately promoted.
 
@@ -57,6 +60,12 @@ Designed, implemented, tested, packaged, and shipped are different states. A vis
 perform its advertised behavior. A saved preference, query parameter, or ambient build environment cannot
 promote an unfinished surface.
 
+### Assemble behind stable seams
+
+Prefer maintained libraries, pinned sidecars, and versioned services behind small product-owned interfaces.
+Upstream updates enter through automated pull requests and the same quality/security/license gates as local
+code. The app never blindly updates runtime components or inherits an upstream product's architecture.
+
 ## Engine strategy
 
 Speech and intelligence are separate choices.
@@ -88,6 +97,12 @@ unavailability or rejection returns the deterministic result without data loss.
 
 ## Delivery order
 
+### Stage 0 — Parallel-safe foundation
+
+- split the packaged service, app lifecycle, and WebView merge hotspots into stable domain/provider seams;
+- isolate dormant Agent research from the default production compile;
+- establish one release-version source, SBOM/license automation, and repeatable performance baselines.
+
 ### Stage 1 — Dictation reliability
 
 - physical Right Command and permission-recovery coverage;
@@ -100,22 +115,29 @@ unavailability or rejection returns the deterministic result without data loss.
 ### Stage 2 — Meetings Beta graduation
 
 - real two-person matrices across major meeting apps and audio devices;
-- diarization and editable identity quality;
+- meeting chat, qualified diarization, automatic identity resolution, and attendee provenance;
 - local Intelligence install/status/remove lifecycle;
-- crash recovery, audio/video muxing, calendar truth, and local search;
+- bounded audio crash recovery, calendar truth, and Markdown-backed local search/knowledge;
 - summary and Ask quality evaluated against corrected transcripts.
 
-### Stage 3 — Distribution maturity
+### Stage 3 — Useful meeting memory and optional attendance
+
+- meeting prep, follow-up, people/project/decision/commitment pages from inspectable Markdown;
+- managed off-PC meeting attendance behind a provider adapter, then a measured self-host option;
+- transcript + meeting chat + scratchpad as the versioned source for every derived artifact;
+- curated, approved first-party actions before a workflow builder or Agent mode.
+
+### Stage 4 — Distribution maturity
 
 - Apple Developer ID notarization and stapling;
 - signed updater and release feed with rollback;
 - clean-machine onboarding and permission diagnostics;
 - SBOM, consolidated dependency licenses, support/security response path, and repeatable release provenance.
 
-### Stage 4 — Deliberate expansion
+### Stage 5 — Deliberate expansion
 
-- reversible, selection-based Writing Assistant after its native target/runtime is proven;
-- explicit integrations only when their authentication, privacy, and failure recovery are complete;
+- bounded contextual voice replies as a reversible premium Dictation workflow;
+- Activepieces for long-tail approved workflows only after first-party actions prove demand;
 - Windows only after the shared Rust contracts and macOS quality metrics are stable;
 - Agents only after a separate product brief and release program are approved.
 

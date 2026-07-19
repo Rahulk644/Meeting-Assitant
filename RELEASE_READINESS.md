@@ -54,7 +54,8 @@ bundle so Launch Services has one canonical application.
 - API keys remain in macOS Keychain.
 - Runtime directories and temporary files are private.
 - Secure fields never enter history, diffs, logs, or model inference.
-- Loopback services require per-launch authentication and bounded requests.
+- Bundled loopback helpers require per-launch authentication and bounded requests. The separately installed
+  meeting Intelligence runtime must complete its own verified lifecycle before first-class local onboarding.
 - Downloaded models are revision-pinned, size-checked, and SHA-256-verified.
 - The bundle contains no telemetry client, Node runtime, model weights, or Agent helper.
 - Permissions and installation copy match actual macOS behavior, including Input Monitoring for bare Right
@@ -63,6 +64,8 @@ bundle so Launch Services has one canonical application.
 ## Repository gate
 
 - The intended release commit is on `main` and `main` matches `origin/main`.
+- A local candidate without an explicit release record is labelled `unreleased`; named beta labels match the
+  product version, changelog, tag/release evidence, and CI invocation.
 - The worktree is clean apart from ignored local/generated material.
 - Generated binaries, models, app data, acceptance evidence, demo renders, `.app` bundles, and DMGs are not
   tracked.

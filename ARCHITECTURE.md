@@ -1,9 +1,10 @@
 # Architecture & decisions
 
-This document is the durable "why" behind the Meetings module — the design decisions and the
-non-obvious traps that cost real time to learn. The [README](README.md) covers *how* to install and
-run; this covers *how it's built and why*, and the landmines to avoid. Read the **Traps** section before
-changing capture, transcription, or packaging.
+This document is the durable "why" behind the current Dictation and Meetings Beta runtime: the design
+decisions and non-obvious traps that cost real time to learn. The [README](README.md) covers *how* to install
+and run; this covers *how the shipped implementation is built and why*. Future component and feature plans
+belong in `docs/OSS_COMPONENT_STRATEGY.md` and `docs/IMPLEMENTATION_ROADMAP.md` until adopted. Read the
+**Traps** section before changing capture, transcription, or packaging.
 
 ## The pipeline
 
@@ -28,8 +29,9 @@ details. Older experimental source remains isolated for future research, but the
 packaged and no Agent initialization runs at app boot. Reopening that surface requires a separate product
 and release decision.
 
-Every component is on-device. No bot joins the call; no audio leaves the machine unless the user explicitly
-selects a cloud transcription or summary provider. The authenticated Rust server inside the Tauri process
+Every current capture and transcription component is on-device. No bot joins the call and audio does not
+leave the Mac. Only meeting transcript text can leave when the user explicitly selects a cloud provider for
+notes or Ask. The authenticated Rust server inside the Tauri process
 relays captions over SSE and serves the same UI used by the developer browser harness. No Node runtime or
 second always-on server process is shipped.
 
@@ -44,10 +46,13 @@ second always-on server process is shipped.
 - **Tauri, not Electron.** Rust shell + OS WebView rendering vanilla HTML/CSS/JS. Cross-platform, tiny
   footprint. The heavy compute (transcription) is native C++/Metal, so the UI language never bottlenecks.
   The packaged app and the browser build load the *same* UI from loopback port 8790 — one codebase.
-- **On-device LLM via LiteRT-LM, not GGUF.** Post-call summary/ask uses **Gemma 4 E2B through LiteRT-LM**,
-  which keeps it at *effective-2B* (~1 GB RAM) via Per-Layer-Embedding offload. A plain GGUF loads the
-  full ~5 B params (~3 GB) and **hangs an 8 GB M1 Air**. OpenAI-compatible API, so one client also serves
-  the BYO-key tier (Groq / OpenAI / Cerebras / custom).
+- **Meeting Intelligence and Smart Polish are separate workloads.** Post-call meeting summary/Ask can use an
+  optional, separately installed **Gemma 4 E2B through LiteRT-LM**. It is not bundled or set up by a clean
+  DMG; clean beta users otherwise select a BYOK provider. LiteRT-LM keeps this meeting workload near its
+  effective parameter footprint, while a plain full-model GGUF proved unsuitable on an 8 GB M1 Air. Smart
+  Polish is a bounded short-text path through the bundled pinned `llama-server` and separately downloaded
+  Gemma 3 270M/1B/4B GGUF weights. Both expose OpenAI-compatible APIs but have distinct lifecycle, model,
+  integrity, and authentication contracts.
 - **Core Audio process taps for audio, ScreenCaptureKit only for video** (Fathom's model). The other
   participants are captured with a **Core Audio process tap** scoped to the meeting app — the
   "System Audio Recording Only" TCC category, **no Screen Recording**. Call self-detection reads the same
@@ -245,8 +250,10 @@ fed into the summary prompt.
   The first complete frame is written natively as a small private JPEG; no `ffmpeg` dependency is shipped.
   Without video, the library resolves the installed native app icon through `NSWorkspace`, then falls back
   to a lightweight platform identity tile.
-- **Use headphones.** On speakers the mic re-hears the remote voices → duplicate lines (acoustic echo, no
-  code fix). If SCK goes silent after long uptime: `sudo killall coreaudiod`.
+- **The current beta has no acoustic echo cancellation.** On speakers the mic can re-hear remote voices and
+  produce duplicate lines; headphones are the reliable workaround. AEC/noise-suppression components may be
+  qualified under the audio provider contract, but cannot ship without transcript-quality evidence. If SCK
+  goes silent after long uptime: `sudo killall coreaudiod`.
 
 ## Speaker names
 

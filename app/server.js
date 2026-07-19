@@ -9,6 +9,7 @@ const net = require("net");
 const path = require("path");
 const { spawn, execFile } = require("child_process");
 const { Gate } = require("./gate.js");
+const { fetchProviderModels, providerError, sanitizeDeveloperAiModel } = require("./ai-provider.js");
 const { injectMultipartFields } = require("./multipart.js");
 const { releasePayload } = require("./release.js");
 const { DEFAULT_MODEL_ID, SPEECH_MODELS, speechModel } = require("./speech-models.js");
@@ -66,16 +67,7 @@ const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
 let settingsBlob = {};
 try { settingsBlob = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) || {}; } catch { settingsBlob = {}; }
 const devProviderKeys = Object.create(null); // developer harness only: never persist provider secrets
-function sanitizeAiModel(raw) {
-  try {
-    const cfg = JSON.parse(raw);
-    if (!cfg || typeof cfg !== "object") return raw;
-    const provider = String(cfg.provider || "local");
-    if (cfg.key) devProviderKeys[provider] = String(cfg.key);
-    const keySaved = !!(cfg.key || cfg.keySaved || devProviderKeys[provider]);
-    return JSON.stringify({ ...cfg, key: "", keySaved });
-  } catch { return raw; }
-}
+const sanitizeAiModel = raw => sanitizeDeveloperAiModel(raw, devProviderKeys);
 let _settingsTimer = null;
 function saveSettings() {
   clearTimeout(_settingsTimer);
@@ -642,6 +634,36 @@ http.createServer((req, res) => {
         }
       } catch {}
       res.writeHead(204); res.end();
+    });
+    return;
+  }
+  if (req.url === "/api/ai/key" && req.method === "POST") { // dev harness parity: memory only, never Keychain or disk
+    readBody(req).then(body => {
+      try {
+        const input = JSON.parse(body || "{}"), provider = String(input.provider || ""), key = String(input.key || "").trim();
+        if (!["openai", "groq", "cerebras", "custom"].includes(provider)) throw providerError("Unknown API provider");
+        if (key.length < 8 || key.length > 4096 || /[\r\n\0]/.test(key)) throw providerError("The API key format is invalid");
+        devProviderKeys[provider] = key;
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ saved: true, storage: "memory" }));
+      } catch (error) {
+        res.writeHead(error.status || 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: String(error.message || error) }));
+      }
+    });
+    return;
+  }
+  if (req.url === "/api/ai/models" && req.method === "POST") { // dev harness parity for provider onboarding
+    readBody(req).then(async body => {
+      try {
+        const input = JSON.parse(body || "{}"), provider = String(input.provider || "");
+        const models = await fetchProviderModels(provider, String(input.base || ""), devProviderKeys[provider]);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ provider, models }));
+      } catch (error) {
+        res.writeHead(error.status || 502, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: String(error.message || error) }));
+      }
     });
     return;
   }

@@ -30,6 +30,10 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ### Changed
 
+- Local release candidates default to the honest `unreleased` artifact label; a named beta label must be
+  supplied by the release operator or CI.
+- Meeting Intelligence now states clearly that its local LiteRT-LM runtime is a separate installation, while
+  meeting audio and transcription remain on-device for every current provider choice.
 - Agents is now only a greyed-out, non-clickable **Coming soon** navigation label. Production exposes no
   Agent route, details, settings, shortcut, compute lane, or packaged Agent helper.
 - Meetings remains explicitly labelled **Beta**.
@@ -50,6 +54,10 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ### Fixed
 
+- The developer launcher now owns and reaps only the child processes it starts, refuses occupied ports, uses
+  private repository logs, and no longer kills or leaks another worktree's UI/STT session.
+- The browser developer harness now implements provider-key and model-catalog routes used by the shared UI;
+  keys remain memory-only and the UI no longer falsely claims they were written to Keychain outside Tauri.
 - Live Parakeet revisions now use verified real text-input events and reacquire the same focused composer
   after web/Electron re-renders. Editors such as Codex no longer discard apparent Accessibility edits, and
   final reconciliation no longer degrades to a clipboard-only result in that case.

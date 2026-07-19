@@ -115,8 +115,11 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked
 cargo test --locked
 
-# Complete signed beta artifact
+# Complete signed local candidate (defaults to an honest `unreleased` artifact label)
 ./script/build_release_dmg.sh
+
+# A named beta is created only alongside matching release evidence
+RELEASE_LABEL=beta.N ./script/build_release_dmg.sh
 ```
 
 The release command runs the source checks, builds every native resource from its pinned source, forces the
@@ -143,6 +146,12 @@ verifies the exact installable contents.
   a context compaction or handoff
 - [`AGENTS.md`](AGENTS.md) — short operating contract that routes maintainers and coding agents to durable truth
 - [`PRODUCT_RELEASE_MATRIX.md`](PRODUCT_RELEASE_MATRIX.md) — production capability authority
+- [`docs/ENGINEERING_HEALTH.md`](docs/ENGINEERING_HEALTH.md) — current strengths, structural debt, and
+  performance/documentation contracts
+- [`docs/IMPLEMENTATION_ROADMAP.md`](docs/IMPLEMENTATION_ROADMAP.md) — end-to-end customer experience,
+  actionable work, dependencies, estimates, and parallel-session rules
+- [`docs/OSS_COMPONENT_STRATEGY.md`](docs/OSS_COMPONENT_STRATEGY.md) — component adoption decisions and safe
+  upstream-update policy
 - [`RELEASE_READINESS.md`](RELEASE_READINESS.md) — evergreen release gates and known distribution limits
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — runtime architecture and invariants
 - [`SECURITY.md`](SECURITY.md) — privacy, storage, permissions, secrets, and reporting

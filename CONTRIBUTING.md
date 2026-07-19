@@ -4,9 +4,11 @@ Thank you for improving My Assistant. The initial product is a local-first macOS
 surfaces: Dictation and Meetings (Beta). Agents is a disabled **Coming soon** label; contributions must not
 expose Agent details, routes, settings, runtimes, or helpers in a production build.
 
-Read [README.md](README.md), [ARCHITECTURE.md](ARCHITECTURE.md), and
-[docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) before changing runtime behavior. The project-state document
-is the durable handoff contract; update it only when a lasting invariant or release gate changes.
+Read [README.md](README.md), [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md),
+[docs/ENGINEERING_HEALTH.md](docs/ENGINEERING_HEALTH.md), and [ARCHITECTURE.md](ARCHITECTURE.md) before
+changing runtime behavior. Consult [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for task
+boundaries and [docs/OSS_COMPONENT_STRATEGY.md](docs/OSS_COMPONENT_STRATEGY.md) before adopting a component.
+Update project state only when a lasting invariant or priority changes.
 
 ## Repository map
 
@@ -59,7 +61,7 @@ cargo audit
 SIGN_IDENTITY="My Assistant Dev" ./script/build_native_resources.sh
 ./script/build_and_run.sh --verify
 
-# Full signed beta artifact and mounted-image verification
+# Full signed local candidate and mounted-image verification (`unreleased` unless explicitly labelled)
 ./script/build_release_dmg.sh
 ```
 
@@ -77,6 +79,8 @@ bundle verifier, architecture documentation, and third-party notices together.
 - Extract decision logic into small testable units. Add regression tests for every fixed defect.
 - Do not silently swallow failures that affect recording, transcription, insertion, storage, or security.
 - Keep the Node development harness behaviorally aligned with packaged Rust routes where both exist.
+- Put every adopted OSS behind a stable internal seam. Pin production inputs; do not track an upstream branch
+  or auto-deploy dependency updates without qualification, license review, and rollback.
 - Do not commit model weights, native build outputs, audio, transcripts, participant identities, credentials,
   screenshots containing private data, or human-acceptance evidence with raw speech.
 - Never claim a physical macOS or real-conversation case passed from synthetic input, a helper self-test, or a

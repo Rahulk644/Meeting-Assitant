@@ -13,8 +13,12 @@ When documents disagree, resolve them in this order:
    current build actually enables and packages.
 3. This file — the durable implementation state and priorities.
 4. [`ARCHITECTURE.md`](../ARCHITECTURE.md) and [`SECURITY.md`](../SECURITY.md) — design and trust boundaries.
-5. [`PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md) — direction, not proof that a capability shipped.
-6. [`CHANGELOG.md`](../CHANGELOG.md) and Git history — historical record only.
+5. [`ENGINEERING_HEALTH.md`](ENGINEERING_HEALTH.md) — current structural debt and performance rules.
+6. [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md) and
+   [`OSS_COMPONENT_STRATEGY.md`](OSS_COMPONENT_STRATEGY.md) — planned work and adoption decisions, not proof
+   that a capability shipped.
+7. [`PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md) — direction, not proof that a capability shipped.
+8. [`CHANGELOG.md`](../CHANGELOG.md) and Git history — historical record only.
 
 ## Product contract
 
@@ -164,23 +168,33 @@ real microphone, real target app, clean-machine permission, or real two-person m
    should be tracked to an upstream upgrade. Vulnerability findings remain release-blocking.
 7. Generate an SPDX or CycloneDX SBOM and a consolidated dependency-license bundle, then include or publish
    both with every public binary release.
+8. Establish one release-version source and procedure. Ordinary local artifacts remain labelled
+   `unreleased`; a named beta requires matching version, changelog, tag/release evidence, and artifact label.
 
 ### P1 — Meetings Beta graduation
 
-1. Complete the real two-person meeting matrix across Zoom, Meet, Teams, FaceTime, Slack, input/output device
+1. Extract the packaged service, app lifecycle, and WebView merge hotspots into the stable provider/domain
+   seams defined by [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md), then isolate dormant Agent
+   research from the default production compile before starting parallel feature work.
+2. Complete the real two-person meeting matrix across Zoom, Meet, Teams, FaceTime, Slack, input/output device
    changes, browser tabs, sleep/wake, pause/resume, and call-end recovery.
-2. Package or implement a first-class install/status/remove lifecycle for local meeting Intelligence so clean
-   Macs do not require BYOK for notes.
-3. Add diarization quality evidence, editable identity mapping coverage, audio muxing for optional video,
-   bounded crash recovery, calendar truth, and local cross-meeting search.
+3. Package or implement a first-class verified install/status/remove lifecycle for local meeting Intelligence
+   so clean Macs do not require BYOK for notes.
+4. Add meeting chat, qualified local diarization, automatic identity resolution, calendar truth and attendee
+   provenance, bounded audio crash recovery, and local Markdown-backed cross-meeting knowledge.
 
 ### P2 — product expansion
 
-1. Ship updater, signed release feed, versioned release notes, and rollback only after notarized artifacts are
+1. Add an optional server-side meeting provider behind one canonical meeting schema: qualify Recall first for
+   managed PC-off capture, then Vexa/Attendee under the same tests before selecting a self-hosted path.
+2. Build Rowboat-inspired inspectable Markdown memory and useful meeting prep/follow-up as meeting features;
+   keep Agents disabled until a separate brief defines scope, safety, packaging, privacy, and acceptance.
+3. Ship updater, signed release feed, versioned release notes, and rollback only after notarized artifacts are
    stable.
-2. Define and validate the Writing Assistant as a separate reversible selection workflow.
-3. Keep Agents disabled until a new product brief explicitly defines scope, safety, packaging, privacy, and
-   physical acceptance. Do not infer a launch from dormant code.
+4. Define contextual voice replies as a bounded, reversible Dictation extension; add Activepieces only later
+   for long-tail approved workflows, never for core capture or recovery.
+5. Start Windows adapters only after shared audio, meeting-event, storage, and performance contracts are
+   stable and macOS quality metrics are frozen.
 
 ## Resume protocol
 

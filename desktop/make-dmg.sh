@@ -14,7 +14,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/desktop/src-tauri/target/release/bundle/macos/My Assistant.app"
 OUT_DIR="$ROOT/desktop/src-tauri/target/release/bundle/dmg"
 VERSION="$(/usr/bin/plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" 2>/dev/null || echo 0.1.0)"
-RELEASE_LABEL="${RELEASE_LABEL:-beta.4}"
+RELEASE_LABEL="${RELEASE_LABEL:-unreleased}"
 DMG="$OUT_DIR/My_Assistant_${VERSION}-${RELEASE_LABEL}_arm64.dmg"
 IDENTITY="${SIGN_IDENTITY:-My Assistant Dev}"
 

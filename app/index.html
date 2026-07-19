@@ -1005,7 +1005,7 @@ const setVideoMode=m=>cfg({videoMode:m}), setTranslate=on=>cfg({translate:on}), 
 
 /* ---------- AI model (post-call summaries & ask) ---------- */
 const AI_PROVIDERS={
-  local:   {label:'On-device · Gemma 4 E2B (private)', base:'http://127.0.0.1:9379/v1', model:'gemma4-e2b',             needsKey:false},
+  local:   {label:'On-device · Gemma 4 E2B (separate install)', base:'http://127.0.0.1:9379/v1', model:'gemma4-e2b',    needsKey:false},
   groq:    {label:'Groq',     base:'https://api.groq.com/openai/v1', model:'llama-3.3-70b-versatile', needsKey:true, keyUrl:'console.groq.com/keys'},
   openai:  {label:'OpenAI',   base:'https://api.openai.com/v1',      model:'gpt-4o-mini',             needsKey:true, keyUrl:'platform.openai.com/api-keys'},
   cerebras:{label:'Cerebras', base:'https://api.cerebras.ai/v1',     model:'llama-3.3-70b',           needsKey:true, keyUrl:'cloud.cerebras.ai'},
@@ -1466,7 +1466,7 @@ function renderAIModel(body,row){
   const c0=aiCfg(),p=AI_PROVIDERS[c0.provider]||AI_PROVIDERS.local;
   const providerName=p.label.split('·')[0].trim();
   const privacy=c0.provider==='local'
-    ? 'Meeting audio, transcripts, and notes stay on this Mac.'
+    ? 'Meeting audio, transcripts, and notes stay on this Mac. The local Intelligence runtime is installed separately.'
     : `Meeting audio stays on this Mac. Transcript text is sent to ${providerName} when generating notes or answers.`;
   const {r,c}=srowShell({...row,desc:privacy});
   const sel=document.createElement('select'); sel.className='selp wide';
@@ -1476,8 +1476,8 @@ function renderAIModel(body,row){
   if(!p.needsKey) return;
   if(c0.provider==='custom') body.append(subRow('Base URL','OpenAI-compatible endpoint',aiInput('text',c0.base,'https://…/v1',v=>setAiCfg({base:v}))));
   const keyLine=el('div','agent-config-line'),key=aiInput('password','',c0.keySaved?'Saved securely — type to replace':'Paste API key',()=>{}),save=el('button','abtn',c0.keySaved?'Replace':'Save');
-  save.type='button'; save.onclick=async()=>{const value=key.value.trim();if(!value)return toast('Paste the API key first.');save.disabled=true;try{const response=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:c0.provider,key:value})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not save key');key.value='';setAiCfg({keySaved:true});save.textContent='Saved';toast('API key saved in macOS Keychain.')}catch(error){toast(String(error.message||error))}finally{save.disabled=false}}; keyLine.append(key,save);
-  body.append(subRow('API key',(p.keyUrl?`Stored in macOS Keychain · get one at ${p.keyUrl}`:'Stored in macOS Keychain'),keyLine));
+  save.type='button'; save.onclick=async()=>{const value=key.value.trim();if(!value)return toast('Paste the API key first.');save.disabled=true;try{const response=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:c0.provider,key:value})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not save key');key.value='';setAiCfg({keySaved:true});save.textContent='Saved';toast(inTauri()?'API key saved in macOS Keychain.':'API key kept in memory for this developer session.')}catch(error){toast(String(error.message||error))}finally{save.disabled=false}}; keyLine.append(key,save);
+  body.append(subRow('API key',inTauri()?(p.keyUrl?`Stored in macOS Keychain · get one at ${p.keyUrl}`:'Stored in macOS Keychain'):'Kept in memory for this developer session',keyLine));
   const models=agentProviderModels[c0.provider]||[],modelLine=el('div','agent-config-line'),model=aiInput('text',c0.model,p.model||'Choose or enter a model',v=>setAiCfg({model:v})),list=el('datalist');list.id='meeting-models-'+c0.provider;models.forEach(id=>list.append(new Option(id)));model.setAttribute('list',list.id);const load=el('button','abtn',models.length?'Refresh':'Load models');load.type='button';load.onclick=async()=>{load.disabled=true;load.textContent='Loading…';try{const response=await fetch('/api/ai/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:c0.provider,base:c0.base||''})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not load models');agentProviderModels[c0.provider]=result.models||[];renderSettings()}catch(error){toast(String(error.message||error));load.disabled=false;load.textContent='Load models'}};modelLine.append(model,list,load);
   body.append(subRow('Model',(models.length?`${models.length} models reported by the provider`:(p.model?`Default: ${p.model}`:'Load the provider catalog or enter an exact model ID')),modelLine));
 }
@@ -2181,7 +2181,7 @@ function renderAgentCompute(){
       const base=aiInput('url',cfg.apiBase||'','https://example.com/v1',value=>setAgentCompute({apiBase:value})); grid.append(agentField('Base URL',base));
     }
     const keyLine=el('div','agent-config-line'),key=aiInput('password','','Paste API key',()=>{}),save=el('button','abtn',cfg.apiKeySaved?'Replace':'Save');
-    save.type='button'; save.onclick=async()=>{ const value=key.value.trim(); if(!value)return toast('Paste the API key first.'); save.disabled=true; try{ const response=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,key:value})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Could not save key'); key.value=''; setAgentCompute({apiKeySaved:true}); save.textContent='Saved'; toast('API key saved in macOS Keychain.'); }catch(error){toast(String(error.message||error))}finally{save.disabled=false} };
+    save.type='button'; save.onclick=async()=>{ const value=key.value.trim(); if(!value)return toast('Paste the API key first.'); save.disabled=true; try{ const response=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,key:value})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Could not save key'); key.value=''; setAgentCompute({apiKeySaved:true}); save.textContent='Saved'; toast(inTauri()?'API key saved in macOS Keychain.':'API key kept in memory for this developer session.'); }catch(error){toast(String(error.message||error))}finally{save.disabled=false} };
     keyLine.append(key,save); grid.append(agentField('API key',keyLine));
     const modelLine=el('div','agent-config-line'),models=agentProviderModels[provider]||[],model=el('input','inp'); model.type='text'; model.placeholder='Choose or enter a model'; model.value=cfg.apiModel||''; const listId='agent-models-'+provider,dl=el('datalist'); dl.id=listId; models.forEach(id=>dl.append(new Option(id))); model.setAttribute('list',listId); model.onchange=()=>setAgentCompute({apiModel:model.value.trim()});
     const load=el('button','abtn',models.length?'Refresh':'Load models'); load.type='button'; load.onclick=async()=>{ load.disabled=true; load.textContent='Loading…'; try{ const response=await fetch('/api/ai/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,base:cfg.apiBase||''})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Could not load models'); agentProviderModels[provider]=result.models||[]; renderAgentCompute(); }catch(error){toast(String(error.message||error));load.disabled=false;load.textContent='Load models'} };
