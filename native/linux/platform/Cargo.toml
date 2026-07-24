@@ -1,0 +1,37 @@
+[package]
+name = "platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared Linux capability-detection + control-plane / process / injection / role-mapping helpers for the native helpers."
+
+[lib]
+name = "platform"
+path = "src/lib.rs"
+
+[dependencies]
+helpers-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+nix.workspace = true
+
+# Optional — pulled in only by the helpers that need them, via the features below. Keeps
+# meeting-state from compiling reqwest, meeting-tap from compiling sysinfo, etc.
+reqwest = { workspace = true, optional = true }
+sysinfo = { workspace = true, optional = true }
+x11rb = { workspace = true, optional = true }
+enigo = { workspace = true, optional = true }
+arboard = { workspace = true, optional = true }
+
+[features]
+default = []
+# Loopback HTTP control plane + whisper upload (meeting-tap).
+control = ["dep:reqwest"]
+# Meeting-app process enumeration (meeting-state).
+procenum = ["dep:sysinfo"]
+# X11 window / active-window / title queries (meeting-state, agent-context cross-check).
+x11 = ["dep:x11rb"]
+# Text injection: X11 XTEST via enigo + clipboard via arboard. Implies the x11 window helpers.
+inject = ["dep:enigo", "dep:arboard", "x11"]

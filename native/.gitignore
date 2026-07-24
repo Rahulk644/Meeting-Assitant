@@ -1,0 +1,3 @@
+# Rust build output for every native helper crate (helpers-core, windows, linux).
+# Cargo.lock files ARE committed — these workspaces ship binaries, so builds must be reproducible.
+**/target/

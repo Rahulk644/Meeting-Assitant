@@ -91,3 +91,83 @@ jobs:
       - name: RustSec advisory audit
         working-directory: desktop/src-tauri
         run: cargo audit
+
+  # ---------------------------------------------------------------------------
+  # Cross-platform native helper binaries (native/). Each OS builds its own
+  # helpers on its own runner — they link OS-native libraries, so there is no
+  # cross-compilation. See native/PROTOCOL.md and MIGRATION.md.
+  # ---------------------------------------------------------------------------
+
+  helpers-core:
+    name: Native helpers-core (shared crate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: native/helpers-core
+      - name: Test + build the shared crate
+        working-directory: native/helpers-core
+        run: |
+          cargo test --locked
+          cargo build --release --locked
+
+  linux-helpers:
+    name: Native helpers (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # First real compile of the Linux-native cfg paths (PipeWire/Pulse/AT-SPI/X11); on-device
+    # hardening is MIGRATION.md Phase 4, so surface failures without blocking the whole pipeline.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Install native -dev packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpulse-dev libpipewire-0.3-dev libspa-0.2-dev clang \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libxcb1-dev libxcb-randr0-dev libatspi2.0-dev libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: native/linux
+      - name: Build + test + selftest Linux helpers
+        working-directory: native/linux
+        run: |
+          cargo build --release --workspace --locked
+          cargo test --workspace --locked
+          for b in meeting-tap dictation-target agent-context agent-action meeting-state; do
+            "target/release/$b" --selftest
+          done
+
+  windows-helpers:
+    name: Native helpers (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # First real compile of the #[cfg(windows)] paths (WASAPI/UIA/SendInput); on-device hardening is
+    # MIGRATION.md Phase 4, so surface failures without blocking the whole pipeline.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: native/windows
+      - name: Build + test + selftest Windows helpers
+        working-directory: native/windows
+        shell: pwsh
+        run: |
+          cargo build --release --workspace --locked
+          cargo test --workspace --locked
+          foreach ($b in "meeting-tap","dictation-target","agent-context","agent-action","meeting-state") {
+            & "target\release\$b.exe" --selftest
+          }

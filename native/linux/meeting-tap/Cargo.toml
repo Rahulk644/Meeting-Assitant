@@ -1,0 +1,46 @@
+[package]
+name = "meeting-tap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "System+mic audio capture, whisper transcription, optional H.264 video (Linux). PROTOCOL.md §1."
+
+[[bin]]
+name = "meeting-tap"
+path = "src/main.rs"
+
+[dependencies]
+helpers-core.workspace = true
+# `control` feature: the loopback HTTP control plane + whisper multipart upload (the portable spine).
+platform = { workspace = true, features = ["control"] }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+nix.workspace = true
+signal-hook.workspace = true
+
+# --- Linux audio (load-bearing) ---
+# libpulse works on BOTH PulseAudio and PipeWire (via pipewire-pulse), so system-audio capture is
+# built on the Pulse API unconditionally; PipeWire resamples server-side to our S16LE/mono/16k ask.
+libpulse-binding.workspace = true
+libpulse-simple-binding.workspace = true
+
+# --- Linux video (optional path) ---
+# GStreamer encode pipeline + the ScreenCast/RemoteDesktop portal (Wayland) fd source.
+gstreamer.workspace = true
+gstreamer-app.workspace = true
+gstreamer-video.workspace = true
+ashpd = { workspace = true, optional = true }
+# ashpd's futures need an async runtime; only compiled with the `video` feature.
+tokio = { workspace = true, optional = true }
+# Native PipeWire client, only for per-app node-link scoping (`--app <nodeId>`); optional/heavy.
+pipewire = { workspace = true, optional = true }
+
+[features]
+# Video capture is opt-in (drags in ashpd + a GStreamer plugin stack + an async runtime).
+default = ["video"]
+video = ["dep:ashpd", "dep:tokio"]
+# Native PipeWire per-app audio scoping. Off by default → `--app <id>` degrades to the global
+# monitor (robust) and logs it, per the design.
+pipewire-scope = ["dep:pipewire"]

@@ -83,11 +83,16 @@ pub fn model_path(spec: &PolishModelSpec) -> Option<PathBuf> {
 }
 
 fn runtime_binary(config: &RuntimeConfig) -> Option<PathBuf> {
-    let mut candidates = vec![config.resources.join("polish-runtime/llama-server")];
+    let mut candidates = vec![crate::native_host::resolve_path(
+        &config.resources,
+        crate::native_host::helpers::LLAMA_SERVER,
+    )];
     if cfg!(debug_assertions) {
+        // Dev fallbacks: a Homebrew-built llama-server on macOS/Linux, or the Windows equivalent.
+        let dev_stem = crate::native_host::exe_name("llama-server");
         candidates.extend([
-            PathBuf::from("/opt/homebrew/bin/llama-server"),
-            PathBuf::from("/usr/local/bin/llama-server"),
+            PathBuf::from(format!("/opt/homebrew/bin/{dev_stem}")),
+            PathBuf::from(format!("/usr/local/bin/{dev_stem}")),
         ]);
     }
     candidates.into_iter().find(|path| path.is_file())

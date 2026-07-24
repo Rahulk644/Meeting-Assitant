@@ -1,0 +1,20 @@
+[package]
+name = "meeting-state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Track meeting-app state via process enum + X11 titles + AT-SPI controls (Linux). PROTOCOL.md §5."
+
+[[bin]]
+name = "meeting-state"
+path = "src/main.rs"
+
+[dependencies]
+helpers-core.workspace = true
+# procenum: meeting-app process detection. x11: window titles (real on X11; none on Wayland).
+platform = { workspace = true, features = ["procenum", "x11"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+atspi.workspace = true

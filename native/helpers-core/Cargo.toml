@@ -1,0 +1,30 @@
+[package]
+name = "helpers-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "OS-agnostic core shared by the Windows and Linux native helper binaries. Mirrors the macOS Swift helpers' protocol (see native/PROTOCOL.md)."
+license = "MIT"
+
+[lib]
+name = "helpers_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"     # reproduces the macOS CryptoKit SHA-256 content/state fingerprints verbatim
+
+# Parent-liveness + graceful shutdown are the only OS calls in the shared crate; everything else is
+# pure logic. Keep these target-gated so `cargo check` on any host only builds the relevant branch.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+serde_json = "1"

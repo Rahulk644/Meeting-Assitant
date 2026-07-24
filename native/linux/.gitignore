@@ -1,0 +1,2 @@
+# Build output. Cargo.lock IS committed (this workspace ships binaries → reproducible builds).
+/target

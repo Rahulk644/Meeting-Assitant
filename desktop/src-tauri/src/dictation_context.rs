@@ -2,7 +2,6 @@ use crate::dictation_cleanup::DictationTargetKind;
 use serde::Deserialize;
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -158,7 +157,7 @@ fn run_target_worker(
     preview_failed: Arc<AtomicBool>,
     commands: Receiver<TargetCommand>,
 ) {
-    let binary = PathBuf::from(resources).join("dictation-target/dictation-target");
+    let binary = crate::native_host::resolve(&resources, crate::native_host::helpers::DICTATION_TARGET);
     if !binary.is_file() {
         while let Ok(command) = commands.recv() {
             respond(command, false);

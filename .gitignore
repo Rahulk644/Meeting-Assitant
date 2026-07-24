@@ -1,3 +1,7 @@
+# Distributable build outputs — produced by ./make-distributables.sh
+/dist/
+/.cargo-docker/
+
 # Transcription models — downloaded by ./setup.sh (too large for git)
 stt/whisper/*.bin
 stt/whisper/*.gguf

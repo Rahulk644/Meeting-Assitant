@@ -481,9 +481,19 @@ pub fn start(
             meetings_dir,
             rec_dir,
             models_dir,
-            transcribe_bin: res_base.join("stt/transcribe-server/transcribe-server"),
-            agent_context_bin: res_base.join("agent-context/agent-context"),
-            agent_action_bin: res_base.join("agent-action/agent-action"),
+            // Platform-correct helper names (`.exe` on Windows) resolve through native_host.
+            transcribe_bin: crate::native_host::resolve_path(
+                &res_base,
+                crate::native_host::helpers::TRANSCRIBE_SERVER,
+            ),
+            agent_context_bin: crate::native_host::resolve_path(
+                &res_base,
+                crate::native_host::helpers::AGENT_CONTEXT,
+            ),
+            agent_action_bin: crate::native_host::resolve_path(
+                &res_base,
+                crate::native_host::helpers::AGENT_ACTION,
+            ),
             meeting_notifier,
         },
         state: Mutex::new(state),

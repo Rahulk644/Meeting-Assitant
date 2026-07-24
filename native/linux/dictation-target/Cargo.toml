@@ -1,0 +1,21 @@
+[package]
+name = "dictation-target"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Classify the focused field and inject dictated text (Linux, X11 XTEST / Wayland clipboard-paste). PROTOCOL.md §2."
+
+[[bin]]
+name = "dictation-target"
+path = "src/main.rs"
+
+[dependencies]
+helpers-core.workspace = true
+# `inject` feature: enigo (X11 XTEST) + arboard (clipboard) + the display probe.
+platform = { workspace = true, features = ["inject"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+atspi.workspace = true
+zbus.workspace = true

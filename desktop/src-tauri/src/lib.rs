@@ -23,6 +23,7 @@ mod dictation_diff;
 mod dictation_numbers;
 mod dictation_polish;
 mod local_server;
+mod native_host;
 #[cfg(target_os = "macos")]
 mod native_pill;
 mod polish_models;
@@ -191,8 +192,8 @@ fn post_local_ingest(line: &str) {
 // Spawn the Accessibility detector (speaker names + in-call state) DIRECTLY so macOS attributes its
 // Accessibility check to the app itself. Its NDJSON is forwarded to the authenticated server /ingest route.
 fn start_meeting_state() {
-    let ms = format!("{}/meeting-state/meeting-state", res_base());
-    if !Path::new(&ms).exists() {
+    let ms = native_host::resolve(&res_base(), native_host::helpers::MEETING_STATE);
+    if !ms.exists() {
         return;
     }
     let parent_pid = std::process::id().to_string();
@@ -229,8 +230,8 @@ fn start_stack() {
 
     // transcribe-server is NOT started here — the in-process server spawns it on demand when speech arrives
     // and unloads it after the configured idle period, so the model stays out of RAM between sessions.
-    let tap = format!("{}/stt/meeting-tap", res_base());
-    if Path::new(&tap).exists() {
+    let tap = native_host::resolve(&res_base(), native_host::helpers::MEETING_TAP);
+    if tap.exists() {
         let recdir = format!("{}/meetings/rec", data_dir());
         let temp = format!("{}/tmp", data_dir());
         let token = SERVER_TOKEN.get().cloned().unwrap_or_default();
