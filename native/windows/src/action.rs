@@ -265,8 +265,9 @@ fn resolve_live(expected: &ExpectedTarget, require_fp: bool) -> Result<LiveTarge
         .get_focused_element()
         .map_err(|_| ActionResponse::failure("stale_target", "The editable target lost focus."))?;
 
-    // get_process_id() is i32 (UIA); `pid` (expected.process_identifier) is i64 — widen to compare.
-    if i64::from(el.get_process_id().unwrap_or(-1)) != pid {
+    // get_process_id() -> Result<u32> (UIA); `pid` (expected.process_identifier) is i64 — widen the
+    // u32 to i64 to compare, using -1 as an unmatchable sentinel when the PID can't be read.
+    if el.get_process_id().map(i64::from).unwrap_or(-1) != pid {
         return Err(ActionResponse::failure("stale_target", "Another app took focus before the edit could be applied."));
     }
     let ct_name = el

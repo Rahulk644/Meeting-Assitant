@@ -76,6 +76,12 @@ fi
   exit 1
 }
 
+# Self-heal a build dir configured for a different source path (e.g. built in a container at /src then
+# reused on the host, or vice-versa) — cmake refuses to reuse such a cache and errors out.
+if [ -f "$BUILD/CMakeCache.txt" ] && ! grep -q "CMAKE_HOME_DIRECTORY:INTERNAL=$SOURCE$" "$BUILD/CMakeCache.txt"; then
+  echo "Clearing cmake build dir configured for a different source path"
+  rm -rf "$BUILD"
+fi
 cmake -S "$SOURCE" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \

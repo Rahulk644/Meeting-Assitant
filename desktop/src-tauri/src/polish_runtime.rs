@@ -98,23 +98,34 @@ fn runtime_binary(config: &RuntimeConfig) -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.is_file())
 }
 
+// In-process SHA-256 (streamed in fixed chunks) — replaces the `shasum` shell-out for cross-platform builds.
+fn sha256_hex(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 fn verify(path: &Path, spec: &PolishModelSpec) -> Result<(), String> {
     let metadata = fs::metadata(path).map_err(|_| "polish model is unavailable".to_string())?;
     if metadata.len() != spec.size {
         return Err("polish model size mismatch".into());
     }
-    let output = Command::new("/usr/bin/shasum")
-        .args(["-a", "256", path.to_string_lossy().as_ref()])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|_| "polish model verification could not start".to_string())?;
-    let digest = String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_string();
-    if !output.status.success() || digest != spec.sha256 {
+    let digest =
+        sha256_hex(path).map_err(|_| "polish model verification could not start".to_string())?;
+    if digest != spec.sha256 {
         return Err("polish model checksum mismatch".into());
     }
     Ok(())

@@ -1,5 +1,31 @@
 # Cross-platform migration — status & plan
 
+> ## ✅ Linux desktop app now builds, installs, and runs
+> The Tauri **core was ported off macOS-only APIs and now compiles on Linux**. A full Linux `.deb` is
+> produced end-to-end by `./make-distributables.sh --linux-only` (built entirely in Docker):
+> - `dpkg`/`apt` installs it cleanly; the launcher's dynamic libraries all resolve (runnable);
+> - the app binary **and all five native helpers** (`meeting-tap`, `transcribe-server`, `meeting-state`,
+>   `dictation-target`, `llama-server`) are freshly compiled **Linux ELF** binaries and pass their
+>   `--selftest`s (STT `transcribe-server` included).
+>
+> **What made it work:** cfg-gating the macOS-only core (see the audit-fixed items below) plus three
+> Linux-build fixes — `RunEvent::Reopen` gated to macOS; the C++ ggml runtimes built with
+> `-DGGML_NATIVE=OFF` off macOS (the aarch64 FP16 NEON path won't inline without `+fp16`); and the C++
+> build scripts self-heal a cmake cache keyed to a different source path (host `/Users` vs container `/src`).
+>
+> **Arch:** on Apple Silicon, Docker builds a `linux/arm64` `.deb`; set `DOCKER_DEFAULT_PLATFORM=linux/amd64`
+> (or use the `ubuntu-latest` CI job) for `x86_64`.
+>
+> **Windows:** the ported core + all 5 helpers **cross-compile in Docker** via `cargo-xwin` (verified:
+> `app.exe` builds with 0 errors), and tauri runs its whole bundling pipeline there. But the final
+> `makensis` step **segfaults on the Linux NSIS build** with tauri's generated script (the makensis
+> itself is fine — trivial scripts and the tauri plugin both compile). On Apple Silicon, wine + the
+> Windows makensis would need x86 emulation, so it's impractical locally. The **single `-setup.exe`
+> installer therefore comes from the `windows-app` CI job** (native Windows makensis) — which builds it
+> with `--config tauri.windows.conf.json` (maps helper resources to `.exe` dests so `native_host` finds
+> them) and uploads it as the `windows-installer` artifact. The local `make-distributables.sh` emits the
+> cross-built helper `.exe`s only.
+
 This document tracks making the app (today: macOS-only) run on **Windows** and **Linux**. It is the
 honest single source of truth for what is done, what compiles, what is verified, and what still needs
 on-device work. It is deliberately candid about the boundary between "written & reviewed" and

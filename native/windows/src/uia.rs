@@ -115,7 +115,7 @@ pub fn is_code_exe(exe: &str) -> bool {
 /// session op (Windows-side reacquisition matches the Swift `TargetIdentity`).
 #[derive(Debug, Clone)]
 pub struct FocusIdentity {
-    pub pid: i32,
+    pub pid: u32, // Windows process IDs are DWORD (u32); uiautomation get_process_id() -> Result<u32>
     pub ax_role: String,
     pub name: String,
     pub exe: String,
@@ -235,15 +235,14 @@ fn classify_focused_inner(
 
 #[cfg(windows)]
 fn read_is_password(el: &uiautomation::UIElement) -> bool {
-    use uiautomation::variants::Variant;
     use uiautomation::types::UIProperty;
-    // TODO(on-device): verify UIProperty::IsPassword + Variant→bool conversion.
+    // uiautomation implements `TryInto<bool> for Variant` directly (not TryFrom), so convert via
+    // `try_into()`. A non-secure/unreadable field yields false; `is_secure()` additionally applies the
+    // label/role heuristic, so this only needs to surface the explicit IsPassword flag when present.
     match el.get_property_value(UIProperty::IsPassword) {
-        Ok(v) => bool::try_from(v).unwrap_or(false),
+        Ok(v) => v.try_into().unwrap_or(false),
         Err(_) => false,
     }
-    .then_some(true)
-    .unwrap_or(false)
 }
 
 #[cfg(windows)]
@@ -590,12 +589,12 @@ fn read_meeting_inner(pid: u32) -> Result<MeetingReads, Box<dyn std::error::Erro
         cursor += 1;
         visited += 1;
 
-        let el_pid = el.get_process_id().unwrap_or(-1);
+        let el_pid = el.get_process_id().unwrap_or(0);
         let ct_name = el
             .get_control_type()
             .map(|ct| format!("{ct:?}"))
             .unwrap_or_default();
-        if el_pid == pid as i32 && (ct_name == "Button" || ct_name == "MenuItem") {
+        if el_pid == pid && (ct_name == "Button" || ct_name == "MenuItem") {
             if let Ok(name) = el.get_name() {
                 if !name.is_empty() {
                     reads.button_labels.push(name);

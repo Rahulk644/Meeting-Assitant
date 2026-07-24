@@ -54,3 +54,8 @@ __pycache__/
 
 # Human acceptance evidence (screenshots, logs, meeting details) is private by default.
 /acceptance/sessions/
+/.target-linux/
+/.dist-macbak/
+/.target-linux-helpers/
+/.cargo-xwin/
+/.target-winxwin/

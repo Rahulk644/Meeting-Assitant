@@ -192,7 +192,7 @@ fn focus_matches(id: &FocusIdentity) -> bool {
     let Ok(el) = automation.get_focused_element() else {
         return false;
     };
-    let pid = el.get_process_id().unwrap_or(-1);
+    let pid = el.get_process_id().unwrap_or(0);
     if pid != id.pid {
         return false;
     }
@@ -214,7 +214,7 @@ fn read_focused_value(id: &FocusIdentity) -> Option<String> {
     use uiautomation::UIAutomation;
     let automation = UIAutomation::new().ok()?;
     let el = automation.get_focused_element().ok()?;
-    if el.get_process_id().unwrap_or(-1) != id.pid {
+    if el.get_process_id().unwrap_or(0) != id.pid {
         return None;
     }
     let vp = el.get_pattern::<UIValuePattern>().ok()?;

@@ -50,7 +50,7 @@ pub fn watch_stdin_eof() {
 /// Install the Windows console-ctrl handler (CTRL_C / CTRL_BREAK / CTRL_CLOSE → request stop).
 #[cfg(windows)]
 pub fn install_console_handler() {
-    use windows::Win32::Foundation::BOOL;
+    use windows::core::BOOL; // windows 0.62 moved BOOL out of Win32::Foundation into windows::core
     use windows::Win32::System::Console::SetConsoleCtrlHandler;
 
     unsafe extern "system" fn handler(_ctrl_type: u32) -> BOOL {

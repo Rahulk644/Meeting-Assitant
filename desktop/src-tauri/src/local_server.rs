@@ -4,10 +4,14 @@
 //! request is authenticated with a per-launch secret, and WebViews receive that secret only through
 //! a one-time bootstrap URL that is exchanged for a SameSite/HttpOnly cookie.
 
+// AppKit is used only for the native meeting-app icon rasterization, which is macOS-only.
+#[cfg(target_os = "macos")]
 use objc2::{rc::autoreleasepool, AnyThread};
+#[cfg(target_os = "macos")]
 use objc2_app_kit::{
     NSBitmapImageFileType, NSBitmapImageRep, NSCompositingOperation, NSImage, NSWorkspace,
 };
+#[cfg(target_os = "macos")]
 use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -15,6 +19,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
+// unix-only permission bits (mode()/from_mode); Windows has no direct equivalent and the callers no-op there.
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -36,6 +42,8 @@ const MAX_AUDIO_BODY: usize = 64 * 1024 * 1024;
 
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
 static LLM_HTTP: OnceLock<ureq::Agent> = OnceLock::new();
+// Cache of rasterized native meeting-app icons — populated only by the macOS icon path.
+#[cfg(target_os = "macos")]
 static APP_ICONS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
 // Model verification + process startup can take several seconds on a cold launch. Keep one warm-up in
 // flight and begin it before the user stops speaking so the visible finishing phase is normally inference,
@@ -299,20 +307,69 @@ fn random_token() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+// Restrict a path to owner-only access. On unix this sets the mode bits; on Windows there is no direct
+// chmod equivalent so it is a no-op (the file inherits the parent directory ACL).
+#[cfg(unix)]
+fn restrict_permissions(path: &Path, mode: u32) -> Result<(), String> {
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())
+}
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &Path, _mode: u32) -> Result<(), String> {
+    Ok(())
+}
+
+// In-process SHA-256 (streamed in fixed chunks) — replaces the `shasum` shell-out for cross-platform builds.
+fn sha256_hex(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let read = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+// Cross-platform secret store. On macOS this is the login Keychain (Security.framework). Off-macOS there is
+// no functional secret store wired up in this compile-unblock pass, so writes fail and reads return None
+// (cloud-provider API keys are simply unavailable off-macOS).
+#[cfg(target_os = "macos")]
+fn keychain_set(service: &str, account: &str, secret: &[u8]) -> Result<(), ()> {
+    security_framework::passwords::set_generic_password(service, account, secret).map_err(|_| ())
+}
+#[cfg(not(target_os = "macos"))]
+fn keychain_set(_service: &str, _account: &str, _secret: &[u8]) -> Result<(), ()> {
+    Err(())
+}
+#[cfg(target_os = "macos")]
+fn keychain_get(service: &str, account: &str) -> Option<Vec<u8>> {
+    security_framework::passwords::get_generic_password(service, account).ok()
+}
+#[cfg(not(target_os = "macos"))]
+fn keychain_get(_service: &str, _account: &str) -> Option<Vec<u8>> {
+    None
+}
+
 fn private_dir(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|e| e.to_string())?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())
+    restrict_permissions(path, 0o700)
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(&tmp)
-        .map_err(|e| e.to_string())?;
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&tmp).map_err(|e| e.to_string())?;
     file.write_all(bytes).map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())
@@ -889,7 +946,7 @@ fn agent_compute_login(request: Request, shared: Arc<Shared>) {
         Ok(value) => {
             if let Some(url) = value.get("verificationUrl").and_then(Value::as_str) {
                 if url.starts_with("https://auth.openai.com/") {
-                    let _ = Command::new("/usr/bin/open").arg(url).spawn();
+                    let _ = open::that(url);
                 }
             }
             json_response(request, 200, value)
@@ -1435,11 +1492,7 @@ fn ai_key_save(mut request: Request) {
             json!({"error":"The API key format is invalid"}),
         );
     }
-    match security_framework::passwords::set_generic_password(
-        KEYCHAIN_SERVICE,
-        provider,
-        key.as_bytes(),
-    ) {
+    match keychain_set(KEYCHAIN_SERVICE, provider, key.as_bytes()) {
         Ok(()) => {
             cache_provider_key(provider, key.as_bytes());
             json_response(request, 200, json!({"saved":true}))
@@ -2324,13 +2377,7 @@ fn sanitize_model_setting(raw: &str, persist_secret: bool) -> Option<String> {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
         {
-            if security_framework::passwords::set_generic_password(
-                KEYCHAIN_SERVICE,
-                &provider,
-                key.as_bytes(),
-            )
-            .is_ok()
-            {
+            if keychain_set(KEYCHAIN_SERVICE, &provider, key.as_bytes()).is_ok() {
                 cache_provider_key(&provider, key.as_bytes());
                 obj.insert("keySaved".into(), Value::Bool(true));
             }
@@ -2446,7 +2493,7 @@ fn keychain_key(account: &str) -> Option<String> {
     cached_provider_key_with(
         PROVIDER_KEY_CACHE.get_or_init(|| Mutex::new(HashMap::new())),
         account,
-        || security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, account).ok(),
+        || keychain_get(KEYCHAIN_SERVICE, account),
     )
 }
 
@@ -3088,6 +3135,9 @@ fn migrate_legacy_file(
 
         let temp = models_dir.join(format!("{name}.migrating"));
         let _ = fs::remove_file(&temp);
+        // `cp -c` requests an APFS clone (instant, block-shared) — a macOS-only fast-path. Off-macOS we go
+        // straight to a portable byte copy.
+        #[cfg(target_os = "macos")]
         let cloned = Command::new("/bin/cp")
             .args([
                 "-c",
@@ -3099,10 +3149,12 @@ fn migrate_legacy_file(
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
+        #[cfg(not(target_os = "macos"))]
+        let cloned = false;
         if !cloned {
             fs::copy(&source, &temp).map_err(|e| format!("copy {}: {e}", source.display()))?;
         }
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+        restrict_permissions(&temp, 0o600)?;
         if fs::metadata(&temp).ok().map(|m| m.len()) != Some(expected_size) {
             let _ = fs::remove_file(&temp);
             return Err("migrated speech model has the wrong size".into());
@@ -3376,8 +3428,7 @@ fn run_model_download(
     };
 
     match result.and_then(|_| {
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
+        restrict_permissions(&tmp, 0o600)?;
         fs::rename(&tmp, &dest).map_err(|error| error.to_string())
     }) {
         Ok(()) => {
@@ -3559,16 +3610,8 @@ fn verify_polish_model(
             meta.len()
         ));
     }
-    let output = Command::new("/usr/bin/shasum")
-        .args(["-a", "256", path.to_string_lossy().as_ref()])
-        .output()
-        .map_err(|error| error.to_string())?;
-    let digest = String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_string();
-    if !output.status.success() || digest != model.sha256 {
+    let digest = sha256_hex(path)?;
+    if digest != model.sha256 {
         return Err("polish model checksum mismatch".into());
     }
     Ok(())
@@ -3778,8 +3821,7 @@ fn run_polish_model_download(
     };
 
     match result.and_then(|_| {
-        fs::set_permissions(&partial, fs::Permissions::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
+        restrict_permissions(&partial, 0o600)?;
         fs::rename(&partial, &destination).map_err(|error| error.to_string())
     }) {
         Ok(()) => {
@@ -3950,16 +3992,8 @@ fn verify_model(path: &Path, model: &crate::speech_models::SpeechModelSpec) -> R
             meta.len()
         ));
     }
-    let output = Command::new("/usr/bin/shasum")
-        .args(["-a", "256", path.to_string_lossy().as_ref()])
-        .output()
-        .map_err(|e| e.to_string())?;
-    let digest = String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_string();
-    if !output.status.success() || digest != model.sha256 {
+    let digest = sha256_hex(path)?;
+    if digest != model.sha256 {
         return Err("speech model checksum mismatch".into());
     }
     Ok(())
@@ -3979,6 +4013,9 @@ fn open_settings(mut request: Request) {
             | "Privacy_ScreenCapture"
             | "Privacy_Accessibility"
     );
+    // The `x-apple.systempreferences:` deep link opens the relevant privacy pane and is macOS-only; there is
+    // no cross-platform equivalent, so off-macOS this is a no-op (the response code is unchanged).
+    #[cfg(target_os = "macos")]
     if allowed {
         let _ = Command::new("/usr/bin/open")
             .arg(format!(
@@ -4011,7 +4048,7 @@ fn open_external(mut request: Request) {
             )
         }
     };
-    match Command::new("/usr/bin/open").arg(url).spawn() {
+    match open::that(url) {
         Ok(_) => respond(request, 204, "text/plain", Vec::new(), vec![]),
         Err(_) => json_response(
             request,
@@ -4233,6 +4270,7 @@ fn meeting_thumb(request: Request, cfg: &Config, id: &str) {
     )
 }
 
+#[cfg(target_os = "macos")]
 fn platform_bundle_ids(app: &str) -> &'static [&'static str] {
     match normalize_app(app).to_ascii_lowercase().as_str() {
         "zoom" => &["us.zoom.xos"],
@@ -4252,6 +4290,14 @@ fn platform_bundle_ids(app: &str) -> &'static [&'static str] {
     }
 }
 
+// The native meeting-app icon is rasterized from the installed app bundle via NSWorkspace/NSImage — macOS
+// only. Off-macOS this returns None and the caller falls back to the built-in SVG thumbnail.
+#[cfg(not(target_os = "macos"))]
+fn installed_app_icon_png(_app: &str) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(target_os = "macos")]
 fn installed_app_icon_png(app: &str) -> Option<Vec<u8>> {
     let key = normalize_app(app).to_ascii_lowercase();
     if key.is_empty() || key == "call" {
@@ -4288,6 +4334,7 @@ fn installed_app_icon_png(app: &str) -> Option<Vec<u8>> {
     (!bytes.is_empty()).then_some(bytes)
 }
 
+#[cfg(target_os = "macos")]
 #[allow(deprecated)]
 fn downscaled_icon_png(image: &NSImage) -> Option<Vec<u8>> {
     const SIDE: f64 = 128.0;
@@ -4653,9 +4700,9 @@ fn ensure_local_llm(shared: &Shared) -> Result<(), String> {
             "local AI port is occupied by an untrusted process; relaunch after closing it".into(),
         );
     }
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = dirs::home_dir().unwrap_or_default();
     let bin = [
-        PathBuf::from(format!("{home}/.local/bin/litert-lm")),
+        home.join(".local/bin/litert-lm"),
         PathBuf::from("/opt/homebrew/bin/litert-lm"),
         PathBuf::from("/usr/local/bin/litert-lm"),
     ]

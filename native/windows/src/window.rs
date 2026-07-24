@@ -59,11 +59,12 @@ pub fn foreground_pid() -> Option<u32> {
 /// foreground. Used by `agent-action` before mutating; failure ⇒ `activation_failed`.
 #[cfg(windows)]
 pub fn activate_pid(pid: u32) -> bool {
-    use windows::Win32::System::Threading::GetCurrentThreadId;
+    // windows 0.62: AttachThreadInput lives in Win32::System::Threading, not KeyboardAndMouse.
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
     };
-    use windows::Win32::UI::Input::KeyboardAndMouse::{AttachThreadInput, SetActiveWindow};
+    use windows::Win32::UI::Input::KeyboardAndMouse::SetActiveWindow;
 
     let target_hwnd = match enumerate().into_iter().find(|(p, _, _)| *p == pid) {
         Some((_, hwnd, _)) => hwnd_from_isize(hwnd),
@@ -120,28 +121,28 @@ struct EnumCtx {
 unsafe extern "system" fn enum_proc(
     hwnd: windows::Win32::Foundation::HWND,
     lparam: windows::Win32::Foundation::LPARAM,
-) -> windows::Win32::Foundation::BOOL {
+) -> windows::core::BOOL {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
     };
     let ctx = &mut *(lparam.0 as *mut EnumCtx);
     if !IsWindowVisible(hwnd).as_bool() {
-        return windows::Win32::Foundation::BOOL(1);
+        return windows::core::BOOL(1);
     }
     let len = GetWindowTextLengthW(hwnd);
     if len <= 0 {
-        return windows::Win32::Foundation::BOOL(1);
+        return windows::core::BOOL(1);
     }
     let mut buf = vec![0u16; len as usize + 1];
     let n = GetWindowTextW(hwnd, &mut buf);
     if n <= 0 {
-        return windows::Win32::Foundation::BOOL(1);
+        return windows::core::BOOL(1);
     }
     let title = String::from_utf16_lossy(&buf[..n as usize]);
     let mut pid = 0u32;
     GetWindowThreadProcessId(hwnd, Some(&mut pid));
     ctx.items.push((pid, hwnd.0 as isize, title));
-    windows::Win32::Foundation::BOOL(1)
+    windows::core::BOOL(1)
 }
 
 #[cfg(windows)]
