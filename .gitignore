@@ -1,3 +1,7 @@
+# Distributable build outputs — produced by ./make-distributables.sh
+/dist/
+/.cargo-docker/
+
 # Transcription models — downloaded by ./setup.sh (too large for git)
 stt/whisper/*.bin
 stt/whisper/*.gguf
@@ -50,3 +54,8 @@ __pycache__/
 
 # Human acceptance evidence (screenshots, logs, meeting details) is private by default.
 /acceptance/sessions/
+/.target-linux/
+/.dist-macbak/
+/.target-linux-helpers/
+/.cargo-xwin/
+/.target-winxwin/

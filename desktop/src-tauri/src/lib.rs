@@ -23,6 +23,7 @@ mod dictation_diff;
 mod dictation_numbers;
 mod dictation_polish;
 mod local_server;
+mod native_host;
 #[cfg(target_os = "macos")]
 mod native_pill;
 mod polish_models;
@@ -76,11 +77,20 @@ fn init_paths(app: &tauri::App) {
             .resource_dir()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| REPO.to_string());
-        let home = std::env::var("HOME").unwrap_or_default();
+        // dirs::data_dir() resolves to ~/Library/Application Support on macOS (identical to the previous
+        // hardcoded path), %APPDATA% on Windows, and ~/.local/share on Linux.
+        let data_root =
+            dirs::data_dir().unwrap_or_else(|| std::path::PathBuf::from(&res));
         (
             res,
-            format!("{}/Library/Application Support/My Assistant/data", home),
-            format!("{}/Library/Application Support/My Assistant/models", home),
+            data_root
+                .join("My Assistant/data")
+                .to_string_lossy()
+                .into_owned(),
+            data_root
+                .join("My Assistant/models")
+                .to_string_lossy()
+                .into_owned(),
         )
     };
     let _ = std::fs::create_dir_all(&data);
@@ -98,12 +108,22 @@ fn legacy_model_dirs() -> Vec<String> {
     if cfg!(debug_assertions) {
         return Vec::new();
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    vec![
-        format!("{REPO}/stt/whisper"),
-        format!("{home}/Library/Application Support/My Assistant/data/stt/whisper"),
-        format!("{home}/Library/Application Support/My Assistant/stt/whisper"),
-    ]
+    // The pre-0.1 Node beta only ever ran on macOS, where dirs::data_dir() == ~/Library/Application Support.
+    // Off-macOS these candidates simply do not exist and the migration is a no-op.
+    let mut candidates = vec![format!("{REPO}/stt/whisper")];
+    if let Some(base) = dirs::data_dir() {
+        candidates.push(
+            base.join("My Assistant/data/stt/whisper")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        candidates.push(
+            base.join("My Assistant/stt/whisper")
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    candidates
 }
 
 fn notify_meeting_started(app: &AppHandle, meeting_app: &str) {
@@ -155,7 +175,14 @@ fn kill_children() {
         // moov atom so a recording made right up to quit stays playable). SIGKILL is uncatchable and would
         // skip that, truncating the file. Give the handlers a brief grace, then hard-kill anything still alive.
         for c in &kids {
-            let _ = Command::new("/bin/kill").arg(c.id().to_string()).status();
+            // SIGTERM in-process (no `/bin/kill` fork) on unix. Windows has no SIGTERM; the hard kill below
+            // terminates those children after the grace period.
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(c.id() as libc::pid_t, libc::SIGTERM);
+            }
+            #[cfg(not(unix))]
+            let _ = c;
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
         for mut c in kids {
@@ -191,8 +218,8 @@ fn post_local_ingest(line: &str) {
 // Spawn the Accessibility detector (speaker names + in-call state) DIRECTLY so macOS attributes its
 // Accessibility check to the app itself. Its NDJSON is forwarded to the authenticated server /ingest route.
 fn start_meeting_state() {
-    let ms = format!("{}/meeting-state/meeting-state", res_base());
-    if !Path::new(&ms).exists() {
+    let ms = native_host::resolve(&res_base(), native_host::helpers::MEETING_STATE);
+    if !ms.exists() {
         return;
     }
     let parent_pid = std::process::id().to_string();
@@ -229,8 +256,8 @@ fn start_stack() {
 
     // transcribe-server is NOT started here — the in-process server spawns it on demand when speech arrives
     // and unloads it after the configured idle period, so the model stays out of RAM between sessions.
-    let tap = format!("{}/stt/meeting-tap", res_base());
-    if Path::new(&tap).exists() {
+    let tap = native_host::resolve(&res_base(), native_host::helpers::MEETING_TAP);
+    if tap.exists() {
         let recdir = format!("{}/meetings/rec", data_dir());
         let temp = format!("{}/tmp", data_dir());
         let token = SERVER_TOKEN.get().cloned().unwrap_or_default();
@@ -623,19 +650,21 @@ fn spawn_live_preview(
 
 // Write mono 16 kHz f32 samples as a 16-bit PCM WAV for the STT server.
 fn write_wav16k(path: &Path, samples16k: &[f32]) -> bool {
-    use std::os::unix::fs::OpenOptionsExt;
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: 16_000,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-    let Ok(file) = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)
-    else {
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    // Owner-only permissions for the transient capture WAV on unix; Windows has no equivalent mode bits.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let Ok(file) = options.open(path) else {
         return false;
     };
     let Ok(mut w) = hound::WavWriter::new(file, spec) else {
@@ -719,13 +748,20 @@ fn play(sound: &str) {
     if !on {
         return;
     }
-    // Reap afplay (.status() waits) on a detached thread so it doesn't accumulate as a zombie on each
-    // start/stop cue — a bare spawn() is never reaped and would pile up over a long session.
-    let path = format!("/System/Library/Sounds/{}.aiff", sound);
-    let v = format!("{:.2}", vol.clamp(0.0, 1.0));
-    std::thread::spawn(move || {
-        let _ = Command::new("afplay").arg("-v").arg(v).arg(path).status();
-    });
+    // The start/stop cue uses the macOS system sounds via afplay. Off-macOS there is no bundled cue player,
+    // so the audio cue is simply skipped (compile-unblock: not worth an audio dependency for a chime).
+    #[cfg(target_os = "macos")]
+    {
+        // Reap afplay (.status() waits) on a detached thread so it doesn't accumulate as a zombie on each
+        // start/stop cue — a bare spawn() is never reaped and would pile up over a long session.
+        let path = format!("/System/Library/Sounds/{}.aiff", sound);
+        let v = format!("{:.2}", vol.clamp(0.0, 1.0));
+        std::thread::spawn(move || {
+            let _ = Command::new("afplay").arg("-v").arg(v).arg(path).status();
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (sound, vol);
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DictFeedback {
@@ -860,40 +896,29 @@ fn dict_pill_tick(generation: u64) {
 }
 
 fn dict_set_clip(s: &str) -> Result<(), String> {
-    let mut child = Command::new("pbcopy")
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("clipboard write could not start: {error}"))?;
-    child
-        .stdin
-        .take()
-        .ok_or("clipboard writer was unavailable")?
-        .write_all(s.as_bytes())
-        .map_err(|error| format!("clipboard write failed: {error}"))?;
-    let status = child
-        .wait()
-        .map_err(|error| format!("clipboard writer did not finish: {error}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("clipboard writer failed".into())
-    }
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|error| format!("clipboard is unavailable: {error}"))?;
+    clipboard
+        .set_text(s.to_owned())
+        .map_err(|error| format!("clipboard write failed: {error}"))
 }
 fn dict_get_clip() -> Result<String, String> {
-    Command::new("pbpaste")
-        .output()
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|error| format!("clipboard is unavailable: {error}"))?;
+    clipboard
+        .get_text()
         .map_err(|error| format!("clipboard read failed: {error}"))
-        .and_then(|output| {
-            if output.status.success() {
-                Ok(String::from_utf8_lossy(&output.stdout).to_string())
-            } else {
-                Err("clipboard reader failed".into())
-            }
-        })
 }
 // Paste = set clipboard + synth ⌘V + restore the old clipboard. enigo posts the keystroke from THIS
 // process, so the app's Accessibility grant authorizes it (the correct identity — the whole fix).
 // ponytail: 180ms restore delay — enough for the target to read the paste; a slow first paste could miss.
+// Automatic paste is a macOS-only CGEvent flow (needs Accessibility). Off-macOS the caller falls back to
+// copying the final text to the clipboard (see the paste call site), so the dictation still lands.
+#[cfg(not(target_os = "macos"))]
+fn dict_paste(_text: &str) -> Result<(), String> {
+    Err("automatic paste is only available on macOS".into())
+}
+#[cfg(target_os = "macos")]
 fn dict_paste(text: &str) -> Result<(), String> {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
@@ -1852,9 +1877,16 @@ fn ensure_modifier_tap(request_access: bool) {
     watch_for_dict_listen_access();
 }
 
+// The bare-modifier trigger relies on a macOS CGEventTap + CFRunLoop, which have no cross-platform
+// equivalent here. Off-macOS the global bare-modifier shortcut is unavailable (ordinary Carbon-style
+// combinations still work through tauri-plugin-global-shortcut); this compiles to a no-op.
+#[cfg(not(target_os = "macos"))]
+fn start_modifier_tap() {}
+
 // A dedicated thread owns the tap and its CFRunLoop — the tap is !Send. The watched modifier can be swapped
 // live via DICT_MOD_MASK, so rebinding needs no teardown. Permission is checked before claiming DICT_TAP_UP;
 // this prevents the foreground-only half-working state that a non-authorized listen-only tap creates.
+#[cfg(target_os = "macos")]
 fn start_modifier_tap() {
     if !dict_listen_access() {
         watch_for_dict_listen_access();
@@ -2112,6 +2144,8 @@ fn set_dictation(app: AppHandle, cfg: DictCfg) {
     if cfg.enabled && cfg.prompt {
         // Prompts ONLY when not already trusted; silent once granted (the stable cert makes it stick). This
         // is what re-asks once after a signature change / TCC reset, then never again — the paste needs it.
+        // Accessibility is a macOS concept; off-macOS there is nothing to prompt for.
+        #[cfg(target_os = "macos")]
         let _ = macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
     }
     if cfg.enabled {
@@ -2349,7 +2383,9 @@ pub fn run() {
                     kill_children(); // release the mic on quit (meeting capture + other sidecars)
                 }
                 // Clicking the Dock icon when no window is open re-shows the main window (macOS convention),
-                // so the app is never "running but unreachable" after the red-X hide.
+                // so the app is never "running but unreachable" after the red-X hide. `Reopen` is a
+                // macOS-only RunEvent variant, so this arm only exists there.
+                #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => {
                     if let Some(w) = app_handle.get_webview_window("main") {
                         let _ = w.show();

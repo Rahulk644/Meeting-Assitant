@@ -55,12 +55,39 @@ target_link_libraries(transcribe-server PRIVATE transcribe Threads::Threads)
 CM
 grep -q "add_subdirectory(server)" "$SRC/examples/CMakeLists.txt" || echo "add_subdirectory(server)" >> "$SRC/examples/CMakeLists.txt"
 
-echo "Building transcribe-server (Metal) — first build compiles ggml, ~2–4 min …"
-cmake -S "$SRC" -B "$SRC/build" -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_EXAMPLES=ON >/dev/null
+# Device-agnostic GPU backend: Metal on macOS; Linux/Windows honor GGML_BACKEND=cuda|vulkan|cpu
+# (default cpu). Windows (git-bash/msys) gets a .exe suffix.
+OS="$(uname -s)"
+EXE=""
+case "$OS" in MINGW* | MSYS* | CYGWIN*) EXE=".exe" ;; esac
+case "$OS" in
+  Darwin) BACKEND="-DGGML_METAL=ON" NATIVE="" ;;
+  *) case "${GGML_BACKEND:-cpu}" in
+    cuda) BACKEND="-DGGML_CUDA=ON" ;;
+    vulkan) BACKEND="-DGGML_VULKAN=ON" ;;
+    *) BACKEND="-DGGML_METAL=OFF" ;;
+  esac
+    # Portable CPU build off macOS: `-DGGML_NATIVE=OFF` avoids -mcpu=native, which on aarch64 gcc
+    # enables the ARMv8.2 FP16 NEON path (vfmaq_f16 …) that then fails to inline ("target specific
+    # option mismatch") because the base arch lacks +fp16. The polish llama-server build does the same.
+    NATIVE="-DGGML_NATIVE=OFF" ;;
+esac
+
+# Self-heal a build dir configured for a different source path (host vs container mount) — cmake
+# refuses to reuse such a cache and errors out.
+if [ -f "$SRC/build/CMakeCache.txt" ] && ! grep -q "CMAKE_HOME_DIRECTORY:INTERNAL=$SRC$" "$SRC/build/CMakeCache.txt"; then
+  echo "Clearing cmake build dir configured for a different source path"
+  rm -rf "$SRC/build"
+fi
+echo "Building transcribe-server ($OS backend: $BACKEND $NATIVE) — first build compiles ggml, ~2–4 min …"
+cmake -S "$SRC" -B "$SRC/build" -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_EXAMPLES=ON $BACKEND $NATIVE >/dev/null
 cmake --build "$SRC/build" --target transcribe-server -j >/dev/null
-cp "$SRC/build/bin/transcribe-server" "$ROOT/transcribe-server"
-# Give the freshly linked local binary a valid code directory. Release/local app builds replace this with
-# the configured stable identity and hardened runtime before the executable enters a bundle.
-codesign --force --sign - "$ROOT/transcribe-server" 2>/dev/null || true
-"$ROOT/transcribe-server" --selftest
-echo "✓ transcribe-server → $ROOT/transcribe-server"
+cp "$SRC/build/bin/transcribe-server$EXE" "$ROOT/transcribe-server$EXE"
+# macOS only: give the freshly linked local binary a valid ad-hoc code directory. Release/local app
+# builds replace this with the configured stable identity and hardened runtime before bundling.
+# Other OSes have no ad-hoc signing step here (Windows uses signtool at packaging time).
+if [[ "$OS" == "Darwin" ]]; then
+  codesign --force --sign - "$ROOT/transcribe-server" 2>/dev/null || true
+fi
+"$ROOT/transcribe-server$EXE" --selftest
+echo "✓ transcribe-server → $ROOT/transcribe-server$EXE"

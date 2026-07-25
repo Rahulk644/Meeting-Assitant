@@ -4,6 +4,12 @@
 //! ChatGPT/Codex app (or a user-installed CLI), give it an isolated `CODEX_HOME`, and keep OAuth tokens in
 //! that official runtime. Every status/planning request starts the process on demand and tears it down.
 
+// The entire external-Codex bridge is macOS-only: it is built on Security.framework code-signing
+// verification (SecStaticCode / SecCode), Core Foundation CFURL, unix file metadata, and
+// `/Applications/*.app` discovery. It is wrapped in a macOS-only inner module; off-macOS a stub below
+// exposes the same public API and reports the runtime as unavailable (the Codex feature is disabled).
+#[cfg(target_os = "macos")]
+mod imp {
 use security_framework::os::macos::code_signing::{
     Flags, GuestAttributes, SecCode, SecRequirement, SecStaticCode,
 };
@@ -792,3 +798,49 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 }
+} // mod imp
+
+#[cfg(target_os = "macos")]
+pub use imp::{logout, plan, start_device_login, status};
+
+// Off-macOS stub: the external Codex runtime discovery and its code-signature verification are macOS-only,
+// so the feature reports as not installed / unavailable rather than performing any work.
+#[cfg(not(target_os = "macos"))]
+mod stub {
+    use serde_json::{json, Value};
+    use std::path::{Path, PathBuf};
+
+    pub fn status(_data_dir: &Path) -> Value {
+        json!({
+            "installed": false,
+            "bundled": false,
+            "signedIn": false,
+            "models": [],
+            "login": {"status": "idle", "verificationUrl": null, "userCode": null, "error": null},
+            "installUrl": "https://chatgpt.com/download",
+            "error": "The external Codex runtime is only supported on macOS."
+        })
+    }
+
+    pub fn start_device_login(_data_dir: PathBuf) -> Result<Value, String> {
+        Err("The external Codex runtime is only supported on macOS.".into())
+    }
+
+    pub fn logout(_data_dir: &Path) -> Result<(), String> {
+        Err("The external Codex runtime is only supported on macOS.".into())
+    }
+
+    pub fn plan(
+        _data_dir: &Path,
+        _model: &str,
+        _effort: &str,
+        _personality: &str,
+        _instruction: &str,
+        _snapshot: &Value,
+    ) -> Result<Value, String> {
+        Err("The external Codex runtime is only supported on macOS.".into())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub use stub::{logout, plan, start_device_login, status};

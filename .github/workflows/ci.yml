@@ -91,3 +91,129 @@ jobs:
       - name: RustSec advisory audit
         working-directory: desktop/src-tauri
         run: cargo audit
+
+  # ---------------------------------------------------------------------------
+  # Cross-platform native helper binaries (native/). Each OS builds its own
+  # helpers on its own runner — they link OS-native libraries, so there is no
+  # cross-compilation. See native/PROTOCOL.md and MIGRATION.md.
+  # ---------------------------------------------------------------------------
+
+  helpers-core:
+    name: Native helpers-core (shared crate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: native/helpers-core
+      - name: Test + build the shared crate
+        working-directory: native/helpers-core
+        run: |
+          cargo test --locked
+          cargo build --release --locked
+
+  linux-app:
+    name: Linux app (.deb, x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Install build deps (tauri app + native helpers + C++ runtimes)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libasound2-dev libxdo-dev cmake \
+            libpulse-dev libpipewire-0.3-dev libspa-0.2-dev clang \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libxcb1-dev libxcb-randr0-dev libatspi2.0-dev libdbus-1-dev pkg-config
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: |
+            desktop/src-tauri
+            native/linux
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version '~2.11.4' --locked
+      - name: Build WebView assets
+        run: cd desktop && npm ci && ../script/prepare_web_assets.sh
+      - name: Build the .deb (app + all five native helpers, freshly compiled for Linux)
+        run: bash native/docker/build-linux-app.sh
+      - name: Verify the package + helper selftests
+        run: |
+          deb="$(find .target-linux/release/bundle/deb -name '*.deb' | head -1)"
+          dpkg-deb --info "$deb"
+          mkdir -p /tmp/x && dpkg-deb -x "$deb" /tmp/x
+          file "/tmp/x/usr/bin/app" | grep -q ELF
+          "/tmp/x/usr/lib/My Assistant/stt/transcribe-server/transcribe-server" --selftest
+          echo "Linux .deb built + verified: $deb"
+      - name: Upload the Linux .deb
+        uses: actions/upload-artifact@v4 # TODO: pin to a SHA to match this repo's convention
+        with:
+          name: linux-deb
+          path: .target-linux/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+  windows-app:
+    name: Windows app (.exe/.msi)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    # First real Windows build of the ported core + #[cfg(windows)] helpers; non-blocking while the
+    # Windows-native paths (WASAPI/UIA/SendInput) are hardened. See MIGRATION.md.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: |
+            desktop/src-tauri
+            native/windows
+      - name: Build + selftest native Windows helpers, stage as resources
+        shell: pwsh
+        run: |
+          cd native/windows
+          cargo build --release --workspace --locked
+          cargo test --workspace --locked
+          foreach ($b in "meeting-tap","dictation-target","agent-context","agent-action","meeting-state") {
+            & "target\release\$b.exe" --selftest
+          }
+          # Stage the built helper .exes at the resource paths tauri.conf.json bundles (transcribe-server
+          # and llama-server are model runtimes — stubbed here so bundling succeeds; build them on Windows
+          # for STT/polish).
+          $rel = "target\release"
+          Copy-Item "$rel\meeting-tap.exe"      "..\..\stt\meeting-tap"
+          Copy-Item "$rel\meeting-state.exe"    "..\..\meeting-state\meeting-state"
+          Copy-Item "$rel\dictation-target.exe" "..\..\dictation-target\dictation-target"
+          "" | Out-File -Encoding ascii "..\..\stt\transcribe-server\transcribe-server"
+          "" | Out-File -Encoding ascii "..\..\polish-runtime\llama-server"
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version '~2.11.4' --locked
+      - name: Build WebView assets
+        shell: bash
+        run: cd desktop && npm ci && ../script/prepare_web_assets.sh
+      - name: Build the Windows installer (single NSIS -setup.exe, bundles the app + all helpers)
+        working-directory: desktop/src-tauri
+        # tauri.windows.conf.json maps the helper resources to `.exe` dests so native_host finds them
+        # at runtime (Windows needs the extension to spawn them).
+        run: cargo tauri build --config tauri.windows.conf.json --bundles nsis
+      - name: Upload the Windows installer
+        uses: actions/upload-artifact@v4 # TODO: pin to a SHA to match this repo's convention
+        with:
+          name: windows-installer
+          path: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

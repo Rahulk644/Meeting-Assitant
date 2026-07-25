@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "targets": ["nsis"],
+    "resources": {
+      "../../stt/meeting-tap": "stt/meeting-tap.exe",
+      "../../stt/transcribe-server/transcribe-server": "stt/transcribe-server/transcribe-server.exe",
+      "../../meeting-state/meeting-state": "meeting-state/meeting-state.exe",
+      "../../dictation-target/dictation-target": "dictation-target/dictation-target.exe",
+      "../../polish-runtime/llama-server": "polish-runtime/llama-server.exe"
+    }
+  }
+}

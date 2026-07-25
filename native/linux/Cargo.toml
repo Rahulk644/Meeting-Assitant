@@ -1,0 +1,78 @@
+# Linux native-helper workspace for the Meeting-Assistant Tauri app.
+#
+# STANDALONE workspace — deliberately NOT a member of the macOS app's cargo workspace. It builds
+# only for `x86_64-unknown-linux-gnu` and pulls in Linux-only system libraries (libpulse, pipewire,
+# gstreamer, at-spi2, xcb). The empty-membered `[workspace]` table here makes this directory its own
+# workspace root so `cargo` stops walking up the tree and never tries to fold these crates into the
+# mac app. See ./README.md for the build prerequisites.
+#
+# Layout: one shared `platform` lib crate (capability detection + the portable control-plane / proc /
+# injection / role-mapping helpers) plus five thin binary crates, one per helper. The genuinely
+# platform-specific native code lives in the binaries; `platform` and `helpers-core` are the shared,
+# verifiable spine.
+[workspace]
+resolver = "2"
+members = [
+    "platform",
+    "meeting-tap",
+    "dictation-target",
+    "agent-context",
+    "agent-action",
+    "meeting-state",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# atspi 0.28 / zbus 5 / ashpd 0.13 need a recent toolchain; helpers-core's own MSRV is 1.77.
+rust-version = "1.80"
+license = "MIT"
+
+[workspace.dependencies]
+# The frozen, already-compiling shared core. Path is relative to THIS workspace root
+# (native/linux), so `../helpers-core` resolves to native/helpers-core.
+helpers-core = { path = "../helpers-core" }
+platform = { path = "platform" }
+
+# Portable / light — safe to depend on from anywhere.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+# `signal` for SIGTERM/SIGINT sigaction, `process` for pid types. No `default-features` so we don't
+# pull the whole nix surface into every helper.
+nix = { version = "0.29", default-features = false, features = ["signal", "process"] }
+signal-hook = "0.3"
+uuid = { version = "1", features = ["v4"] }
+
+# Control plane + whisper upload. Loopback HTTP only, so no TLS backend is compiled in
+# (default-features = false) — avoids an OpenSSL/rustls system dependency for the helpers.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart"] }
+
+# Accessibility stack (dictation-target, agent-context, agent-action, meeting-state).
+# `net` pulls in the IO driver the AT-SPI/D-Bus socket needs at runtime.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync", "net"] }
+zbus = "5"
+atspi = "0.28"
+
+# Input injection + window enumeration (X11 real; Wayland limited — see platform::inject).
+enigo = "0.5"
+x11rb = "0.13"
+arboard = "3"
+
+# Meeting-app process enumeration.
+sysinfo = "0.33"
+
+# meeting-tap audio + video — Linux-only, heavy. Only meeting-tap depends on these.
+libpulse-binding = "2"
+libpulse-simple-binding = "2"
+pipewire = "0.9"
+ashpd = "0.13"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+gstreamer-video = "0.25"
+
+# Slightly smaller release binaries; helpers are spawned one-shot or long-running, not hot loops.
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

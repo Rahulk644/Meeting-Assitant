@@ -1,0 +1,23 @@
+[package]
+name = "agent-context"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Read-only AT-SPI accessibility snapshot helper (Linux). PROTOCOL.md §3."
+
+[[bin]]
+name = "agent-context"
+path = "src/main.rs"
+
+[dependencies]
+helpers-core.workspace = true
+# `x11` feature: optional _NET_ACTIVE_WINDOW cross-check of the AT-SPI active window under X11.
+platform = { workspace = true, features = ["x11"] }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+# AT-SPI is async over zbus; a small current-thread tokio runtime drives the one-shot capture.
+tokio.workspace = true
+atspi.workspace = true
+zbus.workspace = true

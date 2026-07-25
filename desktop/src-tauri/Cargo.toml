@@ -21,27 +21,39 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
+# `macos-private-api` must live here (not under a target-specific dependency): tauri-build validates the
+# feature against tauri.conf.json by parsing THIS `[dependencies]` table only. The feature is cross-platform
+# safe — it merely enables wry's generic `fullscreen`/`transparent` window features; the macOS-only objc2
+# crates it interacts with are already `cfg(target_os = "macos")`-gated inside wry/tauri.
 tauri = { version = "2.11.3", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-notification = "2"               # native meeting-start alerts, emitted only after Core Audio confirms a live call
 # In-app dictation (runs as the app itself, so one Accessibility grant covers it — no fragmented helper):
 tauri-plugin-global-shortcut = "2"          # Carbon ordinary-key combinations; bare modifiers use the Input Monitoring event tap
+cpal = "0.15"                               # record the mic IN-PROCESS (like Handy) — no meeting-tap spawn, so no ~300ms start lag
+hound = "3.5"                               # encode the captured audio to a 16-bit PCM WAV for the STT server
+libc = "0.2"                                # validate ownership of an optional user-installed Codex executable; SIGTERM sidecars on unix
+voice_activity_detector = "0.2"             # Silero VAD (same model family Handy bundles) — strips non-speech before Whisper so silence can't hallucinate; statically links onnxruntime via `ort`, so the binary stays self-contained
+tiny_http = "0.12"                          # in-process loopback API/UI server; replaces the 108 MB bundled Node runtime
+ureq = { version = "3.3", default-features = false, features = ["json", "native-tls-no-default"] } # provider HTTPS in-process; secrets never enter files or process arguments
+regex = "1.11"                               # deterministic command, protected-span, and number parsing
+unicode-normalization = "0.1"               # NFC normalization without damaging Indic joiners or scripts
+arboard = "3"                               # cross-platform clipboard (macOS NSPasteboard / Windows / X11) — replaces pbcopy/pbpaste
+open = "5"                                  # cross-platform URL/file launcher — replaces `/usr/bin/open <url>`
+sha2 = "0.10"                               # in-process SHA-256 model checksums — replaces the `shasum` shell-out
+dirs = "5"                                  # per-platform data/home directories — replaces hardcoded ~/Library/Application Support
+
+# macOS-only native integrations. Gated so Linux/Windows can compile; the code that uses them is behind
+# `#[cfg(target_os = "macos")]` and degrades to no-op/stub off-macOS.
+[target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.23"                      # synth ⌘V (explicit Command flag) to paste — the proven CGEvent method
 core-foundation = "0.9"                     # CFRunLoop that services the bare-modifier event tap (Handy-style right-⌘/Option trigger)
 core-foundation-code-signing = { package = "core-foundation", version = "0.10" } # CFURL bridge for Security.framework's native code-signing validation
 macos-accessibility-client = "0.0.2"        # prompt for Accessibility under the app's own identity
+security-framework = "3"                    # store optional cloud-provider API keys in the macOS Keychain
 objc2 = "0.6.4"                             # typed Objective-C ownership for the native AppKit dictation panel
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSAttributedString", "NSData", "NSDictionary", "NSGeometry", "NSObject", "NSString", "NSURL", "NSValue"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAccessibility", "NSAppearance", "NSAttributedString", "NSBitmapImageRep", "NSBox", "NSColor", "NSControl", "NSEvent", "NSFont", "NSGraphics", "NSImage", "NSImageRep", "NSPanel", "NSProgressIndicator", "NSResponder", "NSScreen", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
-cpal = "0.15"                               # record the mic IN-PROCESS (like Handy) — no meeting-tap spawn, so no ~300ms start lag
-hound = "3.5"                               # encode the captured audio to a 16-bit PCM WAV for the STT server
-libc = "0.2"                                # validate ownership of an optional user-installed Codex executable
-voice_activity_detector = "0.2"             # Silero VAD (same model family Handy bundles) — strips non-speech before Whisper so silence can't hallucinate; statically links onnxruntime via `ort`, so the binary stays self-contained
-tiny_http = "0.12"                          # in-process loopback API/UI server; replaces the 108 MB bundled Node runtime
-security-framework = "3"                    # store optional cloud-provider API keys in the macOS Keychain
-ureq = { version = "3.3", default-features = false, features = ["json", "native-tls-no-default"] } # provider HTTPS in-process; secrets never enter files or process arguments
-regex = "1.11"                               # deterministic command, protected-span, and number parsing
-unicode-normalization = "0.1"               # NFC normalization without damaging Indic joiners or scripts
 
 [profile.release]
 # Developer/debug symbols are useful in local builds but add roughly 9 MB to the shipped executable.

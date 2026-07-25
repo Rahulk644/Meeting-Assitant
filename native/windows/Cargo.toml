@@ -1,0 +1,88 @@
+# Windows native-helper workspace for the Tauri desktop app.
+#
+# This is a STANDALONE workspace root (note the empty `[workspace]` table): it is deliberately NOT a
+# member of the macOS app's cargo workspace. It builds five sidecar binaries plus one shared
+# `platform` library, all targeting `x86_64-pc-windows-msvc`.
+#
+#   cargo build --target x86_64-pc-windows-msvc --release
+#
+# The portable spine (arg parsing, protocol wiring, Segmenter→wav→ureq→caption, --selftest, exit
+# codes, parent-watchdog) lives in `helpers-core` + the portable modules here and compiles on any
+# host. The genuinely native pieces (WASAPI, UI Automation, windows-capture, enigo) are gated behind
+# `#[cfg(windows)]`; every one has a `#[cfg(not(windows))]` fallback that logs a degrade and returns a
+# contract-valid result, so `cargo check` on a non-Windows host still exercises the whole crate.
+
+[package]
+name = "assistant-native-windows"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Windows Rust implementations of the five native helpers (see native/PROTOCOL.md)."
+license = "MIT"
+
+# Empty table => this package is its own workspace root; cargo will not walk upward and fold it into
+# any parent workspace. It has no external members.
+[workspace]
+
+[lib]
+name = "platform"
+path = "src/lib.rs"
+
+[[bin]]
+name = "meeting-tap"
+path = "src/bin/meeting-tap.rs"
+
+[[bin]]
+name = "dictation-target"
+path = "src/bin/dictation-target.rs"
+
+[[bin]]
+name = "agent-context"
+path = "src/bin/agent-context.rs"
+
+[[bin]]
+name = "agent-action"
+path = "src/bin/agent-action.rs"
+
+[[bin]]
+name = "meeting-state"
+path = "src/bin/meeting-state.rs"
+
+[dependencies]
+# The frozen, OS-agnostic core (path dependency, shared with the Linux crate).
+helpers-core = { path = "../helpers-core" }
+
+# Portable dependencies — fetched and compiled on every host, including this one.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"                       # NOTE: default (no `preserve_order`) => Value maps are BTreeMap,
+                                       # which gives us Swift-style sorted-key JSON for free.
+ureq = { version = "2", features = ["json"] } # blocking HTTP control-plane client (config pull + /ingest POST + whisper)
+uuid = { version = "1", features = ["v4"] } # snapshotId / temp-file names
+
+# Windows-only native dependencies. Target-gated so a non-Windows `cargo check` never tries to build
+# them; the code that uses them is likewise `#[cfg(windows)]`.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Media_Audio",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Devices_FunctionDiscovery",
+] }
+wasapi = "0.23"                        # per-application process loopback + mic capture (WASAPI wrappers)
+windows-capture = "2"                  # screen capture → H.264 mp4 + thumbnail
+uiautomation = "0.24"                  # UI Automation reads/writes (context/action/dictation/state)
+enigo = "0.6"                          # Unicode text injection (KEYEVENTF_UNICODE)
+arboard = "3"                          # clipboard fallback for paste-based injection
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
