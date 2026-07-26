@@ -4,6 +4,10 @@
 //! request is authenticated with a per-launch secret, and WebViews receive that secret only through
 //! a one-time bootstrap URL that is exchanged for a SameSite/HttpOnly cookie.
 
+use crate::meeting_detection::{
+    MeetingDetectionPolicy, MeetingDetector, MeetingObservation, MeetingSourceFamily,
+    MeetingTransition,
+};
 use objc2::{rc::autoreleasepool, AnyThread};
 use objc2_app_kit::{
     NSBitmapImageFileType, NSBitmapImageRep, NSCompositingOperation, NSImage, NSWorkspace,
@@ -30,6 +34,7 @@ const ORIGIN: &str = "http://127.0.0.1:8790";
 const STT_PORT: u16 = 8091;
 const LLM_PORT: u16 = 9379;
 const KEYCHAIN_SERVICE: &str = "com.myassistant.desktop.ai-provider";
+#[cfg(feature = "agent-research")]
 const AGENT_ACTION_PREVIEW_BUNDLE_ID: &str = "com.apple.TextEdit";
 const MAX_JSON_BODY: usize = 1_000_000;
 const MAX_AUDIO_BODY: usize = 64 * 1024 * 1024;
@@ -59,6 +64,33 @@ pub struct ServerInfo {
     pub token: String,
 }
 
+/// Platform-neutral projection of the authoritative Meetings Beta lifecycle.
+///
+/// macOS renders this in AppKit and Windows will render the same contract through its native overlay
+/// adapter. The local server remains the only source of truth; native surfaces never infer capture state.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingUiLine {
+    pub speaker: String,
+    pub text: String,
+    pub is_self: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingUiState {
+    pub phase: String,
+    pub title: String,
+    pub app: String,
+    pub started_at: Option<u64>,
+    pub microphone: String,
+    pub meeting_audio: String,
+    pub detail: String,
+    /// A deliberately small, sanitized projection for the native overlay. Full meeting history stays in
+    /// the core and WebView; platform adapters never own or persist a second transcript.
+    pub transcript: Vec<MeetingUiLine>,
+}
+
 struct Shared {
     cfg: Config,
     state: Mutex<State>,
@@ -76,11 +108,15 @@ struct Config {
     rec_dir: PathBuf,
     models_dir: PathBuf,
     transcribe_bin: PathBuf,
+    #[cfg(feature = "agent-research")]
     agent_context_bin: PathBuf,
+    #[cfg(feature = "agent-research")]
     agent_action_bin: PathBuf,
     meeting_notifier: Arc<dyn Fn(String) + Send + Sync>,
+    meeting_presenter: Arc<dyn Fn(MeetingUiState) + Send + Sync>,
 }
 
+#[cfg(feature = "agent-research")]
 #[derive(Clone)]
 struct AgentProposal {
     id: String,
@@ -90,6 +126,7 @@ struct AgentProposal {
     expected: Value,
 }
 
+#[cfg(feature = "agent-research")]
 #[derive(Clone)]
 struct AgentUndo {
     created_at: u64,
@@ -100,6 +137,7 @@ struct State {
     settings: HashMap<String, String>,
     last_state: Map<String, Value>,
     gate: Gate,
+    meeting_detector: MeetingDetector,
     current: Option<Meeting>,
     modules: Modules,
     dictation: DictationConfig,
@@ -122,8 +160,16 @@ struct State {
     llm_child: Option<Child>,
     llm_last_used: Option<Instant>,
     finalize_generation: u64,
+    finalizing: bool,
+    capture_session: String,
+    capture_sequence: u64,
+    capture_microphone: String,
+    capture_meeting_audio: String,
+    capture_detail: String,
     meeting_last_checkpoint: Option<Instant>,
+    #[cfg(feature = "agent-research")]
     agent_proposal: Option<AgentProposal>,
+    #[cfg(feature = "agent-research")]
     agent_undo: Option<AgentUndo>,
 }
 
@@ -362,6 +408,7 @@ pub fn start(
     res_base: String,
     legacy_model_dirs: Vec<String>,
     meeting_notifier: Arc<dyn Fn(String) + Send + Sync>,
+    meeting_presenter: Arc<dyn Fn(MeetingUiState) + Send + Sync>,
 ) -> Result<ServerInfo, String> {
     if SHARED.get().is_some() {
         return Err("local server already started".into());
@@ -418,6 +465,13 @@ pub fn start(
             );
         }
     }
+    #[cfg(not(feature = "agent-research"))]
+    if settings.remove("set.agentCompute").is_some() {
+        let _ = write_private(
+            &settings_path,
+            &serde_json::to_vec(&settings).unwrap_or_default(),
+        );
+    }
     let speech_model_id = settings
         .get("set.speechModel")
         .filter(|id| crate::speech_models::speech_model(id).is_some())
@@ -441,6 +495,7 @@ pub fn start(
         settings,
         last_state: Map::new(),
         gate: Gate::new(),
+        meeting_detector: MeetingDetector::default(),
         current: None,
         modules: modules.clone(),
         dictation: DictationConfig {
@@ -467,8 +522,16 @@ pub fn start(
         llm_child: None,
         llm_last_used: None,
         finalize_generation: 0,
+        finalizing: false,
+        capture_session: String::new(),
+        capture_sequence: 0,
+        capture_microphone: "idle".into(),
+        capture_meeting_audio: "idle".into(),
+        capture_detail: String::new(),
         meeting_last_checkpoint: None,
+        #[cfg(feature = "agent-research")]
         agent_proposal: None,
+        #[cfg(feature = "agent-research")]
         agent_undo: None,
     };
     let res_base = PathBuf::from(res_base);
@@ -482,9 +545,12 @@ pub fn start(
             rec_dir,
             models_dir,
             transcribe_bin: res_base.join("stt/transcribe-server/transcribe-server"),
+            #[cfg(feature = "agent-research")]
             agent_context_bin: res_base.join("agent-context/agent-context"),
+            #[cfg(feature = "agent-research")]
             agent_action_bin: res_base.join("agent-action/agent-action"),
             meeting_notifier,
+            meeting_presenter,
         },
         state: Mutex::new(state),
         clients: Mutex::new(Vec::new()),
@@ -697,6 +763,7 @@ fn fresh_ui_location() -> String {
     format!("/?run={}-{}", std::process::id(), now_ms())
 }
 
+#[cfg(feature = "agent-research")]
 fn read_bounded<R: Read>(mut reader: R, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
     let mut kept = Vec::new();
     let mut over_limit = false;
@@ -716,6 +783,7 @@ fn read_bounded<R: Read>(mut reader: R, limit: usize) -> std::io::Result<(Vec<u8
     }
 }
 
+#[cfg(feature = "agent-research")]
 fn run_native_json(
     binary: &Path,
     argument: &str,
@@ -816,6 +884,7 @@ fn run_native_json(
         .map_err(|error| format!("{label} returned invalid JSON: {error}"))
 }
 
+#[cfg(feature = "agent-research")]
 fn capture_agent_context(binary: &Path) -> Result<Value, String> {
     run_native_json(
         binary,
@@ -828,6 +897,7 @@ fn capture_agent_context(binary: &Path) -> Result<Value, String> {
     )
 }
 
+#[cfg(feature = "agent-research")]
 fn run_agent_action(binary: &Path, input: &Value) -> Result<Value, String> {
     run_native_json(
         binary,
@@ -838,6 +908,7 @@ fn run_agent_action(binary: &Path, input: &Value) -> Result<Value, String> {
     )
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_context(request: Request, shared: &Shared) {
     if !release_capability(&shared.cfg.release, "agentContextInspector") {
         return json_response(
@@ -852,6 +923,7 @@ fn agent_context(request: Request, shared: &Shared) {
     }
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_compute_status(request: Request, shared: &Shared) {
     if !release_capability(&shared.cfg.release, "agentComputeConfig") {
         return json_response(
@@ -867,6 +939,7 @@ fn agent_compute_status(request: Request, shared: &Shared) {
     )
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_compute_login(request: Request, shared: Arc<Shared>) {
     if !release_capability(&shared.cfg.release, "agentComputeConfig") {
         return json_response(
@@ -888,6 +961,7 @@ fn agent_compute_login(request: Request, shared: Arc<Shared>) {
     }
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_compute_logout(request: Request, shared: &Shared) {
     if !release_capability(&shared.cfg.release, "agentComputeConfig") {
         return json_response(
@@ -902,6 +976,7 @@ fn agent_compute_logout(request: Request, shared: &Shared) {
     }
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_plan(mut request: Request, shared: Arc<Shared>) {
     if !release_capability(&shared.cfg.release, "agentDraftPreview") {
         return json_response(
@@ -1001,6 +1076,7 @@ fn agent_plan(mut request: Request, shared: Arc<Shared>) {
     }
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_api_plan(compute: &Value, instruction: &str, snapshot: &Value) -> Result<Value, String> {
     let provider = compute
         .get("apiProvider")
@@ -1098,6 +1174,7 @@ fn agent_api_plan(compute: &Value, instruction: &str, snapshot: &Value) -> Resul
     serde_json::from_str(raw).map_err(|_| "Agent provider returned an invalid preview".into())
 }
 
+#[cfg(feature = "agent-research")]
 fn validate_agent_preview(value: Value) -> Result<Value, String> {
     let action = value
         .get("action")
@@ -1131,6 +1208,7 @@ fn validate_agent_preview(value: Value) -> Result<Value, String> {
     }))
 }
 
+#[cfg(feature = "agent-research")]
 fn expected_agent_target(snapshot: &Value) -> Result<Value, String> {
     if snapshot.get("editable").and_then(Value::as_bool) != Some(true) {
         return Err("Focus an ordinary editable text field, then prepare the draft again.".into());
@@ -1168,6 +1246,7 @@ fn expected_agent_target(snapshot: &Value) -> Result<Value, String> {
     }))
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_external_snapshot(snapshot: &Value) -> Value {
     let mut result = snapshot.clone();
     if let Some(object) = result.as_object_mut() {
@@ -1177,6 +1256,7 @@ fn agent_external_snapshot(snapshot: &Value) -> Value {
     result
 }
 
+#[cfg(feature = "agent-research")]
 fn public_agent_target(snapshot: &Value) -> Value {
     json!({
         "appName":snapshot.get("appName").cloned().unwrap_or(Value::Null),
@@ -1187,11 +1267,13 @@ fn public_agent_target(snapshot: &Value) -> Value {
     })
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_action_block_reason(snapshot: &Value) -> Option<&'static str> {
     (snapshot.get("bundleId").and_then(Value::as_str) != Some(AGENT_ACTION_PREVIEW_BUNDLE_ID))
         .then_some("Apply is currently limited to a disposable TextEdit document while the action matrix is being validated.")
 }
 
+#[cfg(feature = "agent-research")]
 fn store_agent_proposal(
     shared: &Shared,
     snapshot: &Value,
@@ -1257,6 +1339,7 @@ fn store_agent_proposal(
     Ok(Some(id))
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_apply(mut request: Request, shared: Arc<Shared>) {
     if !release_capability(&shared.cfg.release, "agentActions") {
         return json_response(
@@ -1353,6 +1436,7 @@ fn agent_apply(mut request: Request, shared: Arc<Shared>) {
     )
 }
 
+#[cfg(feature = "agent-research")]
 fn agent_undo(request: Request, shared: Arc<Shared>) {
     if !release_capability(&shared.cfg.release, "agentActions") {
         return json_response(
@@ -1621,7 +1705,9 @@ fn handle(mut request: Request, shared: Arc<Shared>) {
         }
         (Method::Get, "/api/state") => state_response(request, &shared),
         (Method::Post, "/api/meeting/control") => meeting_control(request, shared),
+        (Method::Post, "/api/meeting/observation") => meeting_observation(request, shared),
         (Method::Post, "/api/meeting/notes") => meeting_notes(request, shared),
+        (Method::Post, "/api/meeting/live-assist") => meeting_live_assist(request, shared),
         (Method::Get, "/api/settings") => settings_get(request, &shared),
         (Method::Post, "/api/settings") => settings_post(request, shared),
         (Method::Post, "/api/config") => config_post(request, shared),
@@ -1643,12 +1729,19 @@ fn handle(mut request: Request, shared: Arc<Shared>) {
                 .dict_stop += 1;
             respond(request, 204, "text/plain", Vec::new(), vec![])
         }
+        #[cfg(feature = "agent-research")]
         (Method::Post, "/api/agent/context") => agent_context(request, &shared),
+        #[cfg(feature = "agent-research")]
         (Method::Get, "/api/agent/compute/status") => agent_compute_status(request, &shared),
+        #[cfg(feature = "agent-research")]
         (Method::Post, "/api/agent/compute/login") => agent_compute_login(request, shared),
+        #[cfg(feature = "agent-research")]
         (Method::Post, "/api/agent/compute/logout") => agent_compute_logout(request, &shared),
+        #[cfg(feature = "agent-research")]
         (Method::Post, "/api/agent/plan") => agent_plan(request, shared),
+        #[cfg(feature = "agent-research")]
         (Method::Post, "/api/agent/apply") => agent_apply(request, shared),
+        #[cfg(feature = "agent-research")]
         (Method::Post, "/api/agent/undo") => agent_undo(request, shared),
         (Method::Post, "/api/ai/key") => ai_key_save(request),
         (Method::Post, "/api/ai/models") => ai_models(request),
@@ -1788,6 +1881,9 @@ fn state_response(request: Request, shared: &Shared) {
         serde_json::to_value(&state.modules).unwrap_or(Value::Null),
     );
     out.insert("dictStop".into(), Value::Number(state.dict_stop.into()));
+    if let Some(call) = call_state_value(&state).as_object() {
+        out.extend(call.clone());
+    }
     json_response(request, 200, Value::Object(out));
 }
 
@@ -1848,6 +1944,16 @@ fn ingest_event(shared: Arc<Shared>, mut value: Value) {
         broadcast(&shared, &value);
         return;
     }
+    if kind == "capture-status" {
+        let changed = {
+            let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+            apply_capture_status(&mut state, &value)
+        };
+        if changed {
+            broadcast_call(&shared);
+        }
+        return;
+    }
 
     let authoritative = kind == "state"
         && value.get("source").and_then(Value::as_str) == Some("coreaudio")
@@ -1891,7 +1997,67 @@ fn ingest_event(shared: Arc<Shared>, mut value: Value) {
     }
     if authoritative {
         recompute_lifecycle(shared, None);
+    } else if kind == "caption" {
+        // The WebView already receives the raw caption event. Native overlays receive only the bounded
+        // core projection, so refresh them explicitly without teaching AppKit about ingest events.
+        broadcast_call(&shared);
     }
+}
+
+fn capture_channel(value: &Value, key: &str) -> Option<String> {
+    let channel = value.get(key).and_then(Value::as_str)?;
+    matches!(channel, "idle" | "off" | "starting" | "ready" | "failed").then(|| channel.to_string())
+}
+
+fn apply_capture_status(state: &mut State, value: &Value) -> bool {
+    let session = clean(
+        value.get("session").and_then(Value::as_str).unwrap_or(""),
+        80,
+    );
+    let phase = value.get("phase").and_then(Value::as_str).unwrap_or("");
+    let sequence = value.get("sequence").and_then(Value::as_u64).unwrap_or(0);
+    if session.is_empty()
+        || sequence == 0
+        || !matches!(phase, "starting" | "capturing" | "degraded" | "stopped")
+    {
+        return false;
+    }
+
+    // A new session may replace the previous one only while the core gate actually expects capture.
+    // Late URLSession callbacks from a stopped/replaced helper session cannot revive a stale meeting UI.
+    if phase == "starting" && state.capture_session != session {
+        if !state.gate.recording() {
+            return false;
+        }
+        state.capture_session = session.clone();
+        state.capture_sequence = 0;
+    } else if state.capture_session != session {
+        return false;
+    }
+    if sequence <= state.capture_sequence {
+        return false;
+    }
+    state.capture_sequence = sequence;
+
+    if phase == "stopped" {
+        state.capture_microphone = "idle".into();
+        state.capture_meeting_audio = "idle".into();
+        state.capture_detail.clear();
+        return true;
+    }
+    let Some(microphone) = capture_channel(value, "microphone") else {
+        return false;
+    };
+    let Some(meeting_audio) = capture_channel(value, "meetingAudio") else {
+        return false;
+    };
+    state.capture_microphone = microphone;
+    state.capture_meeting_audio = meeting_audio;
+    state.capture_detail = clean(
+        value.get("detail").and_then(Value::as_str).unwrap_or(""),
+        240,
+    );
+    true
 }
 
 fn record_event(cfg: &Config, state: &mut State, value: &Value) {
@@ -2074,64 +2240,201 @@ fn new_meeting(state: &Map<String, Value>) -> Meeting {
 }
 
 fn recompute_lifecycle(shared: Arc<Shared>, action: Option<&str>) {
-    let mut finalized = None;
     let mut schedule = None;
     let mut ensure_speech_engine = false;
     {
         let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.gate.recording() {
             state.finalize_generation += 1;
+            state.finalizing = false;
             if state.current.is_none() {
                 state.current = Some(new_meeting(&state.last_state));
+                reset_capture_readiness(&mut state);
+            } else if matches!(action, Some("start" | "resume")) {
+                reset_capture_readiness(&mut state);
             }
             ensure_speech_engine = true;
         } else if state.current.is_some() {
             if state.gate.paused() {
                 state.finalize_generation += 1;
-            } else if action == Some("stop") {
-                finalized = finalize_locked(&shared.cfg, &mut state);
+                state.finalizing = false;
+                if state.capture_session.is_empty() {
+                    state.capture_microphone = "idle".into();
+                    state.capture_meeting_audio = "idle".into();
+                    state.capture_detail.clear();
+                }
             } else {
                 state.finalize_generation += 1;
-                schedule = Some(state.finalize_generation);
+                state.finalizing = true;
+                schedule = Some((
+                    state.finalize_generation,
+                    if action == Some("stop") {
+                        Duration::from_millis(650)
+                    } else {
+                        Duration::from_secs(15)
+                    },
+                ));
             }
+        } else {
+            state.finalizing = false;
         }
     }
+    // Publish Starting before speech-model warm-up, and Finalizing before the stop/save delay. A heavy engine
+    // check must never delay the outside-app acknowledgement or make the panel vanish between capture and save.
+    broadcast_call(&shared);
     if ensure_speech_engine {
         let _ = ensure_stt(&shared);
     }
-    if let Some(id) = finalized {
-        after_finalize(shared.clone(), id);
-    }
-    if let Some(generation) = schedule {
+    if let Some((generation, delay)) = schedule {
         let s = shared.clone();
         thread::spawn(move || {
-            thread::sleep(Duration::from_secs(15));
+            thread::sleep(delay);
             let id = {
                 let mut state = s.state.lock().unwrap_or_else(|e| e.into_inner());
                 if state.finalize_generation == generation
                     && !state.gate.recording()
                     && !state.gate.paused()
                 {
-                    finalize_locked(&s.cfg, &mut state)
+                    let id = finalize_locked(&s.cfg, &mut state);
+                    state.finalizing = false;
+                    id
                 } else {
                     None
                 }
             };
             if let Some(id) = id {
-                after_finalize(s, id);
+                after_finalize(s.clone(), id);
             }
+            broadcast_call(&s);
         });
     }
-    broadcast_call(&shared);
 }
 
 fn broadcast_call(shared: &Shared) {
-    let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    let (call, presentation) = {
+        let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        (call_state_value(&state), meeting_ui_state(&state))
+    };
+    broadcast(shared, &json!({"type":"state","state":call}));
+    (shared.cfg.meeting_presenter)(presentation);
+}
+
+fn reset_capture_readiness(state: &mut State) {
+    state.capture_session.clear();
+    state.capture_sequence = 0;
+    state.capture_microphone = "starting".into();
+    state.capture_meeting_audio = "starting".into();
+    state.capture_detail = "Opening microphone and meeting-audio sources.".into();
+}
+
+fn meeting_phase(
+    gate: &Gate,
+    finalizing: bool,
+    has_current: bool,
+    microphone: &str,
+    meeting_audio: &str,
+) -> &'static str {
+    if gate.paused() {
+        if microphone == "idle" && meeting_audio == "idle" {
+            "paused"
+        } else {
+            "pausing"
+        }
+    } else if gate.recording() {
+        if microphone == "failed" || meeting_audio == "failed" {
+            "needs_attention"
+        } else if matches!(microphone, "ready" | "off") && meeting_audio == "ready" {
+            "recording"
+        } else {
+            "starting"
+        }
+    } else if finalizing && has_current {
+        "finalizing"
+    } else {
+        "idle"
+    }
+}
+
+fn meeting_ui_state(state: &State) -> MeetingUiState {
     let current = state.current.as_ref();
-    broadcast(
-        shared,
-        &json!({"type":"state","state":{"inMeeting": state.gate.recording() || state.gate.paused(), "paused":state.gate.paused(), "startedAt":current.map(|m|m.started_at), "title":current.map(resolved_title), "app":current.map(|m|m.app.clone())}}),
+    let microphone = state.capture_microphone.clone();
+    let meeting_audio = state.capture_meeting_audio.clone();
+    let phase = meeting_phase(
+        &state.gate,
+        state.finalizing,
+        current.is_some(),
+        &microphone,
+        &meeting_audio,
     );
+    let detail = match phase {
+        "starting" if microphone == "ready" => "Microphone ready · checking meeting audio",
+        "starting" if meeting_audio == "ready" => "Meeting audio ready · checking microphone",
+        "starting" => "Checking microphone + meeting audio",
+        "recording" => "Microphone + meeting audio confirmed",
+        "pausing" => "Releasing microphone and meeting audio",
+        "paused" => "Microphone and meeting audio released",
+        "finalizing" => "Stopping capture, saving transcript, and preparing notes",
+        "needs_attention" if microphone == "failed" && meeting_audio == "failed" => {
+            "Microphone and meeting audio unavailable · open My Assistant"
+        }
+        "needs_attention" if microphone == "failed" => {
+            "Microphone unavailable · open My Assistant to fix it"
+        }
+        "needs_attention" => "Meeting audio unavailable · open My Assistant to fix it",
+        _ => "",
+    };
+    let transcript = meeting_ui_transcript(current);
+    MeetingUiState {
+        phase: phase.into(),
+        title: current.map(resolved_title).unwrap_or_default(),
+        app: current
+            .map(|meeting| meeting.app.clone())
+            .unwrap_or_default(),
+        started_at: current.map(|meeting| meeting.started_at),
+        microphone,
+        meeting_audio,
+        detail: if state.capture_detail.is_empty() || !matches!(phase, "needs_attention") {
+            detail.into()
+        } else {
+            state.capture_detail.clone()
+        },
+        transcript,
+    }
+}
+
+fn meeting_ui_transcript(meeting: Option<&Meeting>) -> Vec<MeetingUiLine> {
+    let Some(meeting) = meeting else {
+        return Vec::new();
+    };
+    let mut lines = meeting
+        .lines
+        .iter()
+        .rev()
+        .filter(|line| !line.excluded && !line.text.trim().is_empty())
+        .take(5)
+        .map(|line| MeetingUiLine {
+            speaker: clean(&line.speaker, 40),
+            text: clean(&line.text, 180),
+            is_self: line.is_self,
+        })
+        .collect::<Vec<_>>();
+    lines.reverse();
+    lines
+}
+
+fn call_state_value(state: &State) -> Value {
+    let presentation = meeting_ui_state(state);
+    json!({
+        "inMeeting": presentation.phase != "idle",
+        "paused": presentation.phase == "paused",
+        "meetingPhase": presentation.phase,
+        "startedAt": presentation.started_at,
+        "title": presentation.title,
+        "app": presentation.app,
+        "captureMicrophone": presentation.microphone,
+        "captureMeetingAudio": presentation.meeting_audio,
+        "captureDetail": presentation.detail,
+    })
 }
 
 fn finalize_locked(cfg: &Config, state: &mut State) -> Option<String> {
@@ -2197,21 +2500,159 @@ fn meeting_control(mut request: Request, shared: Arc<Shared>) {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_ascii_lowercase();
-    let ok = shared
-        .state
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .gate
-        .set_manual(&action);
-    if ok {
-        recompute_lifecycle(shared.clone(), Some(&action));
-    }
+    let ok = apply_meeting_control(shared.clone(), &action);
     let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
     json_response(
         request,
         if ok { 200 } else { 400 },
         json!({"manual":state.gate.manual.clone().unwrap_or_else(||"auto".into()),"inMeeting":state.gate.recording()||state.gate.paused(),"paused":state.gate.paused()}),
     )
+}
+
+fn apply_meeting_control(shared: Arc<Shared>, action: &str) -> bool {
+    let ok = shared
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .gate
+        .set_manual(action);
+    if ok {
+        recompute_lifecycle(shared, Some(action));
+    }
+    ok
+}
+
+/// Native overlays use the same core action path as the authenticated WebView endpoint.
+///
+/// Callers must keep this off the AppKit main thread because resuming can warm the speech engine.
+pub fn meeting_control_action(action: &str) -> bool {
+    let Some(shared) = SHARED.get().cloned() else {
+        return false;
+    };
+    apply_meeting_control(shared, action)
+}
+
+fn parsed_meeting_observation(body: &Value) -> Result<Option<MeetingObservation>, String> {
+    let identity = clean(
+        body.get("identity").and_then(Value::as_str).unwrap_or(""),
+        240,
+    );
+    if identity.is_empty() {
+        return Ok(None);
+    }
+    if !identity
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b".:_|-".contains(&byte))
+    {
+        return Err("meeting observation identity contains unsupported characters".into());
+    }
+    let family = body
+        .get("family")
+        .and_then(Value::as_str)
+        .and_then(MeetingSourceFamily::parse)
+        .ok_or("meeting observation source family is invalid")?;
+    let app = clean(body.get("app").and_then(Value::as_str).unwrap_or(""), 80);
+    let bundle = clean(
+        body.get("bundle").and_then(Value::as_str).unwrap_or(""),
+        180,
+    );
+    if app.is_empty() || bundle.is_empty() {
+        return Err("meeting observation requires an app and bundle".into());
+    }
+    Ok(Some(MeetingObservation {
+        identity,
+        app,
+        title: clean(body.get("title").and_then(Value::as_str).unwrap_or(""), 160),
+        bundle,
+        family,
+    }))
+}
+
+fn meeting_observation(mut request: Request, shared: Arc<Shared>) {
+    let body = match read_json(&mut request) {
+        Ok(value) => value,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let observed = match parsed_meeting_observation(&body) {
+        Ok(value) => value,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+
+    let (detection, detection_changed, metadata_event, notify_app) = {
+        let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        let policy = MeetingDetectionPolicy {
+            enabled: state.modules.meetings && state.gate.auto_detect,
+            desktop: state
+                .last_state
+                .get("desktopMeet")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            browser: state
+                .last_state
+                .get("browserMeet")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        };
+        let detection = state.meeting_detector.update(observed, policy);
+        let was_detected = state.gate.detected;
+        let detection_changed = state.gate.set_detected(detection.active.is_some());
+        let metadata_event = detection.active.as_ref().and_then(|active| {
+            let metadata_changed = state.last_state.get("app").and_then(Value::as_str)
+                != Some(active.app.as_str())
+                || state.last_state.get("meetingTitle").and_then(Value::as_str)
+                    != Some(active.title.as_str());
+            if !metadata_changed {
+                return None;
+            }
+            let mut values = Map::new();
+            values.insert("app".into(), Value::String(active.app.clone()));
+            values.insert("meetingTitle".into(), Value::String(active.title.clone()));
+            values.insert("title".into(), Value::String(active.title.clone()));
+            let event = json!({"type":"state","source":"meeting-observation","state":values});
+            record_event(&shared.cfg, &mut state, &event);
+            Some(event)
+        });
+        let notify_app = (!was_detected && detection.active.is_some()).then(|| {
+            detection
+                .active
+                .as_ref()
+                .map(|active| active.app.clone())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "your call".into())
+        });
+        (detection, detection_changed, metadata_event, notify_app)
+    };
+
+    if let Some(event) = metadata_event {
+        broadcast(&shared, &event);
+    }
+    let transition = match detection.transition {
+        MeetingTransition::None => "none",
+        MeetingTransition::Started => "started",
+        MeetingTransition::Switched => "switched",
+        MeetingTransition::Ended => "ended",
+    };
+    let active = detection.active.as_ref();
+    json_response(
+        request,
+        200,
+        json!({
+            "active":active.is_some(),
+            "activeIdentity":active.map(|value|value.identity.as_str()),
+            "app":active.map(|value|value.app.as_str()),
+            "title":active.map(|value|value.title.as_str()),
+            "bundle":active.map(|value|value.bundle.as_str()),
+            "transition":transition,
+        }),
+    );
+    // The adapter has a two-second control-plane timeout. Return the stable native target before model
+    // verification/startup; lifecycle work continues on this per-request server thread after the response.
+    if let Some(app) = notify_app {
+        (shared.cfg.meeting_notifier)(app);
+    }
+    if detection_changed {
+        recompute_lifecycle(shared, None);
+    }
 }
 
 fn meeting_notes(mut request: Request, shared: Arc<Shared>) {
@@ -2231,6 +2672,73 @@ fn meeting_notes(mut request: Request, shared: Arc<Shared>) {
     respond(request, 204, "text/plain", Vec::new(), vec![])
 }
 
+fn generate_live_assist(
+    shared: &Arc<Shared>,
+    action: &str,
+) -> Result<(&'static str, String), (u16, String)> {
+    let Some((instruction, scope)) = live_assist_spec(action) else {
+        return Err((400, "Unknown live assist action".into()));
+    };
+    let Some(meeting) = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .current
+        .clone()
+    else {
+        return Err((409, "No meeting is being recorded".into()));
+    };
+    let excerpt = live_assist_excerpt(&meeting, action, now_ms());
+    if excerpt.split_whitespace().count() < 4 {
+        return Err((422, "Not enough live transcript yet".into()));
+    }
+    let scratchpad = if meeting.notes.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n\nOperator scratchpad:\n{}", clean(&meeting.notes, 2400))
+    };
+    let messages = json!([
+        {
+            "role":"system",
+            "content":"You are a live meeting assistant. Use ONLY the supplied transcript and scratchpad. Be concise and directly useful. Never invent facts, decisions, owners, commitments, or participant intent. If the evidence is insufficient, say so."
+        },
+        {
+            "role":"user",
+            "content":format!("{instruction}\n\nLive transcript:\n{excerpt}{scratchpad}")
+        }
+    ]);
+    chat(shared, messages, 320, 0.2)
+        .map(|answer| (scope, answer))
+        .map_err(|error| (502, error))
+}
+
+fn meeting_live_assist(mut request: Request, shared: Arc<Shared>) {
+    let body = match read_json(&mut request) {
+        Ok(value) => value,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let action = clean(body.get("action").and_then(Value::as_str).unwrap_or(""), 40);
+    match generate_live_assist(&shared, &action) {
+        Ok((scope, answer)) => json_response(
+            request,
+            200,
+            json!({"action":action,"scope":scope,"answer":answer}),
+        ),
+        Err((status, error)) => json_response(request, status, json!({"error":error})),
+    }
+}
+
+/// Run a grounded live-assist action from a native surface without routing privileged work through a
+/// WebView. The same core function and evidence window serve both entry points.
+pub fn meeting_live_assist_action(action: &str) -> Result<String, String> {
+    let Some(shared) = SHARED.get().cloned() else {
+        return Err("Meeting service is not ready".into());
+    };
+    generate_live_assist(&shared, action)
+        .map(|(_, answer)| answer)
+        .map_err(|(_, error)| error)
+}
+
 fn settings_get(request: Request, shared: &Shared) {
     let mut settings = shared
         .state
@@ -2238,12 +2746,15 @@ fn settings_get(request: Request, shared: &Shared) {
         .unwrap_or_else(|e| e.into_inner())
         .settings
         .clone();
+    #[cfg(not(feature = "agent-research"))]
+    settings.remove("set.agentCompute");
     if let Some(raw) = settings.get("set.aiModel").cloned() {
         settings.insert(
             "set.aiModel".into(),
             sanitize_model_setting(&raw, false).unwrap_or(raw),
         );
     }
+    #[cfg(feature = "agent-research")]
     if let Some(raw) = settings.get("set.agentCompute").cloned() {
         settings.insert(
             "set.agentCompute".into(),
@@ -2270,6 +2781,11 @@ fn settings_post(mut request: Request, shared: Arc<Shared>) {
     {
         let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
         for (key, value) in patch {
+            #[cfg(not(feature = "agent-research"))]
+            if key == "set.agentCompute" {
+                state.settings.remove(&key);
+                continue;
+            }
             if value.is_null() {
                 state.settings.remove(&key);
                 continue;
@@ -2280,7 +2796,9 @@ fn settings_post(mut request: Request, shared: Arc<Shared>) {
                 .unwrap_or_else(|| value.to_string());
             if key == "set.aiModel" {
                 value = sanitize_model_setting(&value, true).unwrap_or(value);
-            } else if key == "set.agentCompute" {
+            }
+            #[cfg(feature = "agent-research")]
+            if key == "set.agentCompute" {
                 value = sanitize_agent_compute_setting(&value).unwrap_or(value);
             }
             state.settings.insert(key, value);
@@ -2339,6 +2857,7 @@ fn sanitize_model_setting(raw: &str, persist_secret: bool) -> Option<String> {
     Some(value.to_string())
 }
 
+#[cfg(feature = "agent-research")]
 fn sanitize_agent_compute_setting(raw: &str) -> Option<String> {
     let value: Value = serde_json::from_str(raw).ok()?;
     let lane = match value.get("lane").and_then(Value::as_str) {
@@ -2459,11 +2978,17 @@ fn config_post(mut request: Request, shared: Arc<Shared>) {
     let mut broadcasts = Vec::new();
     {
         let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-        for key in ["videoMode", "language", "browserMeet"] {
+        let source_policy_changed =
+            body.get("desktopMeet").is_some() || body.get("browserMeet").is_some();
+        for key in ["videoMode", "language", "desktopMeet", "browserMeet"] {
             if let Some(value) = body.get(key) {
                 state.last_state.insert(key.into(), value.clone());
                 broadcasts.push((key, value.clone()));
             }
+        }
+        if source_policy_changed {
+            state.meeting_detector.reset();
+            state.gate.set_detected(false);
         }
         if let Some(requested) = body.get("translate").and_then(Value::as_bool) {
             let value = Value::Bool(
@@ -2476,6 +3001,10 @@ fn config_post(mut request: Request, shared: Arc<Shared>) {
         }
         if let Some(auto) = body.get("autoDetect").and_then(Value::as_bool) {
             state.gate.auto_detect = auto;
+            if !auto {
+                state.meeting_detector.reset();
+                state.gate.set_detected(false);
+            }
             state
                 .last_state
                 .insert("autoDetect".into(), Value::Bool(auto));
@@ -2512,6 +3041,10 @@ fn config_post(mut request: Request, shared: Arc<Shared>) {
                     meetings: m.meetings,
                     writing: false,
                 };
+                if !state.modules.meetings {
+                    state.meeting_detector.reset();
+                    state.gate.set_detected(false);
+                }
                 state.dictation.enabled = state.modules.dictation;
                 let modules_json = serde_json::to_string(&state.modules).unwrap_or_default();
                 state.settings.insert("set.modules".into(), modules_json);
@@ -4771,6 +5304,7 @@ fn clean(s: &str, max: usize) -> String {
         .take(max)
         .collect()
 }
+#[cfg(feature = "agent-research")]
 fn bounded_agent_text(s: &str, max: usize) -> String {
     s.replace("\r\n", "\n")
         .replace('\r', "\n")
@@ -4856,6 +5390,55 @@ fn transcript_text(m: &Meeting, cap: usize) -> String {
         .chars()
         .take(cap)
         .collect()
+}
+fn live_assist_spec(action: &str) -> Option<(&'static str, &'static str)> {
+    match action {
+        "catch_up" => Some((
+            "In at most four bullets, explain what happened in the last minute and what matters right now.",
+            "last_minute",
+        )),
+        "summary" => Some((
+            "Summarize the meeting so far in at most five concrete bullets. Distinguish discussion from decisions.",
+            "meeting_so_far",
+        )),
+        "actions" => Some((
+            "List only action items that were explicitly stated. Include an owner only when the transcript names one. If none are explicit, say so.",
+            "meeting_so_far",
+        )),
+        "follow_ups" => Some((
+            "Suggest up to three concise follow-up questions the operator could ask next, grounded in unresolved points in the transcript.",
+            "meeting_so_far",
+        )),
+        _ => None,
+    }
+}
+fn tail_chars(value: &str, cap: usize) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    chars[chars.len().saturating_sub(cap)..].iter().collect()
+}
+fn live_assist_excerpt(meeting: &Meeting, action: &str, now: u64) -> String {
+    let cutoff = if action == "catch_up" {
+        now.saturating_sub(60_000)
+    } else {
+        0
+    };
+    let cap = if action == "catch_up" { 6000 } else { 14000 };
+    let mut selected = Vec::new();
+    let mut selected_chars = 0;
+    for line in meeting.lines.iter().rev() {
+        let text = clean(&line.text, 4000);
+        if line.excluded || text.is_empty() || (cutoff != 0 && line.ts < cutoff) {
+            continue;
+        }
+        let value = format!("{}: {text}", clean(&line.speaker, 120));
+        selected_chars += value.chars().count() + 1;
+        selected.push(value);
+        if selected_chars >= cap {
+            break;
+        }
+    }
+    selected.reverse();
+    tail_chars(&selected.join("\n"), cap)
 }
 fn can_generate_notes(m: &Meeting) -> Result<(), String> {
     let lines: Vec<&Line> = m.lines.iter().filter(|l| substantive(l)).collect();
@@ -5112,11 +5695,145 @@ mod tests {
         assert!(g.manual.is_none());
     }
     #[test]
+    fn meeting_phase_requires_both_capture_channels_before_recording() {
+        let mut gate = Gate::new();
+        gate.set_detected(true);
+        assert_eq!(
+            meeting_phase(&gate, false, true, "starting", "starting"),
+            "starting"
+        );
+        assert_eq!(
+            meeting_phase(&gate, false, true, "ready", "starting"),
+            "starting"
+        );
+        assert_eq!(
+            meeting_phase(&gate, false, true, "ready", "ready"),
+            "recording"
+        );
+        assert_eq!(
+            meeting_phase(&gate, false, true, "failed", "ready"),
+            "needs_attention"
+        );
+        gate.set_manual("pause");
+        assert_eq!(
+            meeting_phase(&gate, false, true, "ready", "ready"),
+            "pausing"
+        );
+        assert_eq!(meeting_phase(&gate, false, true, "idle", "idle"), "paused");
+        gate.set_manual("stop");
+        assert_eq!(
+            meeting_phase(&gate, true, true, "idle", "idle"),
+            "finalizing"
+        );
+        assert_eq!(meeting_phase(&gate, false, false, "idle", "idle"), "idle");
+    }
+    #[test]
+    fn capture_channel_contract_rejects_unknown_helper_states() {
+        assert_eq!(
+            capture_channel(&json!({"microphone":"ready"}), "microphone").as_deref(),
+            Some("ready")
+        );
+        assert!(capture_channel(&json!({"microphone":"probably"}), "microphone").is_none());
+        assert!(capture_channel(&json!({}), "microphone").is_none());
+    }
+    #[test]
     fn meeting_notification_requires_a_real_rising_edge() {
         assert!(meeting_start_edge(true, false, Some(true)));
         assert!(!meeting_start_edge(false, false, Some(true)));
         assert!(!meeting_start_edge(true, true, Some(true)));
         assert!(!meeting_start_edge(true, true, Some(false)));
+    }
+    #[test]
+    fn meeting_observation_contract_is_bounded_and_fail_closed() {
+        let observation = parsed_meeting_observation(&json!({
+            "identity":"meet|com.google.Chrome",
+            "app":"meet",
+            "title":"Customer review",
+            "bundle":"com.google.Chrome",
+            "family":"browser"
+        }))
+        .expect("valid observation")
+        .expect("present observation");
+        assert_eq!(observation.identity, "meet|com.google.Chrome");
+        assert_eq!(observation.family, MeetingSourceFamily::Browser);
+        assert!(parsed_meeting_observation(&json!({}))
+            .expect("missing evidence is a valid observation")
+            .is_none());
+        assert!(parsed_meeting_observation(&json!({
+            "identity":"meet|com.google.Chrome",
+            "app":"meet",
+            "bundle":"com.google.Chrome",
+            "family":"unknown"
+        }))
+        .is_err());
+    }
+    #[test]
+    fn live_assist_uses_the_requested_grounded_time_window() {
+        let mut meeting = new_meeting(&Map::new());
+        let line = |speaker: &str, text: &str, ts: u64, excluded: bool| Line {
+            id: String::new(),
+            speaker: speaker.into(),
+            speaker_source: "fixture".into(),
+            speaker_context: String::new(),
+            text: text.into(),
+            ts,
+            is_self: speaker == "You",
+            excluded,
+        };
+        meeting.lines = vec![
+            line(
+                "Aditi",
+                "The old pricing discussion is complete.",
+                10_000,
+                false,
+            ),
+            line(
+                "You",
+                "We should clarify the launch owner now.",
+                80_000,
+                false,
+            ),
+            line(
+                "Aditi",
+                "Private correction should not be used.",
+                90_000,
+                true,
+            ),
+        ];
+        let catch_up = live_assist_excerpt(&meeting, "catch_up", 100_000);
+        assert!(!catch_up.contains("old pricing"));
+        assert!(catch_up.contains("launch owner"));
+        assert!(!catch_up.contains("Private correction"));
+        let summary = live_assist_excerpt(&meeting, "summary", 100_000);
+        assert!(summary.contains("old pricing"));
+        assert_eq!(
+            live_assist_spec("actions").map(|(_, scope)| scope),
+            Some("meeting_so_far")
+        );
+        assert!(live_assist_spec("unsupported").is_none());
+    }
+    #[test]
+    fn native_overlay_receives_only_five_bounded_non_excluded_lines() {
+        let mut meeting = new_meeting(&Map::new());
+        for index in 0..8 {
+            meeting.lines.push(Line {
+                id: format!("line-{index}"),
+                speaker: if index % 2 == 0 { "You" } else { "Speaker" }.into(),
+                speaker_source: "fixture".into(),
+                speaker_context: String::new(),
+                text: format!("Transcript line {index} {}", "x".repeat(220)),
+                ts: index,
+                is_self: index % 2 == 0,
+                excluded: index == 6,
+            });
+        }
+        let projection = meeting_ui_transcript(Some(&meeting));
+        assert_eq!(projection.len(), 5);
+        assert!(projection
+            .iter()
+            .all(|line| line.text.chars().count() <= 180));
+        assert!(!projection.iter().any(|line| line.text.contains("line 6")));
+        assert!(projection.last().unwrap().text.contains("line 7"));
     }
     #[test]
     fn meeting_titles_preserve_calendar_truth_and_mark_unscheduled_calls() {
@@ -5268,9 +5985,12 @@ mod tests {
             rec_dir: root.clone(),
             models_dir: root.clone(),
             transcribe_bin: root.join("none"),
+            #[cfg(feature = "agent-research")]
             agent_context_bin: root.join("none"),
+            #[cfg(feature = "agent-research")]
             agent_action_bin: root.join("none"),
             meeting_notifier: Arc::new(|_| {}),
+            meeting_presenter: Arc::new(|_| {}),
         };
         save_meeting(&cfg, &m).unwrap();
         let path = root.join(format!("{}.json", m.id));
@@ -5309,6 +6029,7 @@ mod tests {
         assert_ne!(first, second);
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_context_fails_closed_when_the_native_helper_is_missing() {
         let missing = std::env::temp_dir().join(format!(
@@ -5320,6 +6041,7 @@ mod tests {
         assert!(error.contains("missing from this build"));
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn bounded_reader_drains_without_exceeding_its_memory_ceiling() {
         let (exact, exact_over) = read_bounded(&b"abcd"[..], 4).unwrap();
@@ -5330,6 +6052,7 @@ mod tests {
         assert!(limited_over);
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_context_process_output_is_parsed() {
         let path = std::env::temp_dir().join(format!(
@@ -5349,6 +6072,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_preview_is_reduced_to_the_confirmation_contract() {
         let preview = validate_agent_preview(json!({
@@ -5371,6 +6095,7 @@ mod tests {
         assert!(preview.get("unexpected").is_none());
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_preview_rejects_mutating_model_actions() {
         assert!(validate_agent_preview(json!({
@@ -5381,6 +6106,7 @@ mod tests {
         .is_err());
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_draft_preserves_structure_while_remaining_bounded() {
         let preview = validate_agent_preview(json!({
@@ -5396,6 +6122,7 @@ mod tests {
         assert_eq!(bounded_agent_text("abcdef", 3), "abc");
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_target_requires_an_editable_fingerprinted_control() {
         let valid = json!({
@@ -5424,6 +6151,7 @@ mod tests {
         assert!(expected_agent_target(&read_only).is_err());
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_action_preview_blocks_every_non_textedit_target() {
         let target = json!({
@@ -5459,6 +6187,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_action_request_uses_stdin_and_parses_verified_response() {
         let path = std::env::temp_dir().join(format!(
@@ -5536,6 +6265,7 @@ mod tests {
         assert_eq!(loads.load(Ordering::SeqCst), 1);
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_compute_settings_are_allowlisted_and_secret_free() {
         let raw = json!({

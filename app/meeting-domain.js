@@ -80,10 +80,9 @@ function canGenerateNotes(meeting) {
   return { ok: true, reason: "" };
 }
 
-// Only the audio subsystem is authoritative for automatic call start/end. Accessibility
-// can report useful in-call metadata (participants, mute/share state), but an idle Zoom
-// process may still expose meeting-shaped windows and controls. Keeping this policy pure
-// makes the false-positive boundary directly testable.
+// Backward-compatible ingest events are authoritative only when they came from the audio subsystem.
+// Current adapters use /api/meeting/observation and the shared detector instead. Accessibility enrichment
+// still cannot start a call by itself; an idle Zoom process may expose meeting-shaped controls.
 function isAuthoritativeMeetingDetection(event) {
   return event?.type === "state"
     && event?.source === "coreaudio"

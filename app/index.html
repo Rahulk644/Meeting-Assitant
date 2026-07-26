@@ -180,6 +180,8 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .badge-line .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
   .tgl-wrap{display:flex;align-items:center;gap:9px;flex-shrink:0;padding-top:8px}
   .tgl-wrap span{font-size:12.5px;font-weight:560;color:var(--ink-2)}
+  .ai-config-line{display:flex;gap:8px;align-items:center}
+  .ai-config-line .inp,.ai-config-line .selp{flex:1;min-width:0!important}
 
   /* agents foundation */
   .center{flex:1;overflow:auto;min-height:0;display:flex;align-items:center;justify-content:center}
@@ -190,6 +192,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .soonpill{display:inline-block;margin-top:12px;padding:4px 11px;border-radius:999px;background:var(--surface-2);
         color:var(--ink-2);font-size:11.5px;font-weight:600;letter-spacing:.03em}
   .agbox p{font-size:14px;color:var(--ink-2);margin-top:16px;line-height:1.6}
+  /* agent-research:start */
   .agent-head{display:flex;align-items:flex-start;justify-content:space-between;gap:28px}
   .agent-kicker{display:inline-flex;align-items:center;gap:7px;color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:5px 10px;font-size:10.5px;font-weight:720;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px}
   .agent-kicker i{width:6px;height:6px;border-radius:50%;background:currentColor}
@@ -249,6 +252,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .agent-preview-box .why{font-size:11.5px;line-height:1.45;color:var(--ink-2);margin-top:8px}
   @media(max-width:760px){.agent-status{grid-template-columns:1fr}.agent-grid{grid-template-columns:1fr}}
   @media(max-width:760px){.agent-config-grid{grid-template-columns:1fr}.agent-card.wide{grid-column:auto}}
+  /* agent-research:end */
 
   /* feedback grid */
   .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:26px}
@@ -398,13 +402,19 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   @keyframes maRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   @keyframes maBlink{0%,49%{opacity:1}50%,100%{opacity:0}}
   @keyframes maPulse{0%,100%{opacity:1}50%{opacity:.35}}
-  .cpanel{position:fixed;z-index:70;width:294px;background:var(--surface);border:1px solid var(--line);
+  .cpanel{position:fixed;z-index:70;width:330px;background:var(--surface);border:1px solid var(--line);
     border-radius:14px;box-shadow:0 18px 48px var(--shadow);overflow:hidden;animation:maRise .22s ease;color:var(--ink)}
   .cp-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 0;cursor:grab}
   .cp-head:active{cursor:grabbing}
   .cp-rec{display:flex;align-items:center;gap:7px}
   .cp-rec .rd{width:9px;height:9px;border-radius:50%;background:var(--live);animation:maPulse 1.6s ease-in-out infinite}
   .cp-rec b{font-size:12px;font-weight:650;color:var(--live)}
+  .cpanel[data-phase="starting"] .cp-rec .rd{background:#e7a42b}
+  .cpanel[data-phase="starting"] .cp-rec b{color:#b67508}
+  .cpanel[data-phase="needs_attention"] .cp-rec .rd{background:#f07b24}
+  .cpanel[data-phase="needs_attention"] .cp-rec b{color:#d45f0c}
+  .cpanel[data-phase="pausing"] .cp-rec .rd,.cpanel[data-phase="paused"] .cp-rec .rd,.cpanel[data-phase="finalizing"] .cp-rec .rd{background:var(--ink-3);animation:none}
+  .cpanel[data-phase="pausing"] .cp-rec b,.cpanel[data-phase="paused"] .cp-rec b,.cpanel[data-phase="finalizing"] .cp-rec b{color:var(--ink-2)}
   .cp-htr{display:flex;align-items:center;gap:8px}
   .cp-time{font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
   .cp-min{width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--ink-3)}
@@ -415,6 +425,10 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   .cp-title{font-size:13.5px;font-weight:650;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cp-sub{font-size:11.5px;color:var(--ink-3);margin-top:2px;display:flex;align-items:center;gap:5px}
   .cp-sub svg{flex:0 0 auto}
+  .cp-ready{font-size:11px;color:var(--ink-2);margin-top:6px;line-height:1.35}
+  .cp-fix{margin-top:7px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2);
+    color:var(--ink);font:inherit;font-size:11px;font-weight:600;cursor:pointer}
+  .cp-fix:hover{border-color:var(--accent)}
   .cp-tabs{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--line)}
   .cp-tab{display:flex;align-items:center;gap:5px;padding:6px 10px 7px;font-size:12px;font-weight:600;cursor:pointer;
     border-bottom:2px solid transparent;margin-bottom:-1px;color:var(--ink-3)}
@@ -432,6 +446,16 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
     background:var(--surface-2);padding:8px 10px;font:inherit;font-size:12.5px;line-height:1.5;color:var(--ink);outline:none}
   .cp-notes textarea:focus{border-color:var(--accent);background:var(--surface)}
   .cp-hint{font-size:10.5px;color:var(--ink-3)}
+  .cp-assist{padding:11px 14px 12px;display:flex;flex-direction:column;gap:9px}
+  .cp-assist-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .cp-assist-btn{min-height:48px;padding:8px 9px;text-align:left;border:1px solid var(--line);border-radius:9px;
+    background:var(--surface-2);color:var(--ink);font:inherit;font-size:11.5px;font-weight:600;line-height:1.25;cursor:pointer}
+  .cp-assist-btn:hover{border-color:var(--accent);background:var(--accent-soft)}
+  .cp-assist-btn:disabled{cursor:wait;opacity:.55}
+  .cp-assist-result{min-height:46px;max-height:128px;overflow:auto;border-left:2px solid var(--accent);
+    padding:7px 9px;background:var(--surface-2);border-radius:0 8px 8px 0;color:var(--ink-2);font-size:11.5px;line-height:1.45;white-space:pre-wrap}
+  .cp-assist-result.wait{color:var(--ink-3)}
+  .cp-assist-result.error{border-left-color:var(--live);color:var(--live)}
   .cp-foot{display:flex;align-items:center;gap:8px;padding:0 14px 13px}
   .cp-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 0;border-radius:8px;
     font-size:12px;font-weight:600;cursor:pointer;border:none;font-family:inherit}
@@ -609,7 +633,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
   <!-- ===== in-call overlay: Call Panel (full) + minimized chip. Floats while recording. ===== -->
   <div class="cpanel" id="callPanel" hidden role="region" aria-label="Recording in progress">
     <div class="cp-head" id="cpHead">
-      <div class="cp-rec"><span class="rd"></span><b>Recording</b></div>
+      <div class="cp-rec"><span class="rd"></span><b id="cpStatus">Starting capture…</b></div>
       <div class="cp-htr">
         <span class="cp-time" id="cpTime">0:00</span>
         <button class="cp-min" id="cpMin" title="Minimize" aria-label="Minimize recording panel">
@@ -620,15 +644,27 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
     <div class="cp-meta">
       <div class="cp-title" id="cpTitle">Waiting for meeting…</div>
       <div class="cp-sub" id="cpSub">Not in a call</div>
+      <div class="cp-ready" id="cpReady" aria-live="polite">Checking microphone + meeting audio</div>
+      <button class="cp-fix" id="cpFix" hidden>Fix audio permissions</button>
     </div>
     <div class="cp-tabs" role="tablist" aria-label="Recording panel">
       <button class="cp-tab on" id="cpTabT" role="tab" aria-selected="true" aria-controls="cpTrans">Transcript</button>
       <button class="cp-tab" id="cpTabN" role="tab" aria-selected="false" aria-controls="cpNotes"><span>Scratchpad</span><span class="nd" id="cpNoteDot" hidden></span></button>
+      <button class="cp-tab" id="cpTabA" role="tab" aria-selected="false" aria-controls="cpAssist">Assist</button>
     </div>
     <div class="cp-trans" id="cpTrans" role="tabpanel" aria-labelledby="cpTabT"><div class="cp-wait">Named lines stream in as people talk.</div></div>
     <div class="cp-notes" id="cpNotes" role="tabpanel" aria-labelledby="cpTabN" hidden>
       <textarea id="cpNotesArea" placeholder="Jot a note…"></textarea>
       <div class="cp-hint" id="cpNoteHint">Notes attach to the summary</div>
+    </div>
+    <div class="cp-assist" id="cpAssist" role="tabpanel" aria-labelledby="cpTabA" hidden>
+      <div class="cp-assist-grid">
+        <button class="cp-assist-btn" data-live-assist="catch_up">Catch up · last minute</button>
+        <button class="cp-assist-btn" data-live-assist="summary">Summarize so far</button>
+        <button class="cp-assist-btn" data-live-assist="actions">Explicit action items</button>
+        <button class="cp-assist-btn" data-live-assist="follow_ups">Useful follow-ups</button>
+      </div>
+      <div class="cp-assist-result wait" id="cpAssistResult" aria-live="polite">Choose an action after the transcript begins.</div>
     </div>
     <div class="cp-foot">
       <button class="cp-btn cp-pause" id="cpPause"><span id="cpPauseIcon"></span><span id="cpPauseLabel">Pause</span></button>
@@ -659,7 +695,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
       <div class="mt-pane on" id="mt-library">
         <div class="scroll"><div class="hero wide">
           <div class="h1">Meetings. <span class="badge">BETA</span></div>
-          <div class="lead" style="max-width:540px">No meeting bot. Audio is captured and transcribed on your Mac, with best-effort speaker names.</div>
+          <div class="lead" style="max-width:570px">Keep My Assistant running. When a live call starts, a macOS notification and the animated menu-bar waveform confirm that audio is being recorded and transcribed locally.</div>
           <div class="rowbtns">
             <button class="obtn solid" id="goLiveBtn"><span class="rdot"></span>Record</button>
             <button class="obtn" id="uploadAudio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>Upload audio</button>
@@ -749,6 +785,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
       </div></div>
     </section>
 
+    <!-- agent-research:start -->
     <!-- ===== AGENTS ===== -->
     <section id="v-agents" class="view" hidden aria-hidden="true">
       <div class="scroll"><div class="hero wide">
@@ -805,6 +842,7 @@ r.style.setProperty('--accent',a);r.style.setProperty('--accent-soft','color-mix
         </div>
       </div></div>
     </section>
+    <!-- agent-research:end -->
 
     <!-- ===== FEEDBACK ===== -->
     <section id="v-feedback" class="view">
@@ -1011,6 +1049,7 @@ const AI_PROVIDERS={
   cerebras:{label:'Cerebras', base:'https://api.cerebras.ai/v1',     model:'llama-3.3-70b',           needsKey:true, keyUrl:'cloud.cerebras.ai'},
   custom:  {label:'Custom · OpenAI-compatible',        base:'',                          model:'',                      needsKey:true},
 };
+let aiProviderModels={};
 function aiCfg(){return store.get('aiModel',{provider:'local',model:'',base:'',keySaved:false})}
 function setAiCfg(patch){store.set('aiModel',Object.assign(aiCfg(),patch))}
 function resolveLLM(){
@@ -1157,10 +1196,13 @@ const DEFAULTS={
   dict_enabled:true, dict_lang:'auto', punctuation:'Automatic', clipboard:'Never save', dict_sound:true, volume:70, push_to_talk:false, sc_start:'mod:command_right', sc_cancel:'Esc',
   smart_polish:false, cleanup_timing:'After I finish', polish_model:'gemma-3-270m-it-qat-q4',
   wa_selection:true, wa_noneditable:true, wa_translate_lang:'English', wa_open:'⌃+Space', wa_close:'Esc',
-  mtg_source:'Local', live_indicator:true, auto_detect:true, browser_meet:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, mtg_shortcut:'Not set',
+  mtg_source:'Local', live_indicator:true, auto_detect:true, desktop_meet:true, browser_meet:true, deeper:false, default_view:'Calendar', folders:false, audio_storage:10, mtg_shortcut:'Not set',
   unload_model:true, whisper_idle_minutes:10, whats_new:true,
-  copilot:false, agents_exp:false,
+  copilot:false,
+  /* agent-research:start */
+  agents_exp:false,
   agent_shortcut:'Not set',
+  /* agent-research:end */
 };
 const SCHEMA={
   general:[
@@ -1224,10 +1266,13 @@ const SCHEMA={
   ],
   meetings:[
     {label:'SOURCE', rows:[{id:'mtg_source',title:'Meeting source',desc:'Where meetings and calendar events come from.',type:'segmented',options:['Local','Google Calendar','Fathom']}]},
-    {label:'FEATURES', rows:[
-      {id:'live_indicator',title:'Display live recording indicator',desc:'Show a floating panel on the right while recording.',type:'toggle'},
+    {label:'CAPTURE', rows:[
+      {id:'live_indicator',title:'Display live recording indicator',desc:'Show the Transcript, Scratchpad, and Assist panel inside My Assistant while recording.',type:'toggle'},
       {id:'auto_detect',title:'Detect meeting start & end automatically',desc:'Use active per-app audio to start and stop recording only while a call is happening.',type:'toggle'},
-      {id:'browser_meet',title:'Browser and communication-app detection',desc:'Detect Google Meet, browser-based calls, Slack huddles, Discord, and other supported calls using active audio plus meeting-window evidence.',type:'toggle'},
+      {id:'desktop_meet',title:'Desktop meeting apps',desc:'Automatically capture Zoom, Microsoft Teams, Webex, FaceTime, and other dedicated meeting apps.',type:'toggle'},
+      {id:'browser_meet',title:'Browsers and huddles',desc:'Automatically capture Google Meet, browser calls, Slack huddles, and Discord only when active audio and meeting-window evidence agree.',type:'toggle'},
+    ]},
+    {label:'NOTES', rows:[
       {id:'deeper',title:'Deeper reasoning for meeting notes',desc:'Higher-quality notes; generation is a little slower.',type:'toggle'},
       {id:'default_view',title:'Default view',desc:'Which view opens when you go to Meetings.',type:'segmented',options:['List','Calendar']},
       {id:'folders',title:'Organise into custom folders',desc:'',type:'toggle'},
@@ -1256,9 +1301,13 @@ const SCHEMA={
   ],
   experimental:[
     {label:'EARLY ACCESS', note:'These features are in progress and may change.', rows:[
+      /* agent-research:start */
       {id:'agent_shortcut',title:'Open Agents',desc:'Bring My Assistant forward and focus the Agent request field.',type:'shortcut'},
+      /* agent-research:end */
       {id:'copilot',title:'Real-time Copilot',desc:'In-call coaching in an always-on, screen-share-safe overlay.',type:'toggle'},
+      /* agent-research:start */
       {id:'agents_exp',title:'Agents',desc:'Background automations that run your repetitive work.',type:'toggle'},
+      /* agent-research:end */
     ]},
   ],
 };
@@ -1378,6 +1427,7 @@ function settingRow(row){
     let getV,setV,gate=false;
     if(id==='translate_en'){ getV=()=>store.get('translate',false); setV=v=>{store.set('translate',v);setTranslate(v)}; }
     else if(id==='auto_detect'){ getV=()=>store.get('auto_detect',true); setV=v=>{store.set('auto_detect',v); cfg({autoDetect:v})}; }  // off → only manual start records
+    else if(id==='desktop_meet'){ getV=()=>store.get('desktop_meet',true); setV=v=>{store.set('desktop_meet',v); cfg({desktopMeet:v})}; }
     else if(id==='browser_meet'){ getV=()=>store.get('browser_meet',true); setV=v=>{store.set('browser_meet',v); cfg({browserMeet:v})}; }
     else if(id==='unload_model'){ getV=()=>store.get('unload_model',true); setV=v=>{store.set('unload_model',v); cfg({unloadIdle:v})}; }  // off → keep the model hot
     else if(id==='live_indicator'){ getV=()=>store.get('live_indicator',true); setV=v=>{store.set('live_indicator',v); callRender()}; }  // reflect on the overlay immediately
@@ -1475,10 +1525,10 @@ function renderAIModel(body,row){
   c.append(sel); body.append(r);
   if(!p.needsKey) return;
   if(c0.provider==='custom') body.append(subRow('Base URL','OpenAI-compatible endpoint',aiInput('text',c0.base,'https://…/v1',v=>setAiCfg({base:v}))));
-  const keyLine=el('div','agent-config-line'),key=aiInput('password','',c0.keySaved?'Saved securely — type to replace':'Paste API key',()=>{}),save=el('button','abtn',c0.keySaved?'Replace':'Save');
+  const keyLine=el('div','ai-config-line'),key=aiInput('password','',c0.keySaved?'Saved securely — type to replace':'Paste API key',()=>{}),save=el('button','abtn',c0.keySaved?'Replace':'Save');
   save.type='button'; save.onclick=async()=>{const value=key.value.trim();if(!value)return toast('Paste the API key first.');save.disabled=true;try{const response=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:c0.provider,key:value})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not save key');key.value='';setAiCfg({keySaved:true});save.textContent='Saved';toast(inTauri()?'API key saved in macOS Keychain.':'API key kept in memory for this developer session.')}catch(error){toast(String(error.message||error))}finally{save.disabled=false}}; keyLine.append(key,save);
   body.append(subRow('API key',inTauri()?(p.keyUrl?`Stored in macOS Keychain · get one at ${p.keyUrl}`:'Stored in macOS Keychain'):'Kept in memory for this developer session',keyLine));
-  const models=agentProviderModels[c0.provider]||[],modelLine=el('div','agent-config-line'),model=aiInput('text',c0.model,p.model||'Choose or enter a model',v=>setAiCfg({model:v})),list=el('datalist');list.id='meeting-models-'+c0.provider;models.forEach(id=>list.append(new Option(id)));model.setAttribute('list',list.id);const load=el('button','abtn',models.length?'Refresh':'Load models');load.type='button';load.onclick=async()=>{load.disabled=true;load.textContent='Loading…';try{const response=await fetch('/api/ai/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:c0.provider,base:c0.base||''})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not load models');agentProviderModels[c0.provider]=result.models||[];renderSettings()}catch(error){toast(String(error.message||error));load.disabled=false;load.textContent='Load models'}};modelLine.append(model,list,load);
+  const models=aiProviderModels[c0.provider]||[],modelLine=el('div','ai-config-line'),model=aiInput('text',c0.model,p.model||'Choose or enter a model',v=>setAiCfg({model:v})),list=el('datalist');list.id='meeting-models-'+c0.provider;models.forEach(id=>list.append(new Option(id)));model.setAttribute('list',list.id);const load=el('button','abtn',models.length?'Refresh':'Load models');load.type='button';load.onclick=async()=>{load.disabled=true;load.textContent='Loading…';try{const response=await fetch('/api/ai/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:c0.provider,base:c0.base||''})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not load models');aiProviderModels[c0.provider]=result.models||[];renderSettings()}catch(error){toast(String(error.message||error));load.disabled=false;load.textContent='Load models'}};modelLine.append(model,list,load);
   body.append(subRow('Model',(models.length?`${models.length} models reported by the provider`:(p.model?`Default: ${p.model}`:'Load the provider catalog or enter an exact model ID')),modelLine));
 }
 function subRow(title,desc,ctl){ const {r,c}=srowShell({title,desc}); c.append(ctl); return r; }
@@ -1563,7 +1613,9 @@ function openModes(){ openModal('Assistant modes', box=>{
 /* ---------- feature modules + permission gating ---------- */
 const IC_LISTEN='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M7 14.5h10"/></svg>';
 const IC_SYSTEM_AUDIO='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg>';
+/* agent-research:start */
 const IC_AGENTS='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l1.5 4.6 4.6 1.5-4.6 1.5L12 15.6l-1.5-4.6L5.9 9.5l4.6-1.5L12 3.4Z"/></svg>';
+/* agent-research:end */
 const PERM_ICON={'Microphone':IC_MIC,'System Audio Recording':IC_SYSTEM_AUDIO,'Global Shortcut':IC_LISTEN,'Screen Recording':IC_SCREEN,'Accessibility':IC_AXS};
 function modules(){ const m=store.get('modules',null); const out=(m&&typeof m==='object')?{dictation:m.dictation!==false,meetings:m.meetings!==false,writing:!!m.writing}:{dictation:true,meetings:true,writing:false}; out.writing=hasCap('writingAssistant')&&out.writing; return out; } // Meetings + Dictation default on; release capabilities remain server-owned
 function moduleOn(k){ if(k==='writing'&&!hasCap('writingAssistant'))return false; return !!modules()[k]; }
@@ -1683,7 +1735,9 @@ function recordShortcut(id,title){
     saveB.onclick=()=>{ if(!valid()) return; done(); store.set(id, modTrigger ? ('mod:'+modTrigger) : combo().join('+')); closeModal(); renderSettings();
       if(id==='sc_start'||id==='sc_cancel'){ syncDictation(false); paintDictHints(); toast('Dictation shortcut updated.'); }
       else if(id==='wa_open'||id==='wa_close') toast('Saved. Writing Assistant shortcuts activate when that module ships.');
+      /* agent-research:start */
       else if(id==='agent_shortcut'){ syncAgentShortcut(); toast('Agent shortcut updated.'); }
+      /* agent-research:end */
       else if(id==='mtg_shortcut') toast('Saved. A global meeting shortcut is coming soon.');
       else toast('Shortcut saved.'); };
     _modalCleanup=()=>{ delete $('#mScrim').dataset.recording; done(); };
@@ -1695,7 +1749,9 @@ function recordShortcut(id,title){
 function aiInput(type,val,ph,onset){ const i=document.createElement('input'); i.type=type; i.className='inp'; i.style.minWidth='260px';
   i.placeholder=ph; i.value=val||''; i.onchange=()=>onset(i.value.trim()); return i; }
 
+/* agent-research:start */
 function syncAgentShortcut(){ if(!inTauri()||!hasCap('agentGlobalShortcut'))return; const raw=store.get('agent_shortcut',DEFAULTS.agent_shortcut); const spec=(raw&&raw!=='Not set')?dictHotkey(raw):null; try{ const result=window.__TAURI__.core.invoke('set_agent_shortcut',{spec}); if(result?.catch)result.catch(error=>toast(String(error))); }catch(error){toast(String(error))} }
+/* agent-research:end */
 
 /* ================= LIVE TRANSCRIPT ================= */
 function initials(n){return n.replace(/\(.*/,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()}
@@ -1716,15 +1772,16 @@ function renderPeople(list,active){
 function onState(s){
   callOnState(s);
   if(s.title)titleEl.textContent=s.title;
-  if(s.inMeeting!==undefined)subEl.textContent=s.inMeeting?(s.app?('on '+s.app):'in a call'):'Not in a call';
+  const phase=s.meetingPhase || (s.paused?'paused':(s.inMeeting?'starting':'idle'));
+  const active=phase!=='idle';
+  if(s.inMeeting!==undefined||s.meetingPhase) subEl.textContent=phase==='finalizing'?'Finalizing local notes…':(active?(s.app?('on '+s.app):'in a call'):'Not in a call');
   if(s.participants&&s.participants.length)renderPeople(s.participants,s.activeSpeaker);
   if(s.activeSpeaker){speakingEl.hidden=false;activeEl.textContent=s.activeSpeaker;renderPeople(null,s.activeSpeaker)}
-  if(s.inMeeting===true){ setRec(true); $('#goLive').hidden=false; if(!liveShown && mtCurrent==='library'){ liveShown=true; mtShow('live'); } }
-  else if(s.inMeeting===false){ setRec(false); liveShown=false; if(mtCurrent==='live'){ mtShow('library'); } else if(mtCurrent==='library') loadLibrary(); } // mtShow('library') already loadLibrary()s — don't double-fetch
+  if(active){ setRec(true); $('#goLive').hidden=false; if(phase!=='finalizing'&&!liveShown && mtCurrent==='library'){ liveShown=true; mtShow('live'); } }
+  else if(s.inMeeting===false||phase==='idle'){ const wasActive=recordingAnnounced; setRec(false); if(wasActive)toast('Meeting saved locally.'); liveShown=false; if(mtCurrent==='live'){ mtShow('library'); } else if(mtCurrent==='library') loadLibrary(); } // mtShow('library') already loadLibrary()s — don't double-fetch
 }
-function setRec(on){ const d=$('#liveDot'); if(d)d.hidden=!on;
-  if(on!==recordingAnnounced){ recordingAnnounced=on; announce(on?'Recording started.':'Recording stopped.'); }
-  try{ window.__TAURI__?.core?.invoke('set_tray_recording',{on}); }catch{}
+function setRec(on){ const d=$('#liveDot'); if(d)d.hidden=!(on&&callPhase==='recording');
+  if(on!==recordingAnnounced){ recordingAnnounced=on; announce(on?'Meeting detected. Checking audio capture.':'Meeting saved.'); }
   callSetRecording(on); }
 function lineRow(c,opts={}){
   const label=c.self?(c.speaker==='You'?'You':c.speaker+' (Me)'):c.speaker;
@@ -2024,16 +2081,17 @@ es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
    setting). Mirrors the live transcript, keeps a per-call scratchpad, and can minimize to a
    draggable chip. Recording itself is auto-detected; Pause, Resume, and Stop call the shared server gate,
    which releases or re-engages capture and keeps the panel synchronized. */
-let callRec=false, callMin=false, callPaused=false;
+let callRec=false, callMin=false, callPaused=false, callPhase='idle';
 let callStart=0, callSec=0, callTab='transcript', callTick=null;
 let callLines=[]; const CALL_MAX=5;
-let callInfo={title:'',app:'',count:0}, callNotesVal='';
-let callXY=null, callDragging=false, _callDragMoved=false;
+let callInfo={title:'',app:'',count:0}, callCapture={microphone:'idle',meetingAudio:'idle',detail:''}, callNotesVal='';
+let callAssistAnswer='', callAssistLoading=false, callAssistError=false;
+let callXY=null, callDragging=false, _callDragMoved=false, callRecoveryPane='';
 
 function callFmt(s){ s=Math.max(0,s|0); const m=Math.floor(s/60), ss=String(s%60).padStart(2,'0'), h=Math.floor(m/60);
   return h ? h+':'+String(m%60).padStart(2,'0')+':'+ss : m+':'+ss; }
 function callPaintTime(){ const t=callFmt(callSec); const a=$('#cpTime'), b=$('#ccTime'); if(a)a.textContent=t; if(b)b.textContent=t; }
-function callStartTick(){ if(callTick)return; callTick=setInterval(()=>{ if(!callPaused){ callSec=Math.floor((Date.now()-callStart)/1000); callPaintTime(); } },1000); callPaintTime(); }
+function callStartTick(){ if(callTick)return; callTick=setInterval(()=>{ if(!callPaused&&callPhase!=='finalizing'){ callSec=Math.floor((Date.now()-callStart)/1000); callPaintTime(); } },1000); callPaintTime(); }
 function callStopTick(){ if(callTick){ clearInterval(callTick); callTick=null; } }
 
 function callPlatformIcon(app){ const a=(app||'').toLowerCase();
@@ -2044,7 +2102,7 @@ function callPlatformIcon(app){ const a=(app||'').toLowerCase();
 function callPaintLines(){ const c=$('#cpTrans'); if(!c)return; c.innerHTML='';
   if(!callLines.length){ c.innerHTML='<div class="cp-wait">Named lines stream in as people talk.</div>'; return; }
   callLines.forEach((ln,i)=>{ const who=ln.self?'You':ln.speaker;
-    const caret=(i===callLines.length-1 && callRec && !callPaused) ? '<span class="cp-caret"></span>' : '';
+    const caret=(i===callLines.length-1 && callPhase==='recording') ? '<span class="cp-caret"></span>' : '';
     const d=document.createElement('div'); d.className='cp-ln';
     d.innerHTML='<span class="who">'+esc(who)+'</span> <span class="tx">'+esc(ln.text)+'</span>'+caret; c.append(d); }); }
 
@@ -2059,28 +2117,65 @@ function callRender(){
   panel.hidden = !(want && !callMin);
   chip.hidden  = !(want && callMin);
   if(!want) return;
+  panel.dataset.phase=callPhase;
+  const statusText={
+    starting:'Starting capture…',
+    recording:'Recording locally',
+    needs_attention:'Capture needs attention',
+    pausing:'Pausing recording…',
+    paused:'Recording paused',
+    finalizing:'Finalizing meeting…'
+  }[callPhase]||'Meeting capture';
+  $('#cpStatus').textContent=statusText;
+  $('#cpReady').textContent=callCapture.detail||({
+    starting:'Checking microphone + meeting audio',
+    recording:'Microphone + meeting audio confirmed',
+    needs_attention:'Open permissions to restore both audio channels.',
+    pausing:'Releasing microphone and meeting audio',
+    paused:'Microphone and meeting audio released',
+    finalizing:'Saving transcript and preparing notes'
+  }[callPhase]||'');
+  const fix=$('#cpFix'), micFailed=callCapture.microphone==='failed', audioFailed=callCapture.meetingAudio==='failed';
+  fix.hidden=callPhase!=='needs_attention';
+  callRecoveryPane=micFailed&&!audioFailed?'Privacy_Microphone':(!micFailed&&audioFailed?'Privacy_AudioCapture':'');
+  fix.textContent=callRecoveryPane==='Privacy_Microphone'?'Allow Microphone':(callRecoveryPane==='Privacy_AudioCapture'?'Allow System Audio Recording':'Review audio permissions');
   $('#cpTitle').textContent = callInfo.title || 'Impromptu meeting';
   const sub=$('#cpSub'); sub.innerHTML = callPlatformIcon(callInfo.app);
   const label=(callInfo.app||'In a call')+(callInfo.count?(' · '+callInfo.count+' participant'+(callInfo.count===1?'':'s')):'');
   const sp=document.createElement('span'); sp.textContent=label; sub.append(sp);
   $('#cpTabT').classList.toggle('on',callTab==='transcript');
   $('#cpTabN').classList.toggle('on',callTab==='notes');
+  $('#cpTabA').classList.toggle('on',callTab==='assist');
   $('#cpTabT').setAttribute('aria-selected',String(callTab==='transcript'));
   $('#cpTabN').setAttribute('aria-selected',String(callTab==='notes'));
-  $('#cpTabT').tabIndex=callTab==='transcript'?0:-1; $('#cpTabN').tabIndex=callTab==='notes'?0:-1;
+  $('#cpTabA').setAttribute('aria-selected',String(callTab==='assist'));
+  $('#cpTabT').tabIndex=callTab==='transcript'?0:-1; $('#cpTabN').tabIndex=callTab==='notes'?0:-1; $('#cpTabA').tabIndex=callTab==='assist'?0:-1;
   $('#cpTrans').hidden = callTab!=='transcript';
   $('#cpNotes').hidden = callTab!=='notes';
+  $('#cpAssist').hidden = callTab!=='assist';
   callPaintLines();
   const words=callNotesVal.trim()?callNotesVal.trim().split(/\s+/).length:0;
   $('#cpNoteDot').hidden = words===0;
   $('#cpNoteHint').textContent = words>0 ? (words+(words===1?' word':' words')+' · saved with this meeting') : 'Notes attach to the summary';
   const ta=$('#cpNotesArea'); if(ta.value!==callNotesVal) ta.value=callNotesVal;
+  const assistResult=$('#cpAssistResult');
+  assistResult.textContent=callAssistLoading?'Thinking from the live transcript…':(callAssistAnswer||'Choose an action after the transcript begins.');
+  assistResult.classList.toggle('wait',callAssistLoading||!callAssistAnswer);
+  assistResult.classList.toggle('error',callAssistError);
+  document.querySelectorAll('[data-live-assist]').forEach(button=>button.disabled=callAssistLoading);
+  const canPause=callPhase==='recording'||callPhase==='paused';
+  $('#cpPause').hidden=!canPause;
+  $('#cpStop').hidden=callPhase==='finalizing';
+  $('.cp-foot').hidden=callPhase==='finalizing';
   $('#cpPauseLabel').textContent = callPaused?'Resume':'Pause';
   $('#cpPause').setAttribute('aria-label',callPaused?'Resume recording':'Pause recording');
   $('#cpPauseIcon').innerHTML = callPaused
     ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5l13 7.5-13 7.5V4.5Z"/></svg>'
     : '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5.5" y="4.5" width="4.5" height="15" rx="1.4"/><rect x="14" y="4.5" width="4.5" height="15" rx="1.4"/></svg>';
-  $('#ccPaused').hidden = !callPaused;
+  $('#ccPaused').hidden = callPhase==='recording';
+  $('#ccPaused').textContent={
+    starting:'Starting',needs_attention:'Needs attention',pausing:'Pausing',paused:'Paused',finalizing:'Finalizing'
+  }[callPhase]||'';
   callPaintTime(); callPlace(panel); callPlace(chip);
 }
 
@@ -2089,10 +2184,28 @@ function callOnState(s){
   if(s.app!==undefined) callInfo.app=s.app||'';
   if(s.participants && s.participants.length) callInfo.count=s.participants.length;
   if(s.startedAt && !callStart) callStart=s.startedAt;                 // true start; kept for the elapsed timer
+  if(s.captureMicrophone!==undefined)callCapture.microphone=s.captureMicrophone||'idle';
+  if(s.captureMeetingAudio!==undefined)callCapture.meetingAudio=s.captureMeetingAudio||'idle';
+  if(s.captureDetail!==undefined)callCapture.detail=s.captureDetail||'';
+  if(s.meetingPhase){
+    const previous=callPhase; callPhase=s.meetingPhase;
+    if(previous!==callPhase){
+      const message={
+        starting:'Meeting detected. Checking microphone and meeting audio.',
+        recording:'Recording locally. Both audio channels are confirmed.',
+        needs_attention:'Meeting capture needs attention.',
+        pausing:'Pausing recording and releasing both audio sources.',
+        paused:'Recording paused. Both audio sources are released.',
+        finalizing:'Call ended. Finalizing the local transcript.',
+        idle:'Meeting saved locally.'
+      }[callPhase];
+      if(message)announce(message);
+      if(callPhase==='finalizing')toast('Call ended. Finalizing the local transcript…');
+    }
+  }
   if(s.paused!==undefined){                                            // pause is real now — server-driven
     const was=callPaused; callPaused=!!s.paused;
-    if(was && !callPaused) callStart=Date.now()-callSec*1000;          // resumed — continue from the frozen value
-    if(was!==callPaused) announce(callPaused?'Recording paused.':'Recording resumed.');
+    if(was && !callPaused && callPhase==='starting') callStart=Date.now()-callSec*1000; // resume continues the frozen timer
   }
   if(callRec) callRender();
 }
@@ -2100,12 +2213,27 @@ function callControl(action){ fetch('/api/meeting/control',{method:'POST',header
 let _notesT=null;
 function callPostNotes(){ return fetch('/api/meeting/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:callNotesVal})}).catch(()=>{}); } // attach the scratchpad to the live meeting
 function callNotesChanged(){ clearTimeout(_notesT); _notesT=setTimeout(callPostNotes,600); }
+async function callLiveAssist(action){
+  if(callAssistLoading)return;
+  callAssistLoading=true; callAssistError=false; callAssistAnswer=''; callRender();
+  try{
+    const response=await fetch('/api/meeting/live-assist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.error||'Live assist is unavailable');
+    callAssistAnswer=String(result.answer||'No grounded answer was returned.');
+    announce('Live assist answer ready.');
+  }catch(error){
+    callAssistError=true; callAssistAnswer=String(error.message||error);
+  }finally{
+    callAssistLoading=false; callRender();
+  }
+}
 function callPushLine(c){ callLines.push(c); if(callLines.length>CALL_MAX) callLines.shift();
   if(!$('#callPanel').hidden && callTab==='transcript') callPaintLines(); }
 
 function callSetRecording(on){
   if(on && !callRec){                       // recording started (auto-detected or manual)
-    callMin=false; callLines=[]; callTab='transcript';    // callPaused is owned by callOnState (server's paused flag) — don't clobber a reload-mid-pause
+    callMin=false; callLines=[]; callTab='transcript'; callAssistAnswer=''; callAssistLoading=false; callAssistError=false;    // callPaused is owned by callOnState (server's paused flag) — don't clobber a reload-mid-pause
     if(!callStart) callStart=Date.now();     // server usually supplies startedAt via callOnState
     callSec=Math.floor((Date.now()-callStart)/1000);
     try{ callNotesVal=localStorage.getItem('call.notes.'+callStart)||''; }catch{ callNotesVal=''; }
@@ -2113,11 +2241,12 @@ function callSetRecording(on){
   } else if(!on && callRec){                 // recording ended (stopped or call over)
     callStopTick();
     try{ localStorage.removeItem('call.notes.'+callStart); }catch{}
-    callStart=0; callSec=0; callNotesVal=''; callLines=[]; callXY=null; callPaused=false;
-    callInfo={title:'',app:'',count:0};
+    callStart=0; callSec=0; callNotesVal=''; callLines=[]; callAssistAnswer=''; callAssistLoading=false; callAssistError=false; callXY=null; callPaused=false;
+    callInfo={title:'',app:'',count:0}; callCapture={microphone:'idle',meetingAudio:'idle',detail:''}; callPhase='idle';
   }
-  callRec=on; $('#callPanel').setAttribute('aria-label',on?(callPaused?'Recording paused':'Recording in progress'):'Recording stopped'); callRender();
+  callRec=on; $('#callPanel').setAttribute('aria-label',on?(callPhase==='recording'?'Recording in progress':statusTextForAria(callPhase)):'Recording stopped'); callRender();
 }
+function statusTextForAria(phase){return ({starting:'Meeting capture starting',needs_attention:'Meeting capture needs attention',pausing:'Recording pausing',paused:'Recording paused',finalizing:'Meeting finalizing'})[phase]||'Meeting capture active'}
 
 function callBeginDrag(e, el){
   if(e.button!==0 || !el) return;
@@ -2144,8 +2273,14 @@ function initCall(){
   $('#callChip').onclick=()=>{ if(_callDragMoved)return; callMin=false; callRender(); };
   $('#cpTabT').onclick=()=>{ callTab='transcript'; callRender(); };
   $('#cpTabN').onclick=()=>{ callTab='notes'; callRender(); };
-  const tabKeys=(e)=>{ if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight')return; e.preventDefault(); callTab=callTab==='transcript'?'notes':'transcript'; callRender(); (callTab==='transcript'?$('#cpTabT'):$('#cpTabN')).focus(); };
-  $('#cpTabT').onkeydown=tabKeys; $('#cpTabN').onkeydown=tabKeys;
+  $('#cpTabA').onclick=()=>{ callTab='assist'; callRender(); };
+  const tabKeys=(e)=>{ const tabs=hasCap('liveMeetingAssist')?[['transcript',$('#cpTabT')],['notes',$('#cpTabN')],['assist',$('#cpTabA')]]:[['transcript',$('#cpTabT')],['notes',$('#cpTabN')]];
+    const current=tabs.findIndex(([name])=>name===callTab); let next=null;
+    if(e.key==='ArrowRight')next=(current+1)%tabs.length; else if(e.key==='ArrowLeft')next=(current-1+tabs.length)%tabs.length; else if(e.key==='Home')next=0; else if(e.key==='End')next=tabs.length-1; else return;
+    e.preventDefault(); callTab=tabs[next][0]; callRender(); tabs[next][1].focus(); };
+  $('#cpTabT').onkeydown=tabKeys; $('#cpTabN').onkeydown=tabKeys; $('#cpTabA').onkeydown=tabKeys;
+  document.querySelectorAll('[data-live-assist]').forEach(button=>button.onclick=()=>callLiveAssist(button.dataset.liveAssist));
+  $('#cpFix').onclick=()=>callRecoveryPane?openSettingsPane(callRecoveryPane):openPermissions();
   $('#cpPause').onclick=()=>{ callControl(callPaused?'resume':'pause'); };  // real pause/resume — releases/re-engages the mic
   $('#cpStop').onclick=async()=>{ clearTimeout(_notesT); await callPostNotes(); callControl('stop'); };  // flush notes before the meeting finalizes
   $('#cpNotesArea').oninput=(e)=>{ callNotesVal=e.target.value; try{ if(callStart) localStorage.setItem('call.notes.'+callStart,callNotesVal); }catch{}
@@ -2157,7 +2292,8 @@ function initCall(){
   $('#callChip').addEventListener('mousedown', e=>callBeginDrag(e,$('#callChip')));
 }
 
-let agentRuntimeStatus=null,agentRuntimeLoading=false,agentProviderModels={};
+/* agent-research:start */
+let agentRuntimeStatus=null,agentRuntimeLoading=false;
 function agentComputeCfg(){ return store.get('agentCompute',{lane:'local',apiProvider:'openai',apiModel:'',apiBase:'',model:'',effort:'medium',personality:'pragmatic',maxOutput:1200}); }
 function setAgentCompute(patch){ store.set('agentCompute',Object.assign(agentComputeCfg(),patch)); }
 function agentField(label,control){ const wrap=el('div','agent-config-field'); wrap.append(el('label','',label),control); return wrap; }
@@ -2183,8 +2319,8 @@ function renderAgentCompute(){
     const keyLine=el('div','agent-config-line'),key=aiInput('password','','Paste API key',()=>{}),save=el('button','abtn',cfg.apiKeySaved?'Replace':'Save');
     save.type='button'; save.onclick=async()=>{ const value=key.value.trim(); if(!value)return toast('Paste the API key first.'); save.disabled=true; try{ const response=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,key:value})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Could not save key'); key.value=''; setAgentCompute({apiKeySaved:true}); save.textContent='Saved'; toast(inTauri()?'API key saved in macOS Keychain.':'API key kept in memory for this developer session.'); }catch(error){toast(String(error.message||error))}finally{save.disabled=false} };
     keyLine.append(key,save); grid.append(agentField('API key',keyLine));
-    const modelLine=el('div','agent-config-line'),models=agentProviderModels[provider]||[],model=el('input','inp'); model.type='text'; model.placeholder='Choose or enter a model'; model.value=cfg.apiModel||''; const listId='agent-models-'+provider,dl=el('datalist'); dl.id=listId; models.forEach(id=>dl.append(new Option(id))); model.setAttribute('list',listId); model.onchange=()=>setAgentCompute({apiModel:model.value.trim()});
-    const load=el('button','abtn',models.length?'Refresh':'Load models'); load.type='button'; load.onclick=async()=>{ load.disabled=true; load.textContent='Loading…'; try{ const response=await fetch('/api/ai/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,base:cfg.apiBase||''})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Could not load models'); agentProviderModels[provider]=result.models||[]; renderAgentCompute(); }catch(error){toast(String(error.message||error));load.disabled=false;load.textContent='Load models'} };
+    const modelLine=el('div','agent-config-line'),models=aiProviderModels[provider]||[],model=el('input','inp'); model.type='text'; model.placeholder='Choose or enter a model'; model.value=cfg.apiModel||''; const listId='agent-models-'+provider,dl=el('datalist'); dl.id=listId; models.forEach(id=>dl.append(new Option(id))); model.setAttribute('list',listId); model.onchange=()=>setAgentCompute({apiModel:model.value.trim()});
+    const load=el('button','abtn',models.length?'Refresh':'Load models'); load.type='button'; load.onclick=async()=>{ load.disabled=true; load.textContent='Loading…'; try{ const response=await fetch('/api/ai/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,base:cfg.apiBase||''})}); const result=await response.json(); if(!response.ok)throw new Error(result.error||'Could not load models'); aiProviderModels[provider]=result.models||[]; renderAgentCompute(); }catch(error){toast(String(error.message||error));load.disabled=false;load.textContent='Load models'} };
     modelLine.append(model,dl,load); grid.append(agentField('Model',modelLine));
     const efforts=provider==='openai'?['auto','low','medium','high']:[{value:'auto',label:'Provider default'}];
     grid.append(agentField('Reasoning effort',agentSelect(efforts,cfg.apiEffort||efforts[0],value=>setAgentCompute({apiEffort:value}))));
@@ -2312,6 +2448,7 @@ function openAgentsFromShortcut(){
 }
 window.__myAssistantOpenAgents=openAgentsFromShortcut;
 window.addEventListener('my-assistant-agent-shortcut',openAgentsFromShortcut);
+/* agent-research:end */
 
 /* ---------- boot ---------- */
 async function boot(){
@@ -2328,7 +2465,7 @@ async function boot(){
   // Translation is capability-gated again after the model catalog loads; the Rust server also fails closed
   // so a stale preference can never request translation from Parakeet, Nemotron, or an English specialist.
   setTranslate(hasCap('translation') && store.get('translate',false));
-  cfg({autoDetect:store.get('auto_detect',true), browserMeet:store.get('browser_meet',true), unloadIdle:store.get('unload_model',true), whisperIdleMinutes:store.get('whisper_idle_minutes',10), vocab:vocabPrompt()});
+  cfg({autoDetect:store.get('auto_detect',true), desktopMeet:store.get('desktop_meet',true), browserMeet:store.get('browser_meet',true), unloadIdle:store.get('unload_model',true), whisperIdleMinutes:store.get('whisper_idle_minutes',10), vocab:vocabPrompt()});
   pushDictation(); initDictation();
   cfg({modules:modules()}); paintNav(); syncDictation(false);
   modelGate();

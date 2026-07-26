@@ -8,7 +8,7 @@ const fs = require("fs");
 const net = require("net");
 const path = require("path");
 const { spawn, execFile } = require("child_process");
-const { Gate } = require("./gate.js");
+const { Gate, MeetingDetector } = require("./gate.js");
 const { fetchProviderModels, providerError, sanitizeDeveloperAiModel } = require("./ai-provider.js");
 const { injectMultipartFields } = require("./multipart.js");
 const { releasePayload } = require("./release.js");
@@ -46,6 +46,7 @@ let cur = null; // the in-progress meeting being recorded to disk
 // Recording gate: composes auto-detection with the manual override (see gate.js). Drives the meeting
 // lifecycle and what the UI/tray show.
 const gate = new Gate(true);
+const meetingDetector = new MeetingDetector();
 let unloadIdle = true; // "Unload model when idle" setting — off = keep whisper hot between calls
 let whisperIdleMinutes = 10; // user-configurable; 10 minutes balances back-to-back speed with RAM recovery
 let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
@@ -505,6 +506,27 @@ function queueAutomaticSummary(id) {
 function transcriptText(m, cap = 16000) {
   return correctedTranscriptText(m, cap);
 }
+function liveAssistSpec(action) {
+  return {
+    catch_up: ["In at most four bullets, explain what happened in the last minute and what matters right now.", "last_minute"],
+    summary: ["Summarize the meeting so far in at most five concrete bullets. Distinguish discussion from decisions.", "meeting_so_far"],
+    actions: ["List only action items that were explicitly stated. Include an owner only when the transcript names one. If none are explicit, say so.", "meeting_so_far"],
+    follow_ups: ["Suggest up to three concise follow-up questions the operator could ask next, grounded in unresolved points in the transcript.", "meeting_so_far"],
+  }[action];
+}
+function liveAssistExcerpt(meeting, action, now = Date.now()) {
+  const cutoff = action === "catch_up" ? now - 60_000 : 0;
+  const cap = action === "catch_up" ? 6000 : 14000;
+  const selected = []; let chars = 0, lines = meeting.lines || [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i], text = String(line.text || "").trim().slice(0, 4000);
+    if (line.excluded || !text || (cutoff && Number(line.ts) < cutoff)) continue;
+    const value = `${String(line.speaker || "Unknown speaker").slice(0, 120)}: ${text}`;
+    selected.push(value); chars += Array.from(value).length + 1;
+    if (chars >= cap) break;
+  }
+  return Array.from(selected.reverse().join("\n")).slice(-cap).join("");
+}
 function readBody(req) {
   return new Promise(resolve => { let b = ""; req.on("data", c => (b += c)); req.on("end", () => resolve(b)); });
 }
@@ -598,6 +620,50 @@ http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ ...lastState, manual: gate.manual || "auto", dictation: dictationCfg, modules, dictStop: dictStopSeq }));
   }
+  if (req.url === "/api/meeting/observation" && req.method === "POST") {
+    readBody(req).then(b => {
+      try {
+        const input = JSON.parse(b || "{}");
+        const identity = String(input.identity || "").trim().slice(0, 240);
+        let observed = null;
+        if (identity) {
+          if (!/^[A-Za-z0-9.:_|-]+$/.test(identity)) throw new Error("meeting observation identity contains unsupported characters");
+          const family = String(input.family || "");
+          const app = String(input.app || "").trim().slice(0, 80);
+          const bundle = String(input.bundle || "").trim().slice(0, 180);
+          if (!["desktop", "browser"].includes(family) || !app || !bundle) throw new Error("meeting observation is invalid");
+          observed = { identity, family, app, bundle, title: String(input.title || "").trim().slice(0, 160) };
+        }
+        const decision = meetingDetector.update(observed, {
+          enabled: !!modules.meetings && gate.autoDetect,
+          desktop: lastState.desktopMeet !== false,
+          browser: lastState.browserMeet !== false,
+        });
+        if (decision.active
+            && (lastState.app !== decision.active.app || lastState.meetingTitle !== decision.active.title)) {
+          broadcast({ type: "state", source: "meeting-observation", state: {
+            app: decision.active.app,
+            meetingTitle: decision.active.title,
+            title: decision.active.title,
+          } });
+        }
+        setDetected(!!decision.active);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({
+          active: !!decision.active,
+          activeIdentity: decision.active?.identity || null,
+          app: decision.active?.app || null,
+          title: decision.active?.title || null,
+          bundle: decision.active?.bundle || null,
+          transition: decision.transition,
+        }));
+      } catch (error) {
+        res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: String(error.message || error).slice(0, 240) }));
+      }
+    });
+    return;
+  }
   if (req.url === "/api/meeting/control" && req.method === "POST") { // UI start/pause/resume/stop (composes with auto-detect)
     readBody(req).then(b => {
       let action = ""; try { action = String(JSON.parse(b).action || "").toLowerCase(); } catch {}
@@ -612,6 +678,29 @@ http.createServer((req, res) => {
       let notes = ""; try { notes = String(JSON.parse(b).notes || ""); } catch {}
       if (cur) { cur.notes = notes.slice(0, 8000); saveMeeting(cur); }
       res.writeHead(cur ? 204 : 409); res.end(); // 409 = no live meeting to attach to
+    });
+    return;
+  }
+  if (req.url === "/api/meeting/live-assist" && req.method === "POST") {
+    if (!cur) { res.writeHead(409, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "No meeting is being recorded" })); return; }
+    readBody(req).then(async b => {
+      let action = ""; try { action = String(JSON.parse(b).action || "").slice(0, 40); } catch {}
+      const spec = liveAssistSpec(action);
+      if (!spec) { const error = new Error("unknown live assist action"); error.status = 400; throw error; }
+      const excerpt = liveAssistExcerpt(cur, action);
+      if (excerpt.trim().split(/\s+/).length < 4) { const error = new Error("Not enough live transcript yet"); error.status = 422; throw error; }
+      const scratchpad = cur.notes ? `\n\nOperator scratchpad:\n${String(cur.notes).slice(0, 2400)}` : "";
+      const answer = await chat([
+        { role: "system", content: "You are a live meeting assistant. Use ONLY the supplied transcript and scratchpad. Be concise and directly useful. Never invent facts, decisions, owners, commitments, or participant intent. If the evidence is insufficient, say so." },
+        { role: "user", content: `${spec[0]}\n\nLive transcript:\n${excerpt}${scratchpad}` },
+      ], { maxTokens: 320, temperature: 0.2, llm: storedLLM() });
+      return { action, scope: spec[1], answer };
+    }).then(result => {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify(result));
+    }).catch(error => {
+      res.writeHead(error.status || 502, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: String(error.message || error).slice(0, 240) }));
     });
     return;
   }
@@ -674,7 +763,13 @@ http.createServer((req, res) => {
         if (typeof j.videoMode === "string") broadcast({ type: "state", state: { videoMode: j.videoMode } });
         if (typeof j.translate === "boolean") broadcast({ type: "state", state: { translate: !!j.translate && !!activeSpeechModel().supportsTranslation && !!RELEASE.capabilities.translation } });
         if (typeof j.language === "string") broadcast({ type: "state", state: { language: j.language } });
-        if (typeof j.autoDetect === "boolean") { gate.setAutoDetect(j.autoDetect); broadcast({ type: "state", state: { autoDetect: j.autoDetect } }); recomputeLifecycle(); broadcastCall(); } // off → ignore self-detection (manual only)
+        if (typeof j.desktopMeet === "boolean") broadcast({ type: "state", state: { desktopMeet: j.desktopMeet } });
+        if (typeof j.browserMeet === "boolean") broadcast({ type: "state", state: { browserMeet: j.browserMeet } });
+        if (typeof j.autoDetect === "boolean") {
+          gate.setAutoDetect(j.autoDetect);
+          if (!j.autoDetect) { meetingDetector.reset(); setDetected(false); }
+          broadcast({ type: "state", state: { autoDetect: j.autoDetect } }); recomputeLifecycle(); broadcastCall();
+        } // off → ignore raw observations (manual only)
         if (typeof j.unloadIdle === "boolean") unloadIdle = j.unloadIdle; // off → keep whisper hot
         if (Number.isFinite(Number(j.whisperIdleMinutes))) {
           const requested = Number(j.whisperIdleMinutes);
@@ -686,6 +781,7 @@ http.createServer((req, res) => {
         if (j.dictation && typeof j.dictation === "object") { dictationCfg = { ...dictationCfg, ...j.dictation }; broadcast({ type: "state", state: { dictation: dictationCfg } }); } // Handy-style dictation config → meeting-tap
         if (j.modules && typeof j.modules === "object") { // feature opt-in → gates every permission-touching capability
             modules = { ...modules, ...j.modules, writing: RELEASE.capabilities.writingAssistant ? !!j.modules.writing : false };
+          if (!modules.meetings) { meetingDetector.reset(); setDetected(false); }
           dictationCfg.enabled = !!modules.dictation;    // the dictation tap follows the module
           settingsBlob["set.modules"] = JSON.stringify(modules); saveSettings(); // persist so the boot-time restore (above) survives a relaunch — was RAM-only, so the server booted all-off until the UI re-pushed
           broadcast({ type: "state", state: { modules, dictation: dictationCfg } });

@@ -24,8 +24,10 @@ const CAPABILITIES = Object.freeze({
   meetingRecord:             { state: "shipped", verification: "manual and automatic gate tests" },
   automaticRecording:        { state: "shipped", verification: "recording gate defaults and call-edge tests" },
   meetingDetectedNotification:{ state: "shipped", verification: "Core Audio rising-edge and native notification tests" },
+  captureReadiness:          { state: "shipped", verification: "dual-buffer readiness, retry, and lifecycle projection tests" },
   liveTranscript:            { state: "shipped", verification: "SSE transcript path" },
   callPanel:                 { state: "shipped", verification: "recording-state UI contract" },
+  liveMeetingAssist:         { state: "shipped", verification: "grounded live-window and call-panel action tests" },
   scratchpad:                { state: "shipped", verification: "meeting notes persistence route" },
   pauseResumeStop:           { state: "shipped", verification: "recording gate transition tests" },
   meetingLibrary:            { state: "shipped", verification: "meeting summary/list domain tests" },
@@ -146,11 +148,12 @@ const SETTING_CAPABILITY = Object.freeze({
   sc_start: "dictationShortcut", sc_cancel: "dictationShortcut", wa_selection: "writingSettings",
   wa_noneditable: "writingSettings", wa_translate_lang: "writingSettings", wa_modes: "writingSettings",
   wa_model: "writingSettings", wa_open: "writingSettings", wa_close: "writingSettings", mtg_source: "meetingSource",
-  live_indicator: "liveMeetingIndicator", auto_detect: "automaticMeetingDetection", deeper: "deeperMeetingReasoning",
+  live_indicator: "liveMeetingIndicator", auto_detect: "automaticMeetingDetection",
+  desktop_meet: "automaticMeetingDetection", browser_meet: "automaticMeetingDetection", deeper: "deeperMeetingReasoning",
   default_view: "calendarView", folders: "folders", trans_lang: "transcriptionLanguage", translate_en: "translation",
   screen_rec: "videoRecording", audio_storage: "storageLimits", templates: "meetingTemplates", mtg_model: "aiProvider",
   mtg_shortcut: "meetingShortcut", unload_model: "unloadModel", whisper_idle_minutes: "unloadModel", whats_new: "whatsNew",
-  support_creator: "supportCreator", copilot: "experimental", browser_meet: "experimental", agents_exp: "experimental",
+  support_creator: "supportCreator", copilot: "experimental", agents_exp: "experimental",
   agent_shortcut: "agentGlobalShortcut",
 });
 
@@ -161,6 +164,7 @@ const PANEL_CAPABILITY = Object.freeze({
 
 const STATIC_SURFACE_CAPABILITY = Object.freeze({
   uploadAudio: "meetingUpload", "det-share": "meetingShare", dictUploadBtn: "dictationUpload",
+  cpTabA: "liveMeetingAssist", cpAssist: "liveMeetingAssist",
   docLink: "documentationLink", proCard: "pro",
 });
 
@@ -171,12 +175,12 @@ const PRODUCTION_SETTINGS = Object.freeze(Object.entries(SETTING_CAPABILITY)
 const HANDLED_SETTINGS = Object.freeze([
   "appearance", "accent", "stealth", "permissions", "show_tray", "overlay_enabled", "overlay_pos",
   "dict_enabled", "push_to_talk", "speech_models", "smart_polish", "cleanup_timing", "polish_models", "dict_lang", "punctuation", "clipboard", "custom_vocab", "dict_sound",
-  "volume", "sc_start", "sc_cancel", "live_indicator", "auto_detect", "deeper", "trans_lang",
+  "volume", "sc_start", "sc_cancel", "live_indicator", "auto_detect", "desktop_meet", "browser_meet", "deeper", "trans_lang",
   "translate_en", "screen_rec", "templates", "mtg_model", "unload_model", "whisper_idle_minutes",
 ]);
 const PRODUCTION_CTAS = Object.freeze([
   "meeting-record", "meeting-pause", "meeting-resume", "meeting-stop", "meeting-open", "meeting-rename",
-  "meeting-export", "meeting-generate-summary", "meeting-ask", "participant-correct", "transcript-correct",
+  "meeting-export", "meeting-generate-summary", "meeting-ask", "meeting-live-assist", "participant-correct", "transcript-correct",
   "dictation-vocabulary", "settings-open",
 ]);
 const HANDLED_CTAS = Object.freeze([...PRODUCTION_CTAS]);

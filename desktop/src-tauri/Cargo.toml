@@ -14,6 +14,12 @@ rust-version = "1.77.2"
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Dormant Agent experiments are deliberately absent from the normal application. Maintainers can
+# still compile the isolated research backend with `--features agent-research`.
+default = []
+agent-research = []
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 
@@ -32,7 +38,7 @@ core-foundation-code-signing = { package = "core-foundation", version = "0.10" }
 macos-accessibility-client = "0.0.2"        # prompt for Accessibility under the app's own identity
 objc2 = "0.6.4"                             # typed Objective-C ownership for the native AppKit dictation panel
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSAttributedString", "NSData", "NSDictionary", "NSGeometry", "NSObject", "NSString", "NSURL", "NSValue"] }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAccessibility", "NSAppearance", "NSAttributedString", "NSBitmapImageRep", "NSBox", "NSColor", "NSControl", "NSEvent", "NSFont", "NSGraphics", "NSImage", "NSImageRep", "NSPanel", "NSProgressIndicator", "NSResponder", "NSScreen", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAccessibility", "NSApplication", "NSAppearance", "NSAttributedString", "NSBitmapImageRep", "NSBox", "NSButton", "NSButtonCell", "NSCell", "NSColor", "NSControl", "NSEvent", "NSFont", "NSGraphics", "NSImage", "NSImageRep", "NSImageView", "NSPanel", "NSProgressIndicator", "NSResponder", "NSScreen", "NSText", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
 cpal = "0.15"                               # record the mic IN-PROCESS (like Handy) — no meeting-tap spawn, so no ~300ms start lag
 hound = "3.5"                               # encode the captured audio to a 16-bit PCM WAV for the STT server
 libc = "0.2"                                # validate ownership of an optional user-installed Codex executable

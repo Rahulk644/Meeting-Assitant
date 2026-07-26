@@ -70,7 +70,7 @@ test("automatic notes reject short sessions and accept substantive meetings", ()
   assert.equal(canGenerateNotes(fixture()).ok, true);
 });
 
-test("only Core Audio state can automatically start or end a meeting", () => {
+test("only legacy Core Audio state can bypass the observation endpoint", () => {
   assert.equal(isAuthoritativeMeetingDetection({
     type: "state", source: "coreaudio", state: { inMeeting: true, app: "zoom" },
   }), true);

@@ -7,6 +7,8 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ### Added
 
+- A native in-meeting Nub that expands into an adaptive live conversation surface with speaker-grouped
+  transcript bubbles, honest capture-source status, and a direct **What did I miss?** action.
 - Capability-gated live Dictation for Parakeet Unified and the two Nemotron streaming models. Provisional
   words appear directly in compatible focused text fields, and the exact tracked span is reconciled to the
   authoritative final transcript after cleanup and Smart Polish.
@@ -30,6 +32,8 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ### Changed
 
+- The Meetings Beta overlay now keeps recording controls secondary to the live transcript and catch-up
+  action, grows vertically for recent speech, and preserves its screen edge while resizing.
 - Local release candidates default to the honest `unreleased` artifact label; a named beta label must be
   supplied by the release operator or CI.
 - Meeting Intelligence now states clearly that its local LiteRT-LM runtime is a separate installation, while

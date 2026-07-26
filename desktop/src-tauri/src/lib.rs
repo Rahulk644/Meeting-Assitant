@@ -15,6 +15,7 @@ use tauri::{
 };
 use tauri_plugin_notification::NotificationExt;
 
+#[cfg(feature = "agent-research")]
 mod codex_runtime;
 mod dictation_cleanup;
 mod dictation_commands;
@@ -23,6 +24,9 @@ mod dictation_diff;
 mod dictation_numbers;
 mod dictation_polish;
 mod local_server;
+mod meeting_detection;
+#[cfg(target_os = "macos")]
+mod native_meeting_pill;
 #[cfg(target_os = "macos")]
 mod native_pill;
 mod polish_models;
@@ -30,6 +34,35 @@ mod polish_runtime;
 mod polish_validator;
 pub mod speech_audio;
 mod speech_models;
+
+#[cfg(feature = "agent-research")]
+macro_rules! generate_app_handlers {
+    () => {
+        tauri::generate_handler![
+            set_stealth,
+            set_tray_recording,
+            set_dictation,
+            set_agent_shortcut,
+            dictation_stop,
+            set_tray_visible,
+            perm_status
+        ]
+    };
+}
+
+#[cfg(not(feature = "agent-research"))]
+macro_rules! generate_app_handlers {
+    () => {
+        tauri::generate_handler![
+            set_stealth,
+            set_tray_recording,
+            set_dictation,
+            dictation_stop,
+            set_tray_visible,
+            perm_status
+        ]
+    };
+}
 
 // Absolute path to the repo, baked at build time. In DEV this is where everything lives. In a PACKAGED build
 // the app's own files come from the bundle's Resources dir instead (see init_paths). REPO is consulted only
@@ -106,6 +139,20 @@ fn legacy_model_dirs() -> Vec<String> {
     ]
 }
 
+fn meeting_app_label(meeting_app: &str) -> String {
+    match meeting_app.trim().to_ascii_lowercase().as_str() {
+        "zoom" => "Zoom".into(),
+        "teams" => "Microsoft Teams".into(),
+        "meet" => "Google Meet".into(),
+        "webex" => "Webex".into(),
+        "facetime" => "FaceTime".into(),
+        "slack" => "Slack Huddle".into(),
+        "discord" => "Discord".into(),
+        "your call" | "" | "call" => "your call".into(),
+        _ => meeting_app.trim().chars().take(40).collect(),
+    }
+}
+
 fn notify_meeting_started(app: &AppHandle, meeting_app: &str) {
     let notifications = app.notification();
     let permission = notifications
@@ -124,31 +171,97 @@ fn notify_meeting_started(app: &AppHandle, meeting_app: &str) {
     if permission != PermissionState::Granted {
         return;
     }
-    let body = if meeting_app.is_empty() || meeting_app == "your call" {
-        "A live call was detected. My Assistant is ready to take notes.".to_string()
+    let label = meeting_app_label(meeting_app);
+    let (title, body) = if label == "your call" {
+        (
+            "Meeting detected".to_string(),
+            "My Assistant is checking microphone and meeting audio. Use the control above your meeting to open or stop.".to_string(),
+        )
     } else {
-        format!("A live {meeting_app} call was detected. My Assistant is ready to take notes.")
+        (
+            format!("Meeting detected · {label}"),
+            format!("My Assistant is checking microphone and {label} audio. Use the control above your meeting to open or stop."),
+        )
     };
-    if let Err(error) = notifications
-        .builder()
-        .title("Meeting detected")
-        .body(body)
-        .show()
-    {
+    if let Err(error) = notifications.builder().title(title).body(body).show() {
         log::warn!("meeting notification failed: {error}");
+    }
+}
+
+pub(crate) fn show_main_window() {
+    let Some(app) = APP.get() else { return };
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn present_native_catch_up(result: Result<String, String>) {
+    let Some(app) = APP.get() else { return };
+    let _ = app.run_on_main_thread(move || native_meeting_pill::set_assist_result(result));
+}
+
+fn present_meeting_state(app: &AppHandle, state: local_server::MeetingUiState) {
+    let recording = state.phase == "recording";
+    let status = match state.phase.as_str() {
+        "starting" => " Starting meeting…",
+        "needs_attention" => " ! Meeting needs attention",
+        "pausing" => " … Pausing meeting",
+        "paused" => " Ⅱ Meeting paused",
+        "finalizing" => " … Finalizing meeting",
+        _ => "",
+    };
+    *MEETING_TRAY_STATUS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = status.into();
+    set_tray_recording(app.clone(), recording);
+
+    let _ = app.run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        native_meeting_pill::set(&state);
+    });
+}
+
+#[cfg(all(target_os = "macos", debug_assertions))]
+fn meeting_pill_preview_state(phase: String) -> local_server::MeetingUiState {
+    let detail = match phase.as_str() {
+        "recording" => "Microphone + meeting audio confirmed",
+        "needs_attention" => "Meeting audio unavailable · open My Assistant to fix it",
+        "pausing" => "Releasing microphone and meeting audio",
+        "paused" => "Microphone and meeting audio released",
+        "finalizing" => "Stopping capture, saving transcript, and preparing notes",
+        _ => "Checking microphone + meeting audio",
+    };
+    local_server::MeetingUiState {
+        phase,
+        title: "Customer launch review".into(),
+        app: "zoom".into(),
+        started_at: Some(0),
+        microphone: "ready".into(),
+        meeting_audio: "ready".into(),
+        detail: detail.into(),
+        transcript: vec![
+            local_server::MeetingUiLine {
+                speaker: "Aditi".into(),
+                text: "Let’s keep the launch date and confirm the final owner.".into(),
+                is_self: false,
+            },
+            local_server::MeetingUiLine {
+                speaker: "You".into(),
+                text: "I’ll send the revised rollout plan after this call.".into(),
+                is_self: true,
+            },
+        ],
     }
 }
 
 // Sidecars the app spawns — all killed when it quits (so the mic is never left held).
 static CHILDREN: Mutex<Vec<Child>> = Mutex::new(Vec::new());
-fn track(child: std::io::Result<Child>) {
-    if let Ok(c) = child {
-        if let Ok(mut v) = CHILDREN.lock() {
-            v.push(c);
-        }
-    }
-}
+static CAPTURE_HELPER_SUPERVISOR_STOP: AtomicBool = AtomicBool::new(false);
 fn kill_children() {
+    CAPTURE_HELPER_SUPERVISOR_STOP.store(true, Ordering::SeqCst);
     if let Ok(mut v) = CHILDREN.lock() {
         let kids: Vec<Child> = v.drain(..).collect();
         // SIGTERM first, not SIGKILL: meeting-tap traps SIGTERM to finalize its in-progress .mp4 (write the
@@ -162,6 +275,111 @@ fn kill_children() {
             let _ = c.kill();
         }
     }
+}
+
+fn capture_helper_exited(pid: u32) -> bool {
+    let Ok(mut children) = CHILDREN.lock() else {
+        return false;
+    };
+    let Some(index) = children.iter().position(|child| child.id() == pid) else {
+        return true;
+    };
+    match children[index].try_wait() {
+        Ok(Some(status)) => {
+            log::warn!("meeting capture helper exited pid={pid} status={status}");
+            // `try_wait(Some)` already reaped the process. A second wait returns the cached status and
+            // makes the ownership/reaping contract explicit before the Child handle is dropped.
+            let mut child = children.remove(index);
+            let _ = child.wait();
+            true
+        }
+        Ok(None) => false,
+        Err(error) => {
+            log::warn!("meeting capture helper status failed pid={pid}: {error}");
+            let mut child = children.remove(index);
+            let _ = child.kill();
+            let _ = child.wait();
+            true
+        }
+    }
+}
+
+fn spawn_meeting_capture_helper() -> Option<u32> {
+    let tap = format!("{}/stt/meeting-tap", res_base());
+    if !Path::new(&tap).exists() {
+        return None;
+    }
+    let recdir = format!("{}/meetings/rec", data_dir());
+    let temp = format!("{}/tmp", data_dir());
+    let token = SERVER_TOKEN.get().cloned().unwrap_or_default();
+    let parent_pid = std::process::id().to_string();
+    let child = Command::new(tap)
+        .args([
+            "8790",
+            "http://127.0.0.1:8091/inference",
+            "--gate",
+            "on",
+            "--rec-dir",
+            &recdir,
+            "--temp-dir",
+            &temp,
+        ])
+        .env("ASSISTANT_GUI_TOKEN", &token)
+        .env("ASSISTANT_STT_TOKEN", &token)
+        .env("ASSISTANT_PARENT_PID", &parent_pid)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let pid = child.id();
+    CHILDREN
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .push(child);
+    Some(pid)
+}
+
+fn supervise_meeting_capture_helper() {
+    std::thread::spawn(|| {
+        let mut consecutive_exits = 0u32;
+        while !CAPTURE_HELPER_SUPERVISOR_STOP.load(Ordering::SeqCst) {
+            let Some(pid) = spawn_meeting_capture_helper() else {
+                consecutive_exits = consecutive_exits.saturating_add(1);
+                std::thread::sleep(capture_helper_restart_delay(consecutive_exits));
+                continue;
+            };
+            let started = Instant::now();
+            while !CAPTURE_HELPER_SUPERVISOR_STOP.load(Ordering::SeqCst)
+                && !capture_helper_exited(pid)
+            {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            if CAPTURE_HELPER_SUPERVISOR_STOP.load(Ordering::SeqCst) {
+                return;
+            }
+            consecutive_exits = if started.elapsed() >= Duration::from_secs(30) {
+                1
+            } else {
+                consecutive_exits.saturating_add(1)
+            };
+            let delay = capture_helper_restart_delay(consecutive_exits);
+            log::warn!(
+                "restarting meeting capture helper attempt={} delayMs={}",
+                consecutive_exits,
+                delay.as_millis()
+            );
+            std::thread::sleep(delay);
+        }
+    });
+}
+
+fn capture_helper_restart_delay(consecutive_exits: u32) -> Duration {
+    Duration::from_millis(match consecutive_exits {
+        0 | 1 => 500,
+        2 => 1_000,
+        3 => 2_000,
+        _ => 5_000,
+    })
 }
 
 fn port_open(port: u16) -> bool {
@@ -229,32 +447,8 @@ fn start_stack() {
 
     // transcribe-server is NOT started here — the in-process server spawns it on demand when speech arrives
     // and unloads it after the configured idle period, so the model stays out of RAM between sessions.
-    let tap = format!("{}/stt/meeting-tap", res_base());
-    if Path::new(&tap).exists() {
-        let recdir = format!("{}/meetings/rec", data_dir());
-        let temp = format!("{}/tmp", data_dir());
-        let token = SERVER_TOKEN.get().cloned().unwrap_or_default();
-        let parent_pid = std::process::id().to_string();
-        track(
-            Command::new(tap)
-                .args([
-                    "8790",
-                    "http://127.0.0.1:8091/inference",
-                    "--gate",
-                    "on",
-                    "--rec-dir",
-                    &recdir,
-                    "--temp-dir",
-                    &temp,
-                ])
-                .env("ASSISTANT_GUI_TOKEN", &token)
-                .env("ASSISTANT_STT_TOKEN", &token)
-                .env("ASSISTANT_PARENT_PID", &parent_pid)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn(),
-        );
-    }
+    CAPTURE_HELPER_SUPERVISOR_STOP.store(false, Ordering::SeqCst);
+    supervise_meeting_capture_helper();
     start_meeting_state(); // names + participants — direct child so Accessibility works
 }
 
@@ -263,13 +457,24 @@ fn start_stack() {
 fn set_stealth(window: tauri::WebviewWindow, on: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     if let Some(app) = APP.get() {
-        let _ = app.run_on_main_thread(move || native_pill::set_content_protected(on));
+        let _ = app.run_on_main_thread(move || {
+            native_pill::set_content_protected(on);
+            native_meeting_pill::set_content_protected(on);
+        });
     }
     window.set_content_protected(on).map_err(|e| e.to_string())
 }
 
-// Animate the menu-bar tray icon with an audio-wave title while a call records (the UI calls this on start/stop).
+// Animate the menu-bar tray icon only after both meeting channels are ready. Non-recording lifecycle text is
+// retained here so the waveform thread and transient dictation feedback restore the authoritative status.
 static TRAY_REC: AtomicBool = AtomicBool::new(false);
+static MEETING_TRAY_STATUS: Mutex<String> = Mutex::new(String::new());
+fn meeting_tray_status() -> String {
+    MEETING_TRAY_STATUS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+}
 #[tauri::command]
 fn set_tray_recording(app: tauri::AppHandle, on: bool) {
     // Tray-title mutations are AppKit calls → they MUST run on the main thread (off-main aborts with
@@ -295,11 +500,11 @@ fn set_tray_recording(app: tauri::AppHandle, on: bool) {
                 i += 1;
                 std::thread::sleep(Duration::from_millis(300));
             }
-            set_title(&app, String::new()); // clear — None doesn't clear on macOS
+            set_title(&app, meeting_tray_status()); // None does not clear title text on macOS
         });
     } else {
         TRAY_REC.store(false, Ordering::SeqCst);
-        set_title(&app, String::new());
+        set_title(&app, meeting_tray_status());
     }
 }
 
@@ -758,15 +963,15 @@ fn dict_feedback(phase: DictFeedback, generation: u64) {
             }
             if let Some(t) = app.tray_by_id("tray") {
                 let title = match phase {
-                    DictFeedback::Listening => " ● Dictating",
-                    DictFeedback::Transcribing => " ● Transcribing",
-                    DictFeedback::PostProcessing => " ● Post-processing",
-                    DictFeedback::ShowingChanges => " ● Changes",
-                    DictFeedback::Inserted | DictFeedback::Fallback => " ✓ Inserted",
-                    DictFeedback::Copied => " Dictation copied",
-                    DictFeedback::NoSpeech => " No speech",
-                    DictFeedback::Error => " Dictation error",
-                    DictFeedback::Idle => "",
+                    DictFeedback::Listening => " ● Dictating".into(),
+                    DictFeedback::Transcribing => " ● Transcribing".into(),
+                    DictFeedback::PostProcessing => " ● Post-processing".into(),
+                    DictFeedback::ShowingChanges => " ● Changes".into(),
+                    DictFeedback::Inserted | DictFeedback::Fallback => " ✓ Inserted".into(),
+                    DictFeedback::Copied => " Dictation copied".into(),
+                    DictFeedback::NoSpeech => " No speech".into(),
+                    DictFeedback::Error => " Dictation error".into(),
+                    DictFeedback::Idle => meeting_tray_status(),
                 };
                 let _ = t.set_title(Some(title));
             }
@@ -1508,6 +1713,7 @@ struct HotkeySpec {
     modifier: String,
 }
 static DICT_HOTKEY: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
+#[cfg(feature = "agent-research")]
 static AGENT_HOTKEY: Mutex<Option<tauri_plugin_global_shortcut::Shortcut>> = Mutex::new(None);
 static DICT_TRIGGER_LABEL: Mutex<String> = Mutex::new(String::new());
 
@@ -1648,6 +1854,7 @@ fn register_dict_hotkey(app: &AppHandle, spec: &HotkeySpec) -> bool {
     }
 }
 
+#[cfg(feature = "agent-research")]
 fn shortcut_from_spec(spec: &HotkeySpec) -> Option<tauri_plugin_global_shortcut::Shortcut> {
     use tauri_plugin_global_shortcut::{Modifiers, Shortcut};
     let code = key_to_code(&spec.key)?;
@@ -1664,8 +1871,10 @@ fn shortcut_from_spec(spec: &HotkeySpec) -> Option<tauri_plugin_global_shortcut:
     (!mods.is_empty() && spec.modifier.is_empty()).then(|| Shortcut::new(Some(mods), code))
 }
 
+#[cfg(feature = "agent-research")]
 const OPEN_AGENTS_SCRIPT: &str = "window.__myAssistantOpenAgents?.()";
 
+#[cfg(feature = "agent-research")]
 fn open_agents_from_shortcut(window: tauri::WebviewWindow) {
     let main_window = window.clone();
     let _ = window.run_on_main_thread(move || {
@@ -1696,6 +1905,7 @@ fn open_agents_from_shortcut(window: tauri::WebviewWindow) {
     });
 }
 
+#[cfg(feature = "agent-research")]
 #[tauri::command]
 fn set_agent_shortcut(app: AppHandle, spec: Option<HotkeySpec>) -> Result<(), String> {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -2114,11 +2324,6 @@ fn set_dictation(app: AppHandle, cfg: DictCfg) {
         // is what re-asks once after a signature change / TCC reset, then never again — the paste needs it.
         let _ = macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
     }
-    if cfg.enabled {
-        // Prime the first dictation after launch as soon as Settings has confirmed dictation is enabled.
-        // The same idempotent warm-up is retried at recording start after the configured idle unload.
-        local_server::warm_speech_model();
-    }
 }
 // Tray "Stop" → finish the current dictation (only if one is recording).
 #[tauri::command]
@@ -2186,6 +2391,7 @@ pub fn run() {
             init_paths(app); // resolve RES_BASE / DATA_DIR / MODELS_DIR before anything spawns
             let handle = app.handle().clone();
             let notify_handle = handle.clone();
+            let presentation_handle = handle.clone();
             let server = match local_server::start(
                 web_dir(),
                 data_dir(),
@@ -2193,6 +2399,7 @@ pub fn run() {
                 res_base(),
                 legacy_model_dirs(),
                 Arc::new(move |meeting_app| notify_meeting_started(&notify_handle, &meeting_app)),
+                Arc::new(move |state| present_meeting_state(&presentation_handle, state)),
             ) {
                 Ok(server) => server,
                 Err(error) => {
@@ -2218,6 +2425,10 @@ pub fn run() {
                     _ => DictFeedback::Listening,
                 };
                 native_pill::set(phase, 0, 7_000, 0.72);
+            }
+            #[cfg(all(target_os = "macos", debug_assertions))]
+            if let Ok(phase) = std::env::var("ASSISTANT_MEETING_PILL_PREVIEW") {
+                native_meeting_pill::set(&meeting_pill_preview_state(phase));
             }
             // Create the main WebView only after the local server is listening. The dictation pill and tray
             // are native AppKit surfaces and do not allocate additional WebViews.
@@ -2257,6 +2468,34 @@ pub fn run() {
                             let _ = w.show();
                             let _ = w.unminimize();
                             let _ = w.set_focus();
+                        }
+                        #[cfg(all(target_os = "macos", debug_assertions))]
+                        if let Ok(phase) = std::env::var("ASSISTANT_MEETING_PILL_PREVIEW") {
+                            // Re-order after the Tauri main window becomes visible; an AppKit panel created
+                            // before the application finishes its first activation can otherwise remain ordered
+                            // behind the initial WebView during visual regression previews.
+                            native_meeting_pill::set(&meeting_pill_preview_state(phase.clone()));
+                            let preview_handle = h2.clone();
+                            let snapshot_path =
+                                std::env::var("ASSISTANT_MEETING_PILL_SNAPSHOT").ok();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(Duration::from_secs(2));
+                                let _ = preview_handle.run_on_main_thread(move || {
+                                    // A developer preview must remain capturable even when the persisted
+                                    // production preference hides overlays from screen sharing.
+                                    native_meeting_pill::set_content_protected(false);
+                                    native_meeting_pill::set(&meeting_pill_preview_state(phase));
+                                    if let Some(path) = snapshot_path.as_deref() {
+                                        if std::env::var("ASSISTANT_MEETING_PILL_PREVIEW_EXPANDED")
+                                            .as_deref()
+                                            == Ok("1")
+                                        {
+                                            native_meeting_pill::expand_for_preview();
+                                        }
+                                        native_meeting_pill::write_preview_snapshot(path);
+                                    }
+                                });
+                            });
                         }
                         // The click-through AppKit pill is created lazily by dict_feedback() while visible.
                     });
@@ -2323,15 +2562,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            set_stealth,
-            set_tray_recording,
-            set_dictation,
-            set_agent_shortcut,
-            dictation_stop,
-            set_tray_visible,
-            perm_status
-        ])
+        .invoke_handler(generate_app_handlers!())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
@@ -2442,6 +2673,22 @@ mod tests {
     }
 
     #[test]
+    fn meeting_notifications_use_human_platform_names() {
+        assert_eq!(meeting_app_label("zoom"), "Zoom");
+        assert_eq!(meeting_app_label("meet"), "Google Meet");
+        assert_eq!(meeting_app_label(""), "your call");
+    }
+
+    #[test]
+    fn capture_helper_restart_backoff_is_bounded() {
+        assert_eq!(capture_helper_restart_delay(1), Duration::from_millis(500));
+        assert_eq!(capture_helper_restart_delay(2), Duration::from_secs(1));
+        assert_eq!(capture_helper_restart_delay(3), Duration::from_secs(2));
+        assert_eq!(capture_helper_restart_delay(20), Duration::from_secs(5));
+    }
+
+    #[cfg(feature = "agent-research")]
+    #[test]
     fn agent_shortcut_requires_a_combination_not_a_bare_modifier() {
         assert!(shortcut_from_spec(&HotkeySpec {
             mods: vec!["ctrl".into(), "shift".into()],
@@ -2461,6 +2708,7 @@ mod tests {
         .is_none());
     }
 
+    #[cfg(feature = "agent-research")]
     #[test]
     fn agent_shortcut_routes_through_the_durable_webview_entrypoint() {
         assert_eq!(OPEN_AGENTS_SCRIPT, "window.__myAssistantOpenAgents?.()");

@@ -1,0 +1,7 @@
+{
+  "name": "com.myassistant.desktop.browser_bridge",
+  "description": "Bounded browser meeting metadata bridge for My Assistant",
+  "path": "__SIGNED_NATIVE_HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://__STABLE_EXTENSION_ID__/"]
+}

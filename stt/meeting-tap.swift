@@ -214,6 +214,27 @@ func usefulMeetingTitle(_ titles: [String], key: String) -> String {
     return ""
 }
 
+func capturePhase(microphone: String, meetingAudio: String) -> String {
+    if microphone == "failed" || meetingAudio == "failed" { return "degraded" }
+    if (microphone == "ready" || microphone == "off") && meetingAudio == "ready" {
+        return "capturing"
+    }
+    return "starting"
+}
+
+let SYSTEM_AUDIO_DROPOUT_SECONDS = 8.0
+let SYSTEM_AUDIO_RECYCLE_WINDOW_SECONDS = 60.0
+let SYSTEM_AUDIO_RECYCLE_DROPOUTS = 3
+func shouldRestartSystemAudio(hasReceivedBuffer: Bool, lastBufferAt: TimeInterval?,
+                              now: TimeInterval) -> Bool {
+    guard hasReceivedBuffer, let lastBufferAt else { return false }
+    return now - lastBufferAt >= SYSTEM_AUDIO_DROPOUT_SECONDS
+}
+func shouldRecycleCaptureProcess(dropoutCount: Int, windowAge: TimeInterval) -> Bool {
+    dropoutCount >= SYSTEM_AUDIO_RECYCLE_DROPOUTS
+        && windowAge <= SYSTEM_AUDIO_RECYCLE_WINDOW_SECONDS
+}
+
 if A.contains("--selftest") {
     func check(_ condition: Bool, _ message: String) {
         if !condition { err("SELFTEST FAIL: \(message)"); exit(1) }
@@ -224,6 +245,21 @@ if A.contains("--selftest") {
     check(platformFromEvidence("Discord voice connected", bundle: "com.hnc.Discord") == "discord", "Discord voice")
     check(usefulMeetingTitle(["Zoom Meeting"], key: "zoom").isEmpty, "generic title rejected")
     check(usefulMeetingTitle(["Customer launch review - Google Chrome"], key: "meet") == "Customer launch review", "browser suffix removed")
+    check(capturePhase(microphone: "starting", meetingAudio: "ready") == "starting", "one ready channel cannot claim capture")
+    check(capturePhase(microphone: "ready", meetingAudio: "ready") == "capturing", "both ready channels confirm capture")
+    check(capturePhase(microphone: "ready", meetingAudio: "failed") == "degraded", "failed channel stays visible")
+    check(!shouldRestartSystemAudio(hasReceivedBuffer: false, lastBufferAt: nil, now: 600),
+          "initial remote silence is not a dropout")
+    check(!shouldRestartSystemAudio(hasReceivedBuffer: true, lastBufferAt: 595, now: 600),
+          "healthy system-audio heartbeat is retained")
+    check(shouldRestartSystemAudio(hasReceivedBuffer: true, lastBufferAt: 590, now: 600),
+          "missing system-audio buffers after capture flowed triggers recovery")
+    check(!shouldRecycleCaptureProcess(dropoutCount: 2, windowAge: 20),
+          "ordinary source recovery does not recycle the helper")
+    check(shouldRecycleCaptureProcess(dropoutCount: 3, windowAge: 40),
+          "repeated dropout recycles the supervised helper")
+    check(!shouldRecycleCaptureProcess(dropoutCount: 3, windowAge: 80),
+          "widely separated dropouts do not create a restart loop")
     err("SELFTEST OK")
     exit(0)
 }
@@ -234,19 +270,34 @@ final class Segmenter {
     let speaker: String, isSelf: Bool, tag: String, threshold: Float
     var seg = [Float](), inSpeech = false, silentDur = 0.0, segIdx = 0
     var bufN = 0; var peak: Float = 0; var announced = false
+    var lastHeartbeatAt: TimeInterval = 0
+    var onBufferHeartbeat: ((TimeInterval) -> Void)?
     let procQ: DispatchQueue
 
     init(speaker: String, isSelf: Bool, tag: String, threshold: Float) {
         self.speaker = speaker; self.isSelf = isSelf; self.tag = tag; self.threshold = threshold
         self.procQ = DispatchQueue(label: "stt.process.\(tag)")
     }
-    func reset() { seg.removeAll(keepingCapacity: true); inSpeech = false; silentDur = 0 }   // between calls
+    func reset() {
+        seg.removeAll(keepingCapacity: true); inSpeech = false; silentDur = 0
+        bufN = 0; peak = 0; announced = false; lastHeartbeatAt = 0
+    }   // between calls
 
     func feed(_ s: [Float]) {
         guard !s.isEmpty else { return }
         let dur = Double(s.count) / SR
         let rms = (s.reduce(0) { $0 + $1 * $1 } / Float(s.count)).squareRoot()
-        if !announced { announced = true; err("\(tag): first buffer \(s.count) samples rms=\(f2(rms)) (threshold=\(f2(threshold)))") }
+        if !announced {
+            announced = true
+            err("\(tag): first buffer \(s.count) samples rms=\(f2(rms)) (threshold=\(f2(threshold)))")
+        }
+        let heartbeatAt = ProcessInfo.processInfo.systemUptime
+        if heartbeatAt - lastHeartbeatAt >= 1 {
+            lastHeartbeatAt = heartbeatAt
+            if let onBufferHeartbeat {
+                DispatchQueue.main.async { onBufferHeartbeat(heartbeatAt) }
+            }
+        }
         bufN += 1; peak = max(peak, rms)
         if bufN % 500 == 0 { err("\(tag): · listening (peak \(f2(peak)))"); peak = 0 }
         if rms > threshold {
@@ -293,12 +344,16 @@ final class Segmenter {
 
 final class SCKOut: NSObject, SCStreamOutput, SCStreamDelegate {
     let seg: Segmenter
+    var onStopped: ((Error) -> Void)?
     init(_ seg: Segmenter) { self.seg = seg }
     func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio, CMSampleBufferDataIsReady(sb), let s = floatSamples(sb) else { return }
         seg.feed(s)
     }
-    func stream(_ stream: SCStream, didStopWithError error: Error) { err("sys stream stopped: \(error)") }
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        err("sys stream stopped: \(error)")
+        if let onStopped { DispatchQueue.main.async { onStopped(error) } }
+    }
 }
 
 func floatSamples(_ sb: CMSampleBuffer) -> [Float]? {
@@ -321,14 +376,14 @@ final class Mic {
     let engine = AVAudioEngine()
     let seg: Segmenter
     init(_ seg: Segmenter) { self.seg = seg }
-    func start() {
+    func start() -> Bool {
         let input = engine.inputNode
         let inFmt = input.inputFormat(forBus: 0)
         guard inFmt.sampleRate > 0, inFmt.channelCount > 0 else {
-            err("mic: no input format — grant Microphone permission to your terminal, then rerun (or --mic off)"); return
+            err("mic: no input format — grant Microphone permission to My Assistant"); return false
         }
         guard let outFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: SR, channels: 1, interleaved: false),
-              let conv = AVAudioConverter(from: inFmt, to: outFmt) else { err("mic: converter init failed"); return }
+              let conv = AVAudioConverter(from: inFmt, to: outFmt) else { err("mic: converter init failed"); return false }
         input.installTap(onBus: 0, bufferSize: 4096, format: inFmt) { [weak self] buf, _ in
             guard let self = self else { return }
             let cap = AVAudioFrameCount(Double(buf.frameLength) * SR / inFmt.sampleRate) + 1024
@@ -343,8 +398,15 @@ final class Mic {
             }
         }
         engine.prepare()
-        do { try engine.start(); err(">> mic capture started (\(Int(inFmt.sampleRate))Hz \(inFmt.channelCount)ch → 16k mono)") }
-        catch { err("mic: engine.start failed: \(error) — grant Microphone permission, or --mic off") }
+        do {
+            try engine.start()
+            err(">> mic capture started (\(Int(inFmt.sampleRate))Hz \(inFmt.channelCount)ch → 16k mono)")
+            return true
+        } catch {
+            input.removeTap(onBus: 0)
+            err("mic: engine.start failed: \(error) — grant Microphone permission to My Assistant")
+            return false
+        }
     }
     func stop() {
         engine.inputNode.removeTap(onBus: 0)
@@ -676,32 +738,185 @@ if LIST_APPS {
 // in the ScreenCaptureKit window list (see detectMeetingApp), and are torn down (releasing the mic)
 // otherwise — so nothing is captured when you're not in a meeting. `--gate off` is an explicit manual
 // always-capture mode for unsupported platforms; browser calls normally use audio plus window evidence.
+var processRestartScheduled = false
 final class Capture {
     var stream: SCStream?, sckOut: SCKOut?, videoOut: VideoOut?, rec: VideoRecorder?, mic: Mic?, tap: ProcessTap?
-    var running = false, mode = "off", recFile = "", targetBundle = ""
+    var running = false, mode = "off", recFile = "", targetBundle = "", session = ""
+    var microphoneState = "idle", meetingAudioState = "idle", captureDetail = ""
+    var statusSequence: UInt64 = 0
+    var lastMicAttempt = Date.distantPast, lastSystemAttempt = Date.distantPast
+    var systemAttemptInFlight = false
+    var systemHasReceivedBuffer = false
+    var lastSystemBufferAt: TimeInterval?
+    var systemRecoveryAwaitingBuffer = false
+    var systemDropoutCount = 0
+    var systemDropoutWindowStart: TimeInterval?
+
+    private func publish() {
+        guard !session.isEmpty else { return }
+        statusSequence += 1
+        let phase = capturePhase(microphone: microphoneState, meetingAudio: meetingAudioState)
+        postCaptureStatus(session: session, sequence: statusSequence, phase: phase, microphone: microphoneState,
+                          meetingAudio: meetingAudioState, detail: captureDetail)
+    }
+
+    private func channelReady(_ channel: String, for expectedSession: String) {
+        guard running, session == expectedSession else { return }
+        if channel == "microphone" { microphoneState = "ready" }
+        else { meetingAudioState = "ready" }
+        if (microphoneState == "ready" || microphoneState == "off") && meetingAudioState == "ready" {
+            captureDetail = ""
+        }
+        publish()
+    }
+
+    private func microphoneFailed(_ detail: String) {
+        guard running else { return }
+        microphoneState = "failed"; captureDetail = detail; mic = nil; publish()
+    }
+
+    private func meetingAudioFailed(_ detail: String) {
+        guard running else { return }
+        meetingAudioState = "failed"; captureDetail = detail
+        tap?.stop(); tap = nil
+        stream?.stopCapture { _ in }; stream = nil; sckOut = nil
+        systemAttemptInFlight = false
+        systemHasReceivedBuffer = false; lastSystemBufferAt = nil
+        publish()
+    }
+
+    private func systemBufferHeartbeat(_ at: TimeInterval, for expectedSession: String) {
+        guard running, session == expectedSession, meetingAudioState == "ready" else { return }
+        systemHasReceivedBuffer = true
+        lastSystemBufferAt = at
+        systemRecoveryAwaitingBuffer = false
+    }
+
+    private func registerSystemDropout(at: TimeInterval) -> Bool {
+        if systemDropoutWindowStart == nil
+            || at - (systemDropoutWindowStart ?? at) > SYSTEM_AUDIO_RECYCLE_WINDOW_SECONDS {
+            systemDropoutWindowStart = at
+            systemDropoutCount = 0
+        }
+        systemDropoutCount += 1
+        let age = at - (systemDropoutWindowStart ?? at)
+        guard shouldRecycleCaptureProcess(dropoutCount: systemDropoutCount, windowAge: age) else {
+            return false
+        }
+        meetingAudioState = "failed"
+        captureDetail = "Meeting audio repeatedly dropped · restarting capture process"
+        publish()
+        processRestartScheduled = true
+        err("system audio: repeated dropout — requesting supervised capture-process restart")
+        kill(getpid(), SIGTERM)
+        return true
+    }
+
     // aoids: the meeting app's Core Audio process objects (for the audio-only tap). Empty = global.
     func start(mode: String, aoids: [AudioObjectID], bundle: String) {
-        guard !running else { return }
-        running = true; self.mode = mode; targetBundle = bundle
+        if running {
+            self.mode = mode
+            if !bundle.isEmpty { targetBundle = bundle }
+            ensureSources(aoids: aoids, bundle: bundle)
+            return
+        }
+        running = true; self.mode = mode; targetBundle = bundle; session = UUID().uuidString
+        statusSequence = 0
+        microphoneState = MIC_ON ? "starting" : "off"
+        meetingAudioState = "starting"; captureDetail = ""
+        lastMicAttempt = .distantPast; lastSystemAttempt = .distantPast; systemAttemptInFlight = false
+        systemHasReceivedBuffer = false; lastSystemBufferAt = nil
+        systemRecoveryAwaitingBuffer = false
+        systemDropoutCount = 0; systemDropoutWindowStart = nil
         let wantVideo = mode == "always" || mode == "share"
         err(">> in a call — starting capture (video: \(mode))")
         sysSeg.reset(); micSeg.reset()
-        if MIC_ON { let m = Mic(micSeg); m.start(); mic = m }
+        let expectedSession = session
+        sysSeg.onBufferHeartbeat = { [weak self] at in
+            self?.systemBufferHeartbeat(at, for: expectedSession)
+        }
+        publish()
+        ensureSources(aoids: aoids, bundle: bundle)
+        if wantVideo { err(">> video capture uses the same readiness handshake as audio-only capture") }
+    }
+
+    private func ensureSources(aoids: [AudioObjectID], bundle: String) {
+        guard running else { return }
+        let now = Date()
+        if MIC_ON, mic == nil, now.timeIntervalSince(lastMicAttempt) >= 5 {
+            lastMicAttempt = now; microphoneState = "starting"; captureDetail = ""; publish()
+            let candidate = Mic(micSeg)
+            if candidate.start() {
+                mic = candidate
+                channelReady("microphone", for: session)
+            }
+            else { microphoneFailed("Microphone unavailable · allow Microphone access for My Assistant") }
+        }
+
+        // Source readiness means the operating system accepted and started the capture source. Silence is
+        // valid meeting content: if the remote side says nothing for ten minutes, the microphone must still
+        // record from second zero and the UI must still say Recording. Buffer liveness is a separate health
+        // signal. Only a source that has previously produced buffers can be classified as having dropped.
+        let heartbeatNow = ProcessInfo.processInfo.systemUptime
+        if meetingAudioState == "ready",
+           shouldRestartSystemAudio(hasReceivedBuffer: systemHasReceivedBuffer,
+                                    lastBufferAt: lastSystemBufferAt,
+                                    now: heartbeatNow) {
+            err("system audio: buffer heartbeat stopped — restarting capture source")
+            if registerSystemDropout(at: heartbeatNow) { return }
+            meetingAudioFailed("Meeting audio stream dropped · restarting automatically")
+            systemRecoveryAwaitingBuffer = true
+            return
+        }
+        if meetingAudioState == "ready", systemRecoveryAwaitingBuffer,
+           !systemHasReceivedBuffer, now.timeIntervalSince(lastSystemAttempt) >= SYSTEM_AUDIO_DROPOUT_SECONDS {
+            err("system audio: restarted source produced no heartbeat")
+            if registerSystemDropout(at: heartbeatNow) { return }
+            meetingAudioFailed("Meeting audio restart did not recover · retrying automatically")
+            systemRecoveryAwaitingBuffer = true
+            return
+        }
+
         // Two paths, each asking for the MINIMUM permission (Fathom's model):
         //   audio-only → Core Audio tap  → "System Audio Recording Only"      (default; no Screen Recording)
         //   video      → ScreenCaptureKit → "Screen & System Audio Recording"  (only when you record video)
-        if wantVideo { startSCK(bundle: bundle) } else { startTap(aoids) }
+        let wantVideo = mode == "always" || mode == "share"
+        let hasSystemSource = wantVideo ? (stream != nil || systemAttemptInFlight) : tap != nil
+        if !hasSystemSource, now.timeIntervalSince(lastSystemAttempt) >= 5 {
+            lastSystemAttempt = now; meetingAudioState = "starting"; captureDetail = ""; publish()
+            if wantVideo { startSCK(bundle: bundle) } else { startTap(aoids) }
+        }
+
     }
+
     private func startTap(_ aoids: [AudioObjectID]) {
+        systemHasReceivedBuffer = false; lastSystemBufferAt = nil
         let t = ProcessTap(sysSeg)
-        if t.start(aoids: aoids) { self.tap = t; err(">> capture started (audio-only, Core Audio tap)") }
-        else { self.tap = nil }   // start() logged why; the mic still runs, and the next tick re-arms the tap
+        if t.start(aoids: aoids) {
+            self.tap = t
+            channelReady("meetingAudio", for: session)
+            err(">> capture source opened (audio-only, Core Audio tap)")
+        }
+        else {
+            self.tap = nil
+            meetingAudioFailed("Meeting audio unavailable · allow System Audio Recording for My Assistant")
+        }
     }
     private func startSCK(bundle: String) {
+        systemAttemptInFlight = true
+        systemHasReceivedBuffer = false; lastSystemBufferAt = nil
+        let expectedSession = session
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
-            guard self.running else { return }                 // call ended during the async fetch
-            if let error = error { err("SCShareableContent error: \(error) — grant Screen Recording (video mode)"); return }
-            guard let display = content?.displays.first else { err("no display"); return }
+            guard self.running else { self.systemAttemptInFlight = false; return } // call ended during fetch
+            if let error = error {
+                err("SCShareableContent error: \(error) — grant Screen Recording (video mode)")
+                self.meetingAudioFailed("Video meeting audio unavailable · allow Screen Recording for My Assistant")
+                return
+            }
+            guard let display = content?.displays.first else {
+                self.meetingAudioFailed("No display is available for video meeting capture")
+                return
+            }
             let cfg = SCStreamConfiguration()
             cfg.capturesAudio = true
             cfg.excludesCurrentProcessAudio = false            // we play no audio; excluding wedges capture
@@ -715,6 +930,10 @@ final class Capture {
             cfg.pixelFormat = kCVPixelFormatType_32BGRA
             cfg.queueDepth = 6
             let out = SCKOut(sysSeg)
+            out.onStopped = { [weak self] error in
+                guard let self, self.session == expectedSession else { return }
+                self.meetingAudioFailed("Video meeting audio stopped · restarting automatically")
+            }
             do {
                 let stream = SCStream(filter: makeFilter(display, content?.applications ?? [], bundle: bundle), configuration: cfg, delegate: out)
                 try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio"))
@@ -726,10 +945,23 @@ final class Capture {
                 try stream.addStreamOutput(vout, type: .screen, sampleHandlerQueue: DispatchQueue(label: "video"))
                 self.rec = r; self.videoOut = vout; self.recFile = file
                 postRecording(file, stamp)                          // reserve cur.video on the server
-                stream.startCapture { e in if let e = e { err("startCapture error: \(e)") } }
+                stream.startCapture { e in
+                    DispatchQueue.main.async {
+                        self.systemAttemptInFlight = false
+                        if let e = e {
+                            err("startCapture error: \(e)")
+                            self.meetingAudioFailed("Video meeting audio failed to start · check Screen Recording permission")
+                        } else {
+                            self.channelReady("meetingAudio", for: expectedSession)
+                        }
+                    }
+                }
                 self.stream = stream; self.sckOut = out
                 err(">> capture started (audio+video, ScreenCaptureKit)")
-            } catch { err("SCStream setup failed: \(error)") }
+            } catch {
+                err("SCStream setup failed: \(error)")
+                self.meetingAudioFailed("Video meeting audio failed to start · check Screen Recording permission")
+            }
         }
     }
     func updateShare() { if mode == "share", let r = rec { r.record = curSharing } }
@@ -743,8 +975,32 @@ final class Capture {
         stream = nil; sckOut = nil; videoOut = nil
         rec?.finish { ok in err(ok ? ">> screen recording saved" : ">> no screen recording written") }
         rec = nil
+        sysSeg.onBufferHeartbeat = nil
+        statusSequence += 1
+        postCaptureStatus(session: session, sequence: statusSequence, phase: "stopped", microphone: "idle",
+                          meetingAudio: "idle", detail: "")
+        session = ""; microphoneState = "idle"; meetingAudioState = "idle"; captureDetail = ""
+        systemAttemptInFlight = false
+        systemHasReceivedBuffer = false; lastSystemBufferAt = nil
+        systemRecoveryAwaitingBuffer = false
+        systemDropoutCount = 0; systemDropoutWindowStart = nil
         targetBundle = ""
     }
+}
+
+func postCaptureStatus(session: String, sequence: UInt64, phase: String, microphone: String,
+                       meetingAudio: String, detail: String) {
+    let object: [String: Any] = [
+        "type": "capture-status",
+        "session": session,
+        "sequence": sequence,
+        "phase": phase,
+        "microphone": microphone,
+        "meetingAudio": meetingAudio,
+        "detail": detail,
+        "ts": Int(Date().timeIntervalSince1970 * 1000),
+    ]
+    postJSON(object)
 }
 
 // Tell the server which file the current call's screen recording is in (it stamps cur.video).
@@ -755,8 +1011,8 @@ func postRecording(_ file: String, _ startedAt: Int) {
 
 let cap = Capture()
 var curModuleMeetings = false   // Meetings opt-in — gates Screen-Recording detection + capture (no opt-in ⇒ no prompt)
-var wasInCall = false, wasApp = "", wasTitle = "", curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = false, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curBrowserMeet = true, curVocab = ""
-var configFetchInFlight = false
+var curSharing = false, curVideoMode = VIDEO_MODE0, curTranslate = false, curLanguage = "auto", curManual = "auto", curAutoDetect = true, curDesktopMeet = true, curBrowserMeet = true, curVocab = ""
+var configFetchInFlight = false, observationFetchInFlight = false
 var parentExitScheduled = false
 
 func parentIsAlive() -> Bool {
@@ -785,6 +1041,7 @@ func fetchConfig() {
                 curLanguage = (o["language"] as? String) ?? "auto"
                 curManual = (o["manual"] as? String) ?? "auto"
                 curAutoDetect = (o["autoDetect"] as? Bool) ?? true
+                curDesktopMeet = (o["desktopMeet"] as? Bool) ?? true
                 curBrowserMeet = (o["browserMeet"] as? Bool) ?? true
                 curVocab = (o["vocab"] as? String) ?? ""
             }
@@ -796,7 +1053,7 @@ func fetchConfig() {
 // not Accessibility): a native meeting app actively running audio I/O = we're in a call. Returns the app
 // key + the process objects to tap, or nil. This is the whole point of the audio-only model — we know
 // you're in a call AND capture the other participants without ever touching Screen Recording.
-typealias CaptureTarget = (key: String, title: String, bundle: String, aoids: [AudioObjectID])
+typealias CaptureTarget = (key: String, title: String, bundle: String, family: String, aoids: [AudioObjectID])
 func captureTarget() -> CaptureTarget? {
     // Resolve WHAT to tap from --app: `all` = global system audio; a bundle id = that app; `auto` = a
     // dedicated call app or an audio-active browser/chat app with meeting evidence.
@@ -808,15 +1065,15 @@ func captureTarget() -> CaptureTarget? {
     }
     switch APP_SEL {
     case "all":
-        return ("call", "", "", [])
+        return ("call", "", "", "desktop", [])
     case "auto":
         let active = procs { KNOWN_CALL_BUNDLES.contains($0) }.filter { $0.running }
         // Dedicated conferencing apps first: active process audio is a strong call signal.
-        for spec in DEDICATED_MEETING_APPS {
+        for spec in DEDICATED_MEETING_APPS where curDesktopMeet {
             if let first = active.first(where: { spec.bundles.contains($0.bundle) }) {
                 let hits = active.filter { $0.bundle == first.bundle }
                 let evidence = meetingWindowEvidence(first.bundle)
-                return (spec.key, usefulMeetingTitle(evidence?.titles ?? [], key: spec.key), first.bundle, hits.map(\.aoid))
+                return (spec.key, usefulMeetingTitle(evidence?.titles ?? [], key: spec.key), first.bundle, "desktop", hits.map(\.aoid))
             }
         }
         // Browsers and multipurpose chat apps require a meeting-shaped window or tab as well as audio.
@@ -825,25 +1082,24 @@ func captureTarget() -> CaptureTarget? {
                   let evidence = meetingWindowEvidence(first.bundle),
                   let key = platformFromEvidence(evidence.text, bundle: first.bundle) else { continue }
             let hits = active.filter { $0.bundle == first.bundle }
-            return (key, usefulMeetingTitle(evidence.titles, key: key), first.bundle, hits.map(\.aoid))
+            return (key, usefulMeetingTitle(evidence.titles, key: key), first.bundle, "browser", hits.map(\.aoid))
         }
-        return GATE ? nil : ("call", "", "", [])
+        return GATE ? nil : ("call", "", "", "desktop", [])
     default:
         let hits = procs { $0 == APP_SEL }.filter { $0.running }
         if !hits.isEmpty {
             let key = dedicatedKey(APP_SEL) ?? evidenceKey(APP_SEL) ?? "call"
             let evidence = meetingWindowEvidence(APP_SEL)
-            return (key, usefulMeetingTitle(evidence?.titles ?? [], key: key), APP_SEL, hits.map(\.aoid))
+            let family = dedicatedKey(APP_SEL) == nil ? "browser" : "desktop"
+            return (key, usefulMeetingTitle(evidence?.titles ?? [], key: key), APP_SEL, family, hits.map(\.aoid))
         }
-        return GATE ? nil : ("call", "", APP_SEL, [])
+        return GATE ? nil : ("call", "", APP_SEL, "desktop", [])
     }
 }
-// Push inMeeting to the server so the UI flips live + shows the recording indicator.
-func postInMeeting(_ on: Bool, _ app: String, _ title: String) {
-    var st: [String: Any] = on ? ["inMeeting": true, "app": app] : ["inMeeting": false]
-    if on, !title.isEmpty { st["meetingTitle"] = title; st["title"] = title }
-    postJSON(["type": "state", "source": "coreaudio", "state": st])
+func targetIdentity(_ target: CaptureTarget) -> String {
+    "\(target.key)|\(target.bundle)"
 }
+var retainedTarget: CaptureTarget?
 // Internal cross-process event: the Accessibility helper sleeps until Core Audio proves a call is
 // active. This is not a user-facing macOS notification; it is the efficient signal behind one.
 let meetingActivityNotification = Notification.Name("com.myassistant.desktop.meeting-activity")
@@ -855,34 +1111,97 @@ func publishMeetingActivity(_ on: Bool, _ app: String, _ bundle: String) {
         deliverImmediately: true
     )
 }
-// Report raw call detection to the server on change. The server composes this with the manual override
-// to drive the UI, the meeting lifecycle, and re-arming auto-detection after a manual pause/stop.
-func reportDetected(_ inCall: Bool, _ app: String, _ title: String) {
-    guard inCall != wasInCall || (inCall && (app != wasApp || title != wasTitle)) else { return }
-    wasInCall = inCall; wasApp = inCall ? app : ""; wasTitle = inCall ? title : ""
-    postInMeeting(inCall, app, title)
-}
 // Decide capture: the manual override wins over auto-detection. start()/stop() are idempotent, so this
 // runs every tick and only acts on a change — 'paused'/'off' release the mic even mid-call; 'on' forces
 // capture even with no detected call (manual record).
-func gate(_ target: CaptureTarget?) {
-    let detected = target != nil
-    publishMeetingActivity(detected, target?.key ?? "", target?.bundle ?? "")
-    reportDetected(detected, target?.key ?? "", target?.title ?? "")
+func gate(_ target: CaptureTarget?, detectedTarget: CaptureTarget?) {
+    let activityTarget = detectedTarget ?? (curManual == "on" ? target : nil)
+    publishMeetingActivity(activityTarget != nil, activityTarget?.key ?? "", activityTarget?.bundle ?? "")
+    let detected = detectedTarget != nil
     let capture = (curManual == "on") || (curManual == "auto" && curAutoDetect && detected)
-    if capture { cap.start(mode: curVideoMode, aoids: target?.aoids ?? [], bundle: target?.bundle ?? "") } else { cap.stop() }
+    if capture {
+        if cap.running, let target, !target.bundle.isEmpty, target.bundle != cap.targetBundle {
+            err(">> call target changed — retargeting capture")
+            cap.stop()
+        }
+        cap.start(mode: curVideoMode, aoids: target?.aoids ?? [], bundle: target?.bundle ?? "")
+    } else {
+        cap.stop()
+    }
 }
+
+// macOS supplies raw process/window evidence and the AudioObjectIDs needed by Core Audio. The shared Rust
+// detector owns hysteresis, source policy, rising/falling edges, notifications, and meeting lifecycle. The
+// adapter retains only the ephemeral native target that corresponds to Rust's stable identity.
+func submitMeetingObservation(_ observed: CaptureTarget?) {
+    guard !observationFetchInFlight,
+          let url = URL(string: "http://127.0.0.1:\(guiPort)/api/meeting/observation") else { return }
+    observationFetchInFlight = true
+    var object: [String: Any] = [:]
+    if let observed, !observed.bundle.isEmpty {
+        object = [
+            "identity": targetIdentity(observed),
+            "app": observed.key,
+            "title": observed.title,
+            "bundle": observed.bundle,
+            "family": observed.family,
+        ]
+    }
+    guard let body = try? JSONSerialization.data(withJSONObject: object) else {
+        observationFetchInFlight = false
+        return
+    }
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    if !GUI_TOKEN.isEmpty { request.setValue("Bearer \(GUI_TOKEN)", forHTTPHeaderField: "Authorization") }
+    request.httpBody = body
+    netSession.dataTask(with: request) { data, _, _ in
+        let decision = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        DispatchQueue.main.async {
+            observationFetchInFlight = false
+            guard curModuleMeetings, let decision else { return }
+            let activeIdentity = (decision["active"] as? Bool) == true
+                ? decision["activeIdentity"] as? String
+                : nil
+            if let activeIdentity {
+                if let observed, targetIdentity(observed) == activeIdentity {
+                    retainedTarget = observed
+                } else if retainedTarget.map(targetIdentity) != activeIdentity {
+                    retainedTarget = nil
+                }
+            } else {
+                retainedTarget = nil
+            }
+            let detectedTarget = activeIdentity == nil ? nil : retainedTarget
+            let target = curManual == "on" ? observed : detectedTarget
+            gate(target, detectedTarget: detectedTarget)
+        }
+    }.resume()
+}
+
 func applyCaptureGate() {
     cap.updateShare()
     if !curModuleMeetings {
+        retainedTarget = nil
         publishMeetingActivity(false, "", "")
-        reportDetected(false, "", "")
         if cap.running { cap.stop() }
+        submitMeetingObservation(nil)
         return
     }
-    gate(captureTarget())                                            // detect + capture, all from the audio process list
+    // Automatic detection observes only enabled source families. A manual recording resolves a target
+    // immediately even when automatic detection is off; unsupported apps retain the explicit all-audio path.
+    let observed = (curAutoDetect || curManual == "on") ? captureTarget() : nil
+    if curManual == "on" {
+        gate(observed, detectedTarget: retainedTarget)
+    } else if !curAutoDetect {
+        retainedTarget = nil
+        gate(nil, detectedTarget: nil)
+    }
+    submitMeetingObservation(observed)
 }
 func tick() {
+    if processRestartScheduled { return }
     guard parentIsAlive() else {
         if !parentExitScheduled {
             parentExitScheduled = true

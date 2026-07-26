@@ -1,7 +1,7 @@
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { Gate } = require("../gate.js");
+const { Gate, MeetingDetector } = require("../gate.js");
 
 test("fresh gate is idle", () => {
   const g = new Gate();
@@ -92,4 +92,21 @@ test("a manual start DURING a call ends with that call", () => {
   g.setManual("start");
   g.setDetected(false);
   assert.equal(g.recording, false);
+});
+
+test("meeting observations stabilize in the developer-harness mirror", () => {
+  const detector = new MeetingDetector();
+  const zoom = { identity: "zoom|us.zoom.xos", app: "zoom", title: "", bundle: "us.zoom.xos", family: "desktop" };
+  assert.equal(detector.update(zoom).active, null);
+  assert.equal(detector.update(zoom).transition, "started");
+  assert.equal(detector.update(null).active.identity, zoom.identity);
+  assert.equal(detector.update(null).active.identity, zoom.identity);
+  assert.equal(detector.update(null).transition, "ended");
+});
+
+test("meeting observation source controls fail closed", () => {
+  const detector = new MeetingDetector();
+  const meet = { identity: "meet|com.google.Chrome", app: "meet", title: "", bundle: "com.google.Chrome", family: "browser" };
+  assert.equal(detector.update(meet, { browser: false }).active, null);
+  assert.equal(detector.update(meet, { browser: false }).active, null);
 });

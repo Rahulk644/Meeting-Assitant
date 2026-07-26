@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "My Assistant Meeting Metadata",
+  "version": "0.1.0",
+  "description": "Optional, bounded meeting-tab metadata for the My Assistant desktop app.",
+  "permissions": ["nativeMessaging"],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meet.google.com/*",
+        "https://*.zoom.us/*",
+        "https://teams.microsoft.com/*"
+      ],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

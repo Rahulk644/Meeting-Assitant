@@ -59,4 +59,78 @@ class Gate {
   }
 }
 
-module.exports = { Gate };
+// Developer-harness mirror of the shipped Rust MeetingDetector. The production app has one authoritative
+// implementation in meeting_detection.rs; this pure mirror keeps ./run.sh useful without putting policy
+// back into the macOS capture helper.
+class MeetingDetector {
+  constructor(startHits = 2, endMisses = 3) {
+    this.startHits = Math.max(1, startHits);
+    this.endMisses = Math.max(1, endMisses);
+    this.active = null;
+    this.candidate = null;
+    this.candidateHits = 0;
+    this.missingHits = 0;
+  }
+
+  reset() {
+    const transition = this.active ? "ended" : "none";
+    this.active = this.candidate = null;
+    this.candidateHits = this.missingHits = 0;
+    return { active: null, transition };
+  }
+
+  update(observed, policy = {}) {
+    const enabled = policy.enabled !== false;
+    const allowed = observed && enabled
+      && (observed.family === "desktop" ? policy.desktop !== false
+        : observed.family === "browser" ? policy.browser !== false : false);
+    observed = allowed ? observed : null;
+    if (!enabled) return this.reset();
+
+    if (this.active) {
+      if (observed && observed.identity === this.active.identity) {
+        this.active = observed;
+        this.candidate = null;
+        this.candidateHits = this.missingHits = 0;
+        return { active: this.active, transition: "none" };
+      }
+      if (observed) {
+        this.missingHits = 0;
+        if (this.candidate && this.candidate.identity === observed.identity) this.candidateHits += 1;
+        else this.candidateHits = 1;
+        this.candidate = observed;
+        if (this.candidateHits >= this.startHits) {
+          this.active = this.candidate;
+          this.candidate = null;
+          this.candidateHits = 0;
+          return { active: this.active, transition: "switched" };
+        }
+        return { active: this.active, transition: "none" };
+      }
+      this.candidate = null;
+      this.candidateHits = 0;
+      this.missingHits += 1;
+      if (this.missingHits >= this.endMisses) return this.reset();
+      return { active: this.active, transition: "none" };
+    }
+
+    this.missingHits = 0;
+    if (!observed) {
+      this.candidate = null;
+      this.candidateHits = 0;
+      return { active: null, transition: "none" };
+    }
+    if (this.candidate && this.candidate.identity === observed.identity) this.candidateHits += 1;
+    else this.candidateHits = 1;
+    this.candidate = observed;
+    if (this.candidateHits >= this.startHits) {
+      this.active = this.candidate;
+      this.candidate = null;
+      this.candidateHits = 0;
+      return { active: this.active, transition: "started" };
+    }
+    return { active: null, transition: "none" };
+  }
+}
+
+module.exports = { Gate, MeetingDetector };

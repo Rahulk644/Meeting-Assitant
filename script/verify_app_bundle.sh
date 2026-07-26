@@ -38,6 +38,12 @@ signed_runtime "$RESOURCES/meeting-state/meeting-state"
 signed_runtime "$RESOURCES/dictation-target/dictation-target"
 signed_runtime "$RESOURCES/polish-runtime/llama-server"
 
+if strings "$APP/Contents/MacOS/app" |
+  grep -E '/api/agent/|set_agent_shortcut|agent-context/agent-context|agent-action/agent-action' >/dev/null; then
+  echo "Agent research code or ACL leaked into the production executable." >&2
+  exit 1
+fi
+
 ENTITLEMENTS="$(codesign -d --entitlements :- "$APP" 2>&1)"
 [[ "$ENTITLEMENTS" == *"com.apple.security.device.audio-input"* ]] || {
   echo "The hardened app is missing its microphone entitlement." >&2
@@ -48,6 +54,11 @@ ENTITLEMENTS="$(codesign -d --entitlements :- "$APP" 2>&1)"
   echo "Agent helpers must not be packaged in the initial product." >&2
   exit 1
 }
+if grep -E -q '/api/agent/|id=v-agents|set_agent_shortcut|agentCompute|__myAssistantOpenAgents|agent_shortcut|agents_exp' \
+  "$RESOURCES/webui/index.html"; then
+  echo "Agent research code leaked into the production WebView." >&2
+  exit 1
+fi
 if find "$RESOURCES" -type f \( -name '*.gguf' -o -name '*.bin' \) -print -quit | grep -q .; then
   echo "Model weights must be downloaded separately, not bundled." >&2
   exit 1
