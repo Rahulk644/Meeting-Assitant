@@ -5,9 +5,9 @@ capability shipped. Current product direction lives in [`PRODUCT_STRATEGY.md`](.
 implementation and OSS adoption decisions live in [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md)
 and [`OSS_COMPONENT_STRATEGY.md`](OSS_COMPONENT_STRATEGY.md).
 
-**Observed:** 14 July 2026
+**Observed:** 14 July 2026; local package refresh 26 July 2026
 
-**Scope:** Wispr Flow, Handy, FluidVoice, Fathom, Fireflies, Meetily, Snaply, and Apple SpeechAnalyzer
+**Scope:** Wispr Flow, Handy, FluidVoice, Fathom, Granola, Fireflies, Meetily, Snaply, and Apple SpeechAnalyzer
 
 **Authority:** This document informs product decisions. `PRODUCT_RELEASE_MATRIX.md` remains the authority for what is actually shipped.
 
@@ -19,6 +19,7 @@ My Assistant should not become a clone of any one competitor. The winning combin
 - **Handy's local speech engine discipline:** one native process, on-demand model loading, explicit model lifecycle controls, and a simple system-wide shortcut;
 - **FluidVoice's language-first engine onboarding:** recommend one engine for the user's language, keep system-owned models separate from downloads, and expose alternatives without making every user understand model internals;
 - **Fathom's meeting journey:** calendar awareness, per-meeting capture choices, clear detection notifications, live notes plus scratchpad, automatic post-call processing, and consent-aware recording;
+- **Granola's meeting-output platform:** bot-free capture, human-authored notes, calendar context, approved writes to business systems, webhooks, and controlled MCP connections;
 - **Fireflies' coverage and live-assist model:** bot and no-bot modes, broad call-app detection, a useful live pane, and search/Ask across meeting history;
 - **Meetily's local resilience:** incremental transcript persistence, audio checkpoints, recovery after a crash, background model downloads, and local summary options.
 
@@ -33,7 +34,114 @@ This was a clean-room product study using:
 3. installed app metadata, code-signing metadata, process inventory, memory readings, and accessibility-exposed UI;
 4. reversible black-box use of the installed apps.
 
-No account credentials, private databases, network traffic, or proprietary source code were extracted. Wispr Flow, Fathom, and Snaply were not decompiled. The local observations below are a point-in-time measurement on this Mac, not a universal benchmark.
+The original 14 July study did not decompile Wispr Flow, Fathom, or Snaply. On 26 July, the installed
+Fathom, Granola, and Fireflies packages and
+separately extracted copies of their compiled first-party JavaScript were inspected to validate process
+boundaries, permission use, event contracts, and connector boundaries. No proprietary code, assets, native
+libraries, or extracted files enter this repository, and no implementation may be copied from them. They
+remain clean-room behavioural and architecture references. No account credentials, local databases, user
+documents, tokens, or network traffic were inspected. Wispr Flow was not extracted in this refresh.
+
+The local observations below are point-in-time measurements on this Mac, not a universal benchmark. Use
+`script/benchmark_app_footprint.sh` for repeatable bundle and live-process snapshots; it is read-only and
+does not launch an app.
+
+## Local package refresh — 26 July 2026
+
+The current installed bundles reinforce the existing Tauri/native direction:
+
+| App and observed version | Installed size | Package shape | Implication |
+|---|---:|---|---|
+| My Assistant 0.1.0 | 40 MB | Tauri app plus five bounded native executables; models stored separately | Preserve this footprint advantage and keep disabled features at zero idle cost |
+| Fathom 3.5.0 | 329 MB | 255 MB Electron frameworks, 62 MB ASAR, four small arm64 native helpers | Study the helper/event boundaries and user journey, not the shell |
+| Granola 7.441.6 | 606 MB | 483 MB Electron frameworks, 56 MB ASAR, native audio/calendar/TCC helpers, and multiple utility processes | Study the audio and connector contracts; reject the runtime footprint and cloud-cache assumptions |
+| Fireflies 0.1.38 | 352 MB | 263 MB Electron frameworks, 67 MB ASAR, 20 MB Expo Web app, native audio monitor and keyboard/glass modules | Study no-driver capture, per-app policy, permission UX, reconnecting live transport, and Live Assist; reject the shell and cloud coupling |
+| Wispr Flow 1.6.224 | 570 MB | 268 MB Electron frameworks, 187 MB ASAR, 95 MB assets, unpacked native modules, and a Swift helper app | Study dictation interaction quality; reject the multi-renderer baseline |
+
+The extracted Fathom first-party package is small compared with its shell: 76 compiled JavaScript files use
+about 616 KB, with about 1.3 MB of assets. This supports the earlier conclusion that most installed size is
+runtime/framework overhead and that the product's durable value is its service, models, data, and workflow,
+not a large desktop codebase.
+
+The inspected Fathom package confirms these independently implementable contracts:
+
+- a native meeting monitor publishes bounded window lifecycle and Chrome tab/window mapping events;
+- a separate audio monitor publishes microphone-input process and device activity;
+- screenshots and metadata can be captured during configured meeting modes and are queued to signed upload
+  URLs; the package also exposes an accessibility-tree-dump option to the screenshot command;
+- the Chrome extension bridge uses a Unix-domain socket and tightens its mode to owner read/write; and
+- Fathom protects its own windows from capture.
+
+Those facts prove capability, not the exact user-facing trigger, capture frequency, retention policy, or
+server-side use for every account. Those must be tested through the product and verified against published
+policy before making broader claims.
+
+My Assistant should retain the narrower privacy boundary: Dictation never captures screens or walks the
+Accessibility tree; meeting video remains separately permission-gated; meeting audio stays local; and a
+future cloud transfer must be explicit and scoped. Fathom's event split is still a strong validation of the
+planned `MeetingDetector` and `MeetingEventSource` seams.
+
+Granola separates its desktop work into bounded audio, microphone-monitor, calendar, permission, window,
+encrypted-cache, and third-party-meeting utility processes. Its local encrypted database behaves as a
+rebuildable synchronized cache; that is not a safe pattern for My Assistant's authoritative local meeting
+records, which must remain recoverable rather than being deleted on an open/decryption failure.
+
+Its floating **Nub** is a separate always-on-top panel: tiny and movable while collapsed, expandable to live
+transcript and a direct last-minute catch-up action, and visible across full-screen Spaces. Its audio health
+contract does not treat initial remote silence as failure. Dropout recovery begins only after system audio
+has first produced a signal/buffer, then restarts a lost audio process within a bounded policy. Those
+behaviours validate separating source-open readiness, transcript content, and post-flow liveness.
+My Assistant implements that as a lighter source recreation first, escalating repeated failures to a
+supervised helper-process recycle with bounded parent-owned relaunch.
+
+The extracted live-surface bundles make the interaction contract more specific. Granola treats the Nub,
+live transcript, transcript bubbles, brief, and active-listening answer as separate components. The Nub
+opens a focusable side transcript panel, groups self speech and other speech into visually distinct bubbles,
+keeps **What did I miss?** beside the current transcript, and adapts the transcript surface between a compact
+caption and a taller searchable history. Fireflies persists the user's compact/full live-view choice and
+keeps one realtime content view while switching it between a floating click-through panel and a normal
+resizable window; saved full-window bounds are clamped to the active display. Fathom's packaged shell
+instead receives a server-owned live-window configuration and creates a bounded transparent `SimpleWindow`,
+so its exact live renderer is not authoritative local source. My Assistant keeps one lighter native AppKit
+panel because there is no WebView state to reparent, but adopts the independently implemented product
+properties: quiet branded presence, adaptive vertical growth, speaker-grouped conversation, contextual
+catch-up, no focus theft, and one explicit route to the full app.
+
+The inspected native audio package contains WebRTC AEC3 identifiers and exposes separate render/system-audio
+and microphone paths, device-change handling, and echo-canceller metrics. That is strong evidence for the
+missing acoustic-echo-cancellation qualification task: feed the exact system-audio render stream and the
+microphone capture stream through an independently integrated, open-source WebRTC AudioProcessing boundary.
+The upstream implementation is BSD-licensed, but the current Rust wrapper has build and versioning caveats;
+it must pass speaker/headset, delay, hot-plug, CPU, memory, and licensing tests before adoption. Do not copy
+or redistribute Granola's native module.
+
+Granola also validates a useful connector boundary. The desktop presents connections and approved actions,
+while OAuth secrets and third-party execution remain server-side. Connector calls carry a stable connector
+identity, connection identity, typed arguments, result, and action identity. MCP calls additionally carry
+the server and tool identity. Workflows trigger from durable events such as `meeting_ended`, apply explicit
+filters, and produce auditable action results. My Assistant should implement the same product properties
+through its own contract: stable meeting outputs, least-privilege connections, preview and confirmation,
+idempotency, receipts, and recovery. Connectors are meeting features, not a reason to expose Agents early.
+
+Primary implementation references: [WebRTC AEC3 source](https://webrtc.googlesource.com/src/+/refs/heads/main/modules/audio_processing/aec3),
+[WebRTC BSD license](https://webrtc.googlesource.com/src/+/refs/heads/main/LICENSE), and
+[Rust WebRTC AudioProcessing wrapper](https://docs.rs/crate/webrtc-audio-processing/latest).
+
+### Comparator decision
+
+Fathom, Granola, and Fireflies now cover the useful product axes. Fathom is the lightweight
+capture/consent reference; Granola is the human-note/audio/connector reference; Fireflies is the no-driver
+cross-app, permission, notification, and live-assist reference. No additional comparator should delay the
+Meetings Beta implementation or physical test matrix.
+
+Krisp remains outside the baseline. Its virtual audio driver changes the machine under test and is not
+needed to implement the Core Audio process-tap path. Qualify it only later in an isolated, reversible
+audio-quality experiment after current latency, echo, routing, energy, and device-change baselines are
+frozen.
+
+Official references: [Granola bot-free meeting workflow](https://www.granola.ai/blog/how-to-use-ai-to-take-meeting-notes-a-step-by-step-guide-for-2026),
+[Fireflies no-bot desktop capture](https://guide.fireflies.ai/articles/6666374717-how-to-record-meetings-without-a-bot-on-the-fireflies-desktop-app),
+and [Krisp AI Meeting Assistant](https://krisp.ai/ai-meeting-assistant/).
 
 ## Local footprint snapshot
 
@@ -187,19 +295,84 @@ Decision for My Assistant:
 
 Official references: [Fathom Desktop App](https://help.fathom.video/en/articles/449088), [new bot-free experience](https://help.fathom.video/en/articles/11577345), [Slack Huddles](https://help.fathom.video/en/articles/11870465), and [recording consent](https://help.fathom.video/en/articles/6150977).
 
+### Granola: human notes, audio quality, and connector benchmark
+
+The installed 7.441.6 package is the strongest reference for what happens after capture:
+
+- user notes remain a first-class input instead of being overwritten by a generated summary;
+- capture, microphone monitoring, calendar, permission status, window coordination, encrypted cache, and
+  third-party meeting automation are separated behind bounded process messages;
+- the native audio boundary combines microphone and system/render audio, responds to device changes, and
+  contains WebRTC AEC3 echo-canceller identifiers and metrics;
+- connectors cover messaging, notes, CRM, email/calendar, webhooks, and custom MCP servers;
+- connector execution is normalized around connector, connection, action/tool, arguments, result, and
+  destination identities; and
+- organization policy can restrict connectors and MCP server/tool access.
+
+Decision for My Assistant:
+
+- Treat the corrected meeting record plus scratchpad as the source. Generated notes never silently replace
+  user-authored notes.
+- Qualify WebRTC AEC3 through our own `AudioSource` seam to solve speaker-loopback duplication. Headsets
+  should bypass work that cannot improve their path.
+- Keep OAuth secrets, provider SDKs, retries, and write execution out of the desktop process. The desktop
+  previews, asks for approval, and shows a durable receipt.
+- Start with follow-up email/Slack drafts and signed webhooks, then Notion and CRM writes. Broad connector
+  count matters less than reliable completion, idempotency, and recovery.
+- Put MCP behind the same allowlisted action contract. It is not an authorization bypass or an excuse to
+  launch Agents.
+
+What not to copy:
+
+- a 606 MB Electron bundle, large universal framework payload, or a collection of resident utility
+  processes;
+- deleting an authoritative local database after an open/decryption failure;
+- treating a cloud-synchronized cache as the source of truth for local-first meetings; or
+- desktop-held provider refresh tokens and provider-specific data models leaking into the meeting core.
+
+The resulting independent contract is documented in
+[`CONNECTOR_ARCHITECTURE.md`](CONNECTOR_ARCHITECTURE.md).
+
 ### Fireflies: coverage, mode clarity, and meeting intelligence
+
+The installed 0.1.38 package was inspected through bundle metadata, first-party compiled modules, shipped
+source maps, accessibility-exposed UI, and a read-only product walkthrough. No meeting content, credentials,
+private databases, tokens, or network traffic were inspected, and no Fireflies code or assets enter this
+repository.
 
 Observed useful patterns:
 
 - Detection offers two explicit actions: invite the bot or capture system audio without a bot.
 - No-bot recording supports many meeting, calling, browser, and phone-call surfaces.
-- Live Assist opens automatically with real-time transcript, notes, AskFred, AI skills, and instant summaries.
-- The desktop app includes a diagnostic export, permission management, update status, meeting-prep notification, and screen-share hiding.
+- On modern macOS, no-bot capture uses Chromium's Core Audio tap system-loopback path plus ordinary
+  microphone capture. It does not require a virtual audio driver.
+- A small native monitor emits process audio/microphone start-stop evidence. Browser meeting URLs are looked
+  up only for the audio-active browser; current macOS builds use bounded Apple Events tab queries rather than
+  requiring an extension. URL shapes are validated and polling-mode URLs must remain stable before use.
+- The real-time client has one active meeting/sender owner, sends audio chunks and microphone activity,
+  emits transcripts, measures bytes/chunks/drops, and distinguishes terminal client failures from transient
+  reconnects with bounded exponential backoff.
+- Settings separate automatic capture, detection notifications, per-app exclusions, notification
+  persistence, and consent-message automation. The permission page names only Microphone and System Audio
+  for ordinary no-bot capture; Screen Recording is not presented as a default requirement.
+- The compact live surface keeps transcript, notes, and Intelligence close to pause/stop. Its four useful
+  actions are last-minute catch-up, summary-so-far, explicit action items, and follow-up questions.
+- The desktop uses separate compact always-on-top and full normal windows around one reusable live content
+  view. That validates a presentation split, though its observed compact default is substantially larger
+  than a Nub and should not set My Assistant's footprint.
+- The desktop app also includes a diagnostic export, update status, meeting-prep notification, and screen-share hiding.
 - AskFred works both within one meeting and across meeting history.
 - Bot mode and no-bot mode have honest capability differences: named speakers, sales assist, and saved media are not promised where the system-audio mode cannot provide them.
 
 Decision for My Assistant:
 
+- Keep the existing native Core Audio process tap. Add stable call-edge hysteresis and separate desktop-app
+  versus browser/huddle enablement; do not install a virtual driver or adopt Electron.
+- Keep browser capture extension-optional. The local app must work first with active-audio plus bounded
+  meeting-window evidence. A later Chrome extension can improve exact tab/meeting metadata through a narrow,
+  authenticated event adapter without owning capture or the canonical meeting record.
+- Live Assist is a meeting feature, not Agent mode. Every action is grounded in the current non-excluded
+  transcript; last-minute catch-up uses an actual 60-second window; it never sends or writes anything.
 - Show capability differences before capture begins. Never imply that diarization provides participant names when the app only knows Speaker 1 and Speaker 2.
 - Add a one-click diagnostic bundle with redaction before public beta support expands.
 - Make local full-text search the first cross-meeting feature; add cited Ask across meetings only after the local index and source-link contract are reliable.

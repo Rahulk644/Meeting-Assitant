@@ -10,7 +10,8 @@ The product foundation is credible and deliberately narrow. Dictation has a real
 transcription, target-safety, cleanup, and insertion path. Meetings Beta has automatic and manual capture,
 checkpointed transcripts, corrections, scratchpad notes, post-call notes, and a local library. The production
 release contract fails closed, models are verified before loading, sensitive paths are private, and packaged
-artifacts exclude Node, model weights, telemetry, and Agent helpers.
+artifacts exclude Node, model weights, telemetry, Agent helpers, and Agent research Web assets. The ordinary
+Rust build also excludes the dormant Agent backend.
 
 The automated source gates are green. Native helper self-tests are green. This establishes implementation
 health, not physical product quality: real shortcuts, microphones, target apps, displays, permissions,
@@ -28,6 +29,8 @@ clean-machine installation, and two-person calls still require the named physica
   revision-pinned models, checksum verification, private storage, and signed nested executables.
 - **Recoverable meeting records:** incremental private checkpoints, explicit corrections, transcript
   revisions, and stale-derived-note handling.
+- **A real portability seam:** automatic call-edge policy is dependency-free Rust; the Swift helper reports
+  raw macOS evidence and keeps only Apple capture handles.
 - **Strong release mechanics:** one native build path, production asset generation, exact mounted-DMG
   inspection, and rollback-safe installation of the inspected candidate.
 
@@ -41,11 +44,10 @@ clean-machine installation, and two-person calls still require the named physica
 | P0 | RustSec reports allowed maintenance warnings in the cross-target Tauri graph | They are not active macOS vulnerabilities, but unexplained warnings become release-policy debt and matter before Windows/Linux | Target-scope the policy, track upstream upgrades, keep vulnerability findings release-blocking, and publish an SBOM/license bundle |
 | P0 | Version truth is split across Cargo/Tauri, changelog headings, and artifact labels | A filename can imply a release that has no corresponding version/tag/evidence | Define one release-version procedure; local builds remain `unreleased`, and a named artifact requires an explicit label and release record |
 | P1 | `local_server.rs`, `lib.rs`, and `index.html` are large merge hotspots | Parallel sessions will collide and unrelated responsibilities are difficult to review or test independently | Extract stable domain modules and provider traits before parallel feature work; preserve routes and behavior with contract tests |
-| P1 | Dormant Agent UI, routes, ACL entries, Codex integration, and native research compile with the desktop app | The code is capability-gated and helpers are excluded, but it adds binary/test/maintenance surface to a product where Agents does not exist | Put research behind a non-production Cargo/build feature or remove it from `main` after preserving it in a research branch; production tests must prove no route, boot work, setting, shortcut, or helper |
 | P1 | The browser developer harness duplicates parts of the Rust backend | It is useful for fast UI work but parity can drift | Keep it explicitly developer-only, share pure domain modules/fixtures, and add route-parity tests for every UI call it claims to support |
 | P1 | Meeting speaker attribution is evidence-based, not Fathom-grade diarization and identity resolution | Active-speaker Accessibility evidence cannot consistently name every audio segment, especially in gallery views and overlapping speech | Qualify one local diarizer, combine it with platform/calendar evidence, expose confidence internally, and pass a representative DER/name-attribution corpus plus real calls |
 | P1 | Meetings do not capture meeting chat or recover in-flight audio after a crash | Transcript + chat + scratchpad is the required source record; transcript checkpoints cannot recreate unheard audio | Add typed chat events where supported and bounded encrypted/private audio checkpoints with cleanup and recovery tests |
-| P1 | The current crate is macOS-shaped despite a nominal Windows target | Unconditional macOS dependencies and native helpers make a later Windows port expensive | Introduce platform traits and target-specific dependency sections before new capture/detection code; Windows gets its own adapters, not forks of product logic |
+| P1 | The shared detector is portable, but the crate and remaining capture/target integrations are still macOS-shaped | Unconditional macOS dependencies and native helpers still prevent a Windows build despite the policy extraction | Keep `meeting_detection.rs` OS-free; introduce `AudioSource`, `MeetingEvidenceSource`, target, overlay, and permission traits plus target-specific dependency sections before new capture features; maintain the executable [`WINDOWS_HANDOFF.md`](WINDOWS_HANDOFF.md) packet and leave Windows unverified until X-00 runs on Windows |
 | P2 | The Node and Rust services repeat routing, provider, model, and persistence decisions | Duplication increases cognitive load and regression risk | Keep only the minimal browser simulator; move shared behavior into fixtures/schema-driven contracts rather than creating a second production backend |
 | P2 | Source assets and historical research live beside runtime assets | It is harmless today, but increases ambiguity about what is packaged or authoritative | Keep source brand files under an explicit source-assets directory or remove them after brand ownership is confirmed; keep point-in-time research labelled as research |
 
@@ -57,7 +59,7 @@ clean-machine installation, and two-person calls still require the named physica
 | `transcribe-server` wrapper | Keep until a direct library boundary proves equal or better | It is small, authenticated, engine-neutral at the API, pinned, and already qualified |
 | `meeting-tap`, `meeting-state`, `dictation-target` | Keep as platform adapters; shrink their contracts over time | Their bounded OS privileges are preferable to a monolithic helper or Electron process |
 | Developer Node server | Keep as a simulator, never package | It materially speeds UI iteration; parity must be explicit and tested |
-| Dormant Agent implementation | Isolate, then remove from the default build | It violates the desired lean mental and binary model even though release gates currently hide it |
+| Dormant Agent implementation | Keep behind the explicit `agent-research` Cargo feature; strip from production Web assets | Default builds and production artifacts stay lean while bounded research remains reproducible |
 | Preview-only placeholder surfaces | Remove when they stop serving active design review | Hidden inert controls are not a backlog; roadmap documents are the backlog |
 | Ignored models, app data, recordings, benchmarks, and native build outputs | Preserve locally, never clean automatically | They may be expensive or private user material and are already outside release/source control |
 

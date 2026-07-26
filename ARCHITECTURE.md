@@ -11,9 +11,10 @@ belong in `docs/OSS_COMPONENT_STRATEGY.md` and `docs/IMPLEMENTATION_ROADMAP.md` 
 ```
  you (mic, AVAudioEngine) ──────┐
  others (Core Audio tap; SCK ───┤─▶ stt/meeting-tap (Swift)
-   only when recording video)   │     • dedicated apps: Core Audio; browser/chat: audio + AX meeting evidence
+   only when recording video)   │     • macOS adapter: raw audio/process/window evidence + native tap handles
                                 │     • audio-only ⇒ "System Audio Recording Only"; Screen Recording = video
                                 │     • energy gate → splits speech into WHOLE utterances (natural pauses)
+                                ├─▶ Rust MeetingDetector (shared two-hit/three-miss policy + source controls)
                             ▼
               transcribe-server (transcribe.cpp + Metal · selected final model) ← on demand
                             │  POST /inference → authoritative {"text": …}
@@ -26,8 +27,10 @@ belong in `docs/OSS_COMPONENT_STRATEGY.md` and `docs/IMPLEMENTATION_ROADMAP.md` 
 Agents are outside the initial product boundary. Production always renders one greyed-out, disabled
 **Coming soon** navigation label; it exposes no Agent route, settings, shortcut, helper, compute lane, or
 details. Older experimental source remains isolated for future research, but the Agent helpers are not
-packaged and no Agent initialization runs at app boot. Reopening that surface requires a separate product
-and release decision.
+packaged and no Agent initialization runs at app boot. The default Rust build excludes the research routes,
+shortcut, compute runtime, state, and helper paths; maintainers must opt into the `agent-research` Cargo
+feature explicitly. Release Web assets are separately stripped and verified. Reopening that surface requires
+a separate product and release decision.
 
 Every current capture and transcription component is on-device. No bot joins the call and audio does not
 leave the Mac. Only meeting transcript text can leave when the user explicitly selects a cloud provider for
@@ -46,6 +49,13 @@ second always-on server process is shipped.
 - **Tauri, not Electron.** Rust shell + OS WebView rendering vanilla HTML/CSS/JS. Cross-platform, tiny
   footprint. The heavy compute (transcription) is native C++/Metal, so the UI language never bottlenecks.
   The packaged app and the browser build load the *same* UI from loopback port 8790 — one codebase.
+- **One product core, thin platform adapters.** Product state, call-edge policy, lifecycle, schemas,
+  transcription, Intelligence, settings, and UI belong in shared Rust/Web code. Swift may call Apple-only
+  APIs and retain ephemeral native handles, but it does not own meeting policy. A Windows adapter will
+  provide WASAPI/UI Automation evidence behind the same observation and capture contracts; rewriting an
+  Apple API call in Rust would not make that API portable. The native Windows bootstrap, adapter map, shared
+  fixtures, and acceptance gates live in [`docs/WINDOWS_HANDOFF.md`](docs/WINDOWS_HANDOFF.md); they remain
+  unverified until executed on Windows.
 - **Meeting Intelligence and Smart Polish are separate workloads.** Post-call meeting summary/Ask can use an
   optional, separately installed **Gemma 4 E2B through LiteRT-LM**. It is not bundled or set up by a clean
   DMG; clean beta users otherwise select a BYOK provider. LiteRT-LM keeps this meeting workload near its
@@ -60,13 +70,28 @@ second always-on server process is shipped.
   detection permission. Browsers and multipurpose chat apps also require narrowly scoped Accessibility
   evidence from the audio-active app, preventing YouTube or a notification sound from starting a meeting.
   ScreenCaptureKit (→ "Screen & System Audio Recording") is used **only** when you record video.
+  The macOS adapter reports raw observations to the dependency-free Rust `MeetingDetector`. Rust requires
+  two matching observations to start and three misses to end, applies the desktop/browser source controls,
+  and returns the stable native-target identity. Browsers and multipurpose apps still require
+  meeting-window evidence in addition to active audio.
   Net: an audio-only meeting asks for **Microphone + System Audio Recording Only**; Screen Recording is
   video-only. Taps need the macOS **14.2+ SDK** (so `meeting-tap` builds with `-target …14.4`; update Command
   Line Tools if `xcrun --show-sdk-version` < 14).
 - **Everything on demand.** The transcription server and the LLM load when needed and unload after an idle
   timeout (transcription is user-configurable, 10 min default; LLM ~5 min), so nothing heavy must sit
-  resident indefinitely between calls.
+  resident indefinitely between calls. Applying enabled settings during app boot does not count as demand;
+  warming starts only after real dictation or meeting capture begins.
   This mirrors Handy's `model_unload_timeout`.
+- **Live Assist is grounded meeting intelligence.** The call panel asks the existing local/BYOK
+  Intelligence boundary for a bounded view of the current corrected transcript. Catch-up selects an actual
+  60-second window; summarize-so-far, explicit action items, and follow-up questions use the meeting so far.
+  Failures never interrupt capture, and the result cannot write, send, or invoke a connector.
+- **Connectors are an output boundary, not a desktop runtime.** Future connectors consume a versioned
+  projection of a finalized meeting and execute only an explicitly approved, idempotent action. OAuth,
+  provider SDKs, retries, and third-party writes belong in a separate connector service; the desktop keeps
+  preview, approval, receipts, and recovery. The contract lives in
+  [`docs/CONNECTOR_ARCHITECTURE.md`](docs/CONNECTOR_ARCHITECTURE.md). Connectors do not create an Agent route
+  and add no idle desktop process.
 
 ## transcribe-server
 
@@ -187,12 +212,31 @@ Get these wrong and the double-click app silently fails or nags on every launch.
 
 ## Call detection
 
-`meeting-tap` self-detects "in a call" from per-app Core Audio activity. For a dedicated conferencing app,
-audio activity is sufficient. For a browser or multipurpose chat app, the same process must also expose
-platform-specific meeting evidence through Accessibility. It then POSTs a source-tagged `inMeeting` and gates
-capture on it. The server accepts automatic start/end only from this combined detector's `source: "coreaudio"`;
-the separate `meeting-state` stream is metadata, never lifecycle authority. This is the key false-positive
-boundary: an idle app, YouTube tab, or ordinary notification cannot start a meeting.
+### Optional Chrome metadata lane
+
+The shipped local path remains extension-free. [`browser-extension/`](browser-extension/) defines the
+separate, fail-closed extension half of a later Chrome metadata lane:
+
+```text
+allowlisted content script → extension service worker → Chrome native messaging
+  → separately signed native host → owner-only local IPC → Rust MeetingDetector
+```
+
+The extension may report only a platform, per-browser-session tab identity, bounded title, and active state.
+It cannot capture audio, read transcript/page text, own call edges, call Live Assist, or access the local
+meeting store. The native host is a separate executable and install manifest, not code embedded in the
+content script or Tauri WebView. Losing either component degrades metadata only; Core Audio capture and the
+canonical meeting record continue. The checked-in host manifest is deliberately a non-installable template
+until packaging substitutes a signed path and stable extension ID and the physical Chrome matrix passes.
+
+`meeting-tap` observes per-app Core Audio activity. For a dedicated conferencing app, audio activity is
+sufficient evidence. For a browser or multipurpose chat app, the same process must also expose
+platform-specific meeting evidence through Accessibility. The adapter POSTs that raw, bounded evidence to
+`POST /api/meeting/observation`; it does not decide call edges. The dependency-free Rust
+`meeting_detection.rs` applies source policy and hysteresis, owns the authoritative active identity, and
+returns that identity so Swift can retain only the matching ephemeral `AudioObjectID`s. The separate
+`meeting-state` stream is metadata, never lifecycle authority. This is the key false-positive boundary: an
+idle app, YouTube tab, or ordinary notification cannot start a meeting.
 
 The same Core Audio detector publishes an internal distributed notification to `meeting-state`.
 Accessibility is completely idle until that notification says a call is active. During the call it uses
@@ -205,8 +249,8 @@ it is the efficient signal that a future top-center panel or macOS notification 
 
 Recording is driven by an **effective state** the server computes from two inputs, not by detection alone:
 
-- **`detected`** — the raw "in a call" state reported authoritatively by `meeting-tap` from Core Audio,
-  plus meeting-window evidence for browser/chat platforms.
+- **`detected`** — the stable call state produced by the shared Rust detector from a platform adapter's raw
+  audio observation, plus meeting-window evidence for browser/chat platforms.
   `meeting-state` can enrich the active call but cannot change this value.
 - **`manual`** — an optional UI override (`on` / `paused` / `off`), set via `POST /api/meeting/control`.
 
@@ -419,7 +463,8 @@ locations — so it runs when moved off the repo:
 | Path | Role |
 |---|---|
 | `desktop/` | Tauri app — self-starts the stack; tray, screen-share stealth, close-to-tray; **in-process dictation** (global hotkey · cpal mic · Silero VAD · CGEvent paste · NSPanel pill) |
-| `stt/meeting-tap.swift` | Core Audio tap (audio, no Screen Recording) + SCK (video) + audio/meeting-evidence call detection + utterance segmentation |
+| `stt/meeting-tap.swift` | macOS adapter: Core Audio evidence/tap handles, SCK video, and utterance segmentation; no call-edge policy |
+| `desktop/src-tauri/src/meeting_detection.rs` | dependency-free shared call-edge hysteresis and source-family policy |
 | `stt/transcribe-server/` | our transcribe.cpp HTTP wrapper (source + pinned-commit `build.sh`) |
 | `stt/whisper/` | GGUF model (git-ignored; fetched by `setup.sh`) |
 | `meeting-state/meeting-state.swift` | Accessibility layer: speaker names, mute/share |

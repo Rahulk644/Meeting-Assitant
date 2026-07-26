@@ -60,16 +60,27 @@ Meeting detection is an OS-level event, not an “app is open” screen and not 
 Authoritative local evidence combines active meeting/process audio with supported meeting-window semantics;
 calendar context enriches the title and expected participants but never starts recording by itself.
 
-On the call edge, a small native pill/notification appears on the active display:
+On the call edge, a movable 52 × 52 non-activating native Nub plus notification appears on the active
+display. Clicking it expands to an adaptive vertical conversation card: meeting and local-capture state,
+up to five speaker-grouped transcript bubbles, last-minute catch-up, then proportionate recording controls.
+The Mac Beta currently auto-starts when enabled and uses the shared lifecycle:
 
 ```text
-Meeting detected · Google Meet
-[Start]  [Not this time]                         Auto-record is on/off
+Starting Google Meet capture…      [Open] [Stop]
+Checking microphone + meeting audio
+
+Recording Google Meet locally      [Pause] [Stop]
+Microphone + meeting audio confirmed
 ```
 
-With **Record automatically**, the pill confirms that capture started and offers Pause/Stop. With **Ask**, it
-waits for one choice. **Not this time** suppresses repeated prompts for that call. A missing permission shows
-the one required action. The main app does not steal focus.
+The recording label is unavailable until both native audio sources open successfully. Speech is not a
+readiness prerequisite, so a locally speaking user is captured even when the remote side remains silent.
+After system audio has flowed, loss of its buffer heartbeat tears down and retries that source. A missing
+permission or failed source changes the same panel to **Needs attention**. Three failed recoveries in one
+minute recycle the supervised helper process and the signed parent relaunches it with bounded backoff while
+the Rust meeting identity remains open. Pause releases both sources; Resume returns through Starting; and
+call end remains visible as Finalizing. The main app does not steal focus. The future **Ask / Not this
+time** policy remains separate work and must reuse this lifecycle rather than fork it.
 
 ### During the meeting
 
@@ -182,11 +193,12 @@ integration.
 | ID | Work | Dependency | Done when |
 |---|---|---|---|
 | H-01 | Split `local_server.rs` into auth/router, settings/secrets, speech models, meetings, Intelligence, and dormant Agent modules | None | Route contract unchanged; each module has focused tests; no new process or copy of shared state |
-| H-02 | Split `lib.rs` into app lifecycle, dictation orchestration, shortcut/target, meeting helpers, and platform adapters | H-01 interface agreement | Existing Rust tests and native build pass; platform-specific imports are target-gated |
+| H-02 | Finish splitting `lib.rs` into app lifecycle, dictation orchestration, shortcut/target, meeting helpers, and platform adapters; keep the extracted `meeting_detection.rs` policy OS-free | H-01 interface agreement | Existing Rust tests and native build pass; platform-specific imports are target-gated; no reusable policy moves back into Swift |
 | H-03 | Split `index.html` into build-time source modules while still shipping one minified local asset | Stable selectors/release registry | Visual/production contract unchanged; no runtime framework or extra process; UI owners stop editing one file |
 | H-04 | Isolate dormant Agent research from the default production compile | H-01/H-03 | Default binary has no Agent route/ACL/boot/compute code; disabled label remains; research can still be built explicitly or is preserved in its branch |
 | H-05 | Establish version/release metadata source and component manifest/SBOM generation | None | Cargo/Tauri/artifact/release-note labels cannot disagree; named artifacts require explicit release evidence |
 | H-06 | Freeze reproducible installed-size, RSS/CPU/wakeup, latency, model-memory, and disk-growth baselines | Stable current candidate | Baseline script produces aggregate, privacy-safe output and a regression comparison |
+| H-07 | Introduce target-gated `AudioSource`, `MeetingEvidenceSource`, target, overlay, and permission contracts; freeze platform-neutral observation fixtures | H-02/M-01 interface agreement | macOS behavior stays green; Apple types cannot enter product policy or schemas; [`WINDOWS_HANDOFF.md`](WINDOWS_HANDOFF.md) gives a Windows owner an executable X-00 packet without claiming Windows validation from this Mac |
 
 ### Wave 1 — Dictation release quality
 
@@ -209,15 +221,33 @@ delay ordinary dictation reliability.
 
 | ID | Work | Dependency | Done when |
 |---|---|---|---|
-| M-01 | Introduce `AudioSource` and qualify FlexAudio against the existing CPAL/Core Audio implementation | H-02/H-06 | Same or better audio quality, detection, device hot-swap, long-call stability, CPU/RSS, TCC, and Windows proof; otherwise retain existing adapter |
-| M-02 | Make `MeetingDetector` an explicit evidence/state machine with per-call notification suppression | H-02 | Silence does not prevent call-edge detection; media playback does not start a call; auto/ask/ignore/manual policies have deterministic tests |
+| M-01 | Introduce `AudioSource` and qualify FlexAudio against the existing CPAL/Core Audio implementation on macOS | H-02/H-06 | Same or better audio quality, detection, device hot-swap, long-call stability, CPU/RSS, and TCC behavior; otherwise retain the existing adapter. Windows proof belongs to X-00/X-02 |
+| M-02 | Finish the shared Rust `MeetingDetector` evidence/policy state machine above the shipped two-hit start, three-miss end, source-family controls, and rising-edge notification suppression | H-02/H-07 | Silence does not prevent call-edge detection; media playback does not start a call; auto/ask/ignore/manual and per-app exclusion policies have deterministic cross-platform fixtures |
 | M-03 | Define canonical meeting event and record schemas with migrations | H-01 | Local and future bot events normalize identically; old meeting JSON migrates losslessly; revisions/provenance are explicit |
 | M-04 | Capture supported meeting chat via bounded platform adapters | M-03 | Author/text/time/source persist with transcript + scratchpad; unsupported apps say unavailable, not empty-success |
-| M-05 | Benchmark `speakrs` and `pyannote-rs`; adopt one local diarizer | M-01/M-03 | Representative DER/overlap, live latency, post-call correction, RSS/CPU, model lifecycle, and Windows tests select one winner |
+| M-05 | Benchmark `speakrs` and `pyannote-rs`; adopt one local diarizer | M-01/M-03 | Representative DER/overlap, live latency, post-call correction, RSS/CPU, and model lifecycle select one macOS winner; X-03 separately proves or replaces its Windows backend |
 | M-06 | Implement `IdentityResolver` across self channel, Accessibility, diarization, and corrections | M-05 | Automatic names meet calibrated accuracy; uncertain names remain honest; one correction updates future mapping safely |
 | M-07 | Add Google Calendar and EventKit adapters | M-03 | OAuth/revoke/sync/dedup/recurrence/offline cache work; event never triggers capture without call evidence; attendee emails retain provenance |
 | M-08 | Add bounded in-flight audio checkpoints and recovery | M-01/M-03 | A forced kill loses at most the defined window; private checkpoints recover once and clean up; no orphan audio remains |
 | M-09 | Complete real two-person Zoom/Meet/Teams/FaceTime/Slack and device-change matrix | M-02/M-04/M-06/M-08 | Detection, transcript, speaker names, chat where supported, pause/resume/end, recovery, and resource gates pass on exact installed candidate |
+| M-10 | Qualify open-source WebRTC AudioProcessing AEC3 behind `AudioSource` | M-01/H-06 | Speaker playback is removed from the mic channel without damaging near-end speech; headset bypass, delay, double-talk, hot-plug, long-call, CPU/RSS, licensing, and macOS gates pass. X-03 owns Windows qualification |
+
+### Mac Meetings Beta release cuts
+
+The complete Wave 2 matrix remains the graduation target, but it should not obscure the shortest honest path
+to real use:
+
+| Cut | Scope | Gate | Planning range |
+|---|---|---|---|
+| Installed dogfood candidate | Current signed local build: manual/automatic capture, live transcript, pause/resume/stop, scratchpad, library, corrections, summary/Ask, and grounded Live Assist | Use only with explicit Beta expectations; no platform is claimed proven from automated tests | Available now |
+| Narrow private Beta | Zoom native and Google Meet in Chrome; manual fallback elsewhere; headset path first, speaker path only if echo/duplication passes | Two consenting people on the exact installed candidate; complete [`MEETINGS_USER_JOURNEY.md`](MEETINGS_USER_JOURNEY.md) outside-app signals; both audio channels; one start/end; pause/relaunch; notes/Live Assist with configured provider; 45-minute soak; failures fixed and rerun | First evidence in 1–2 days; credible cut in 3–7 working days if no deep capture defect |
+| Reliable Mac Beta | Narrow cut plus bounded in-flight audio recovery, privacy-safe diagnostics, speaker-device baseline/AEC decision, and repeated clean-install/permission tests | No known data-loss path inside the declared recovery window; supported-device and provider limitations are visible | Approximately 2–3 calendar weeks |
+| Broad Mac Meetings Beta | Full M-02 through M-10 acceptance across the advertised platform/device matrix, chat, diarization/identity, calendar truth, recovery, and speaker playback | Complete [`ACCEPTANCE_TESTS.md`](ACCEPTANCE_TESTS.md) two-person matrix against the exact candidate | Approximately 5–8 calendar weeks |
+
+These ranges assume daily access to a second consenting caller. They are gates, not promises: a Core Audio,
+permission, device-change, or model-quality defect can extend them. Chat, calendar, automatic speaker names,
+off-PC bots, connectors, Windows, and the future Agent surface do not block the narrow private Beta. The UI
+must say unavailable or use an honest unknown-speaker label until each later capability passes.
 
 ### Wave 3 — Meeting Intelligence and compounding memory
 
@@ -227,6 +257,7 @@ delay ordinary dictation reliability.
 |---|---|---|---|
 | I-01 | Complete verified local meeting Intelligence install/status/remove/update/unload | H-05 | Clean Mac can use useful local notes without shell setup; executable/model integrity, port ownership/auth, RAM guidance, and recovery are enforced |
 | I-02 | Build a corrected-source evaluation set for title, summary, decisions, owners, open questions, and Ask | M-03 | Local and cloud providers are compared on usefulness/faithfulness; hallucinated owners/decisions are release failures |
+| I-03 | Qualify grounded Live Assist under active capture | I-01/I-02 | Last-minute catch-up uses the exact 60-second non-excluded window; summary/actions/questions pass faithfulness and latency gates; cancellation, provider failure, and repeated clicks never affect capture or duplicate work |
 | K-01 | Add an Obsidian-compatible Markdown knowledge store with stable IDs, backlinks, provenance, and atomic writes | M-03 | People/projects/decisions/commitments remain human-readable, editable, portable, and rebuildable from source records |
 | K-02 | Add a lightweight local index for exact/full-text retrieval; qualify embeddings only where they improve measured tasks | K-01 | Meeting prep/Ask finds cited source material quickly without loading a model while idle |
 | K-03 | Ship meeting prep, follow-up draft, and cross-meeting person/project pages as ordinary meeting features | K-01/K-02/I-02 | Users receive useful context without an Agent mode; every mutation is reviewable and source-linked |
@@ -256,9 +287,11 @@ promote Agents without a separate product/release decision.
 
 | ID | Work | Dependency | Done when |
 |---|---|---|---|
-| W-01 | Ship first-party approved actions: copy/export, follow-up email draft, Slack draft, task draft | K-03 | Preview, exact diff, explicit destination, confirmation, idempotency, receipt, and undo/recovery where possible |
+| W-00 | Implement the versioned meeting-output, approved-action, and receipt envelopes in [`CONNECTOR_ARCHITECTURE.md`](CONNECTOR_ARCHITECTURE.md) | M-03/K-03 | Contract fixtures reject stale revisions, changed destinations, secrets, duplicate execution, unknown outcomes, and unapproved writes |
+| W-01 | Ship first-party approved actions: copy/export, follow-up email draft, Slack draft, signed webhook, and task draft | W-00 | Preview, exact diff, explicit destination, confirmation, idempotency, receipt, and undo/recovery where possible |
 | W-02 | Evaluate Activepieces core as a separate multi-tenant workflow service | W-01 | License/embedding boundary, secrets, upgrades, rollback, tenant isolation, retries, and audit pass with no desktop idle cost |
-| W-03 | Add curated workflow templates | W-02 | High-frequency workflows complete reliably and expose understandable failures; core meeting success never depends on them |
+| W-03 | Add Notion and CRM note/task connectors, then curated workflow templates | W-01/W-02 | Field mapping is previewed; high-frequency workflows complete reliably and expose understandable failures; core meeting success never depends on them |
+| W-04 | Add controlled custom MCP servers only behind the same action envelope | W-00/W-03 | Server/tool allowlists, argument schemas, admin policy, tenant isolation, receipts, and recovery pass; MCP cannot bypass approvals |
 | A-01 | Write the separate Agent brief using Rowboat-inspired Markdown memory and deterministic permissions | K-03/W-01 | Scope answers what jobs Agents uniquely solve beyond ChatGPT/Claude, what they may read/change, approval/undo, compute, pricing, and physical acceptance |
 | A-02 | Build an Agent mode only after A-01 is approved | A-01 | Release matrix is deliberately updated; no hidden mutation, prompt-only authorization, or unbounded computer control |
 
@@ -269,19 +302,21 @@ metrics are stable.
 
 | ID | Work | Dependency | Done when |
 |---|---|---|---|
-| X-01 | Move macOS crates and code behind target-specific modules/dependencies; raise/pin supported Rust toolchain | H-01/H-02/M-01 | Shared core cross-compiles in CI and contains no AppKit/Core Audio assumptions |
-| X-02 | Implement Windows shortcut, overlay, target insertion/context, permissions, mic/system/process audio, and meeting evidence adapters | X-01 | Windows privacy and fail-closed semantics equal macOS, using WASAPI/UI Automation/native APIs |
+| X-00 | Execute the [`WINDOWS_HANDOFF.md`](WINDOWS_HANDOFF.md) bootstrap on a native Windows host: target-gate Apple dependencies, add fail-closed capability stubs, and compile/test the shared core | H-07 | Native Windows or Windows CI—not a Mac cross-compile—builds OS-free policy/routes and reports unsupported adapters honestly |
+| X-01 | Promote the X-00 skeleton into a supported application target; finish target-specific dependencies, packaging, and platform capability reporting | X-00/M-01 | Windows builds the same product core and reports unsupported adapter capabilities honestly |
+| X-02 | Implement Windows shortcut, overlay, target insertion/context, permissions, mic/system/process audio, and meeting evidence adapters | X-01 | Windows privacy and fail-closed semantics equal macOS, using WASAPI/UI Automation/native APIs; physical Zoom/Meet capture passes |
 | X-03 | Qualify speech/diarization backends and model packaging on representative Windows hardware | X-01/M-05 | Quality, latency, memory, GPU/CPU fallback, download, and recovery meet published device tiers |
 | X-04 | Complete Windows app/platform/permission/installer/update physical matrices | X-02/X-03 | No macOS-only claim leaks into Windows; exact installer passes clean-machine and long-use tests |
 
 ## Realistic delivery expectation
 
-With disciplined parallel sessions, a high-quality Dictation release and substantially stronger local
-Meetings Beta is roughly an **8–12 calendar-week** program after the foundation split. Adding compounding
-knowledge and a managed off-PC bot makes the useful complete product roughly **14–20 calendar weeks**.
-Self-host bot operations, custom workflow building, and Windows extend the full ambition to approximately
-**six to nine months** for one senior integration owner using AI sessions heavily. Provider approvals,
-physical matrices, and quality failures can lengthen the critical path.
+The current installed app can begin dogfood calls now; the release-cut table above is the authority for the
+narrow private and reliable Mac Beta ranges. With disciplined parallel sessions, completing a high-quality
+Dictation release plus the broad local Meetings Beta program is roughly an **8–12 calendar-week** program
+after the foundation split. Adding compounding knowledge and a managed off-PC bot makes the useful complete
+product roughly **14–20 calendar weeks**. Self-host bot operations, custom workflow building, and Windows
+extend the full ambition to approximately **six to nine months** for one senior integration owner using AI
+sessions heavily. Provider approvals, physical matrices, and quality failures can lengthen the critical path.
 
 These are planning ranges, not deadlines. Cutting the range means reducing scope—for example managed Recall
 before self-hosting, curated actions before a builder, and local meeting quality before Windows—not lowering
@@ -324,14 +359,21 @@ macOS permissions.
 
 ## Next actionable sequence
 
-1. Land the documentation/health corrections and retain a green automated baseline.
-2. Execute H-01 through H-03 as behavior-preserving refactors; no product feature work in the same commits.
-3. Execute H-04 and H-05 so the default build is lean and release identity is unambiguous.
-4. Freeze H-06 performance evidence and complete D-01/D-02 before expanding scope.
-5. In parallel, define M-03 schemas and run M-01/M-05 component spikes; keep only benchmark winners.
-6. Build M-02/M-04/M-06/M-07/M-08 against those seams, then pass M-09 real-call acceptance.
-7. Build I-01/K-01 first, because useful local Intelligence and inspectable Markdown memory improve Meetings
+1. Land the current shared-detector/release-boundary work and retain a green installed-app baseline.
+2. Run the narrow two-person Zoom-native and Google-Meet-Chrome headset matrix immediately. Fix and rerun the
+   smallest observed capture/detection/lifecycle failures before adopting a new audio stack.
+3. Freeze the H-06 baseline from that exact candidate and cut the narrow private Beta only when its 45-minute
+   soak and provider/no-provider journeys are honest.
+4. Implement M-03/M-08 canonical records and bounded audio recovery, plus D-03 diagnostics, to reach the
+   reliable Mac Beta cut.
+5. Execute H-01 through H-05 as behavior-preserving foundation work around those frozen contracts; do not mix
+   new product behavior into the refactor commits.
+6. Run M-01 FlexAudio and M-05 `speakrs` component spikes behind the stable seams; keep only measured winners.
+7. Build M-02/M-04/M-06/M-07/M-10 and then pass the broad M-09 real-call acceptance.
+8. Build I-01/K-01 first, because useful local Intelligence and inspectable Markdown memory improve Meetings
    without exposing Agents.
-8. Add Recall through B-01/B-02/B-03; run Vexa as a measured deployment track, not an app dependency.
-9. Ship curated first-party actions before Activepieces or an Agent surface.
-10. Begin Windows adapters only after the shared capture/schema/performance contracts have proven stable.
+9. Add Recall through B-01/B-02/B-03; run Vexa as a measured deployment track, not an app dependency.
+10. Ship curated first-party actions before Activepieces or an Agent surface.
+11. Keep Windows inputs portable through target-gated contracts and shared fixtures. A Windows owner executes
+    X-00 from [`WINDOWS_HANDOFF.md`](WINDOWS_HANDOFF.md); do not turn a Mac cross-compile into a Windows
+    support claim. Begin physical adapters after the shared capture/schema/performance contracts are stable.

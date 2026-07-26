@@ -77,6 +77,11 @@ the dictated text.
 Use two consenting people in a live call. A prerecorded loop, one-person simulation, local speaker playback,
 or helper self-test is not platform acceptance.
 
+Read and follow [`MEETINGS_USER_JOURNEY.md`](MEETINGS_USER_JOURNEY.md) before the first call. It defines the
+observable Idle → Detected → Recording → Paused → Finalizing → Notes journey, expected timing, and explicit
+stop/failure conditions. A tester should never need source-code knowledge to decide whether the product
+worked.
+
 ```sh
 python3 acceptance/run.py new \
   --suite two-person-meeting \
@@ -89,6 +94,13 @@ Safari, Teams native and browser, Slack Huddles, Discord, and FaceTime. It verif
 
 - no false recording when the app is merely open;
 - one start edge after real call evidence;
+- a non-activating movable Nub, no Recording claim until both sources open, expansion to five live transcript
+  lines and direct last-minute catch-up, honest per-source Needs attention recovery, and synchronized
+  native/WebView/menu-bar Pause and Finalizing states;
+- the silent-remote regression: local speech is recorded from the beginning even when the other participant
+  first speaks ten minutes later, and both appear in one complete meeting;
+- post-flow system-audio dropout detection, visible source recovery, and bounded helper-process recycle/
+  relaunch after repeated failures without splitting the meeting;
 - scheduled versus impromptu title truth;
 - both audio channels, overlap, speaker uncertainty, and live transcript;
 - mute, pause/resume, scratchpad, optional video, thumbnail, and screen-sharing behavior;

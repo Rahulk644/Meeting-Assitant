@@ -29,7 +29,10 @@ When documents disagree, resolve them in this order:
   labelled Beta wherever represented as a product surface.
 - **Agents is not an initial product feature.** Production shows exactly one greyed-out, disabled **Coming
   soon** navigation label. It has no route, details, settings, shortcut, boot initialization, compute lane,
-  or packaged native helper. Dormant research source is not a release claim.
+  or packaged native helper. The default Rust build excludes the dormant routes, state, shortcut, compute
+  runtime, and helper paths; an explicit `agent-research` Cargo feature is required to compile that backend.
+  Production Web assets strip the research view/settings/code before minification. Dormant research source
+  is not a release claim.
 - Writing, commercial, updater, calendar, support, and other unfinished surfaces stay outside production
   until their release-matrix rows are explicitly promoted with evidence.
 
@@ -87,17 +90,36 @@ Node runtime, speech/polish model weights, telemetry client, or Agent helper.
    reported a timeout or after a newer dictation has taken ownership of the UI.
 9. **Privacy.** Secure-field text never enters recent history, visual diffs, logs, or model inference.
    Dictation audio uses a private temporary file and is removed immediately after transcription.
+10. **Idle footprint.** Applying enabled settings at launch does not warm the speech or polish model. The
+    selected runtime begins warming only after real dictation or meeting capture starts, then follows its
+    bounded idle-unload policy.
 
 ## Meetings Beta invariants
 
-- Automatic recording follows authoritative Core Audio state. Browser and communication-app calls also
-  require meeting-window evidence; calendar presence alone never starts recording.
+- Platform adapters publish bounded raw meeting observations; the dependency-free Rust `MeetingDetector`
+  alone owns automatic call edges. A new call needs two matching observations and call end needs three
+  missing observations, so brief process/device renegotiation does not split a meeting or repeat the
+  notification. Desktop meeting apps and browser/huddle sources can be disabled independently. Browser and
+  communication-app calls also require meeting-window evidence; calendar presence alone never starts
+  recording.
 - The user can always start and stop manually. Pause/resume and call-end transitions have one recording
   lifecycle authority.
+- The Rust lifecycle projects Starting, Recording, Needs attention, Pausing, Paused, Finalizing, and Idle to every
+  meeting surface. Recording requires both capture sources to open successfully; it never waits for either
+  participant to speak. System-audio heartbeat loss is considered a dropout only after that source has
+  produced buffers, then it is torn down and retried automatically. Three failed recoveries inside one
+  minute recycle the supervised capture helper with bounded relaunch backoff without splitting the Rust
+  meeting record. macOS renders a movable 52 × 52 non-activating branded Nub above the active meeting
+  Space; it expands into an adaptive vertical conversation card with bounded speaker-grouped transcript,
+  direct last-minute catch-up, and recording controls. Platform overlays remain projections and never
+  become a second lifecycle authority.
 - Recoverable transcript checkpoints are private. Corrections increment transcript revision and mark stale
   derived notes rather than silently presenting them as current.
 - Meeting notes can use an optional local runtime or an explicitly selected BYOK provider. Provider keys live
   in macOS Keychain and are never stored in settings or browser state.
+- Live Assist is a Meetings Beta surface, not Agent mode. Catch-up uses only the last 60 seconds of the
+  current non-excluded transcript; summary, explicit actions, and follow-up questions use only the meeting
+  so far plus the operator's scratchpad. It performs no external write or send action.
 - Meeting audio remains local. Optional screen recording is separately permission-gated.
 
 ## Repository and release invariants
@@ -116,8 +138,8 @@ Node runtime, speech/polish model weights, telemetry client, or Agent helper.
 - `script/build_release_dmg.sh` runs the quality gates, builds pinned runtimes, forces production assets,
   signs with hardened runtime, and calls `script/verify_release_artifact.sh`.
 - The artifact verifier mounts the DMG read-only and rejects missing/adhoc/wrong-authority nested code,
-  non-arm64 executables, missing microphone entitlement, packaged model weights, Agent helpers, or a
-  non-production release payload.
+  non-arm64 executables, missing microphone entitlement, packaged model weights, Agent helpers, Agent
+  research in the WebView, or a non-production release payload.
 - The independent beta uses the stable self-signed `My Assistant Dev` identity. It is integrity-signed but
   not Apple-notarized; recipients must use Privacy & Security → Open Anyway.
 
@@ -174,8 +196,8 @@ real microphone, real target app, clean-machine permission, or real two-person m
 ### P1 — Meetings Beta graduation
 
 1. Extract the packaged service, app lifecycle, and WebView merge hotspots into the stable provider/domain
-   seams defined by [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md), then isolate dormant Agent
-   research from the default production compile before starting parallel feature work.
+   seams defined by [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md). Dormant Agent research is
+   already excluded from the default compile and production WebView; preserve that boundary during the split.
 2. Complete the real two-person meeting matrix across Zoom, Meet, Teams, FaceTime, Slack, input/output device
    changes, browser tabs, sleep/wake, pause/resume, and call-end recovery.
 3. Package or implement a first-class verified install/status/remove lifecycle for local meeting Intelligence
@@ -191,10 +213,14 @@ real microphone, real target app, clean-machine permission, or real two-person m
    keep Agents disabled until a separate brief defines scope, safety, packaging, privacy, and acceptance.
 3. Ship updater, signed release feed, versioned release notes, and rollback only after notarized artifacts are
    stable.
-4. Define contextual voice replies as a bounded, reversible Dictation extension; add Activepieces only later
-   for long-tail approved workflows, never for core capture or recovery.
-5. Start Windows adapters only after shared audio, meeting-event, storage, and performance contracts are
-   stable and macOS quality metrics are frozen.
+4. Define contextual voice replies as a bounded, reversible Dictation extension. Future connectors use the
+   versioned meeting-output/action/receipt boundary in
+   [`CONNECTOR_ARCHITECTURE.md`](CONNECTOR_ARCHITECTURE.md); add Activepieces only later for long-tail
+   approved workflows, never for core capture or recovery.
+5. Keep Windows work ready through target-gated contracts, platform-neutral fixtures, and the executable
+   [`WINDOWS_HANDOFF.md`](WINDOWS_HANDOFF.md) packet. Start and verify X-00/adapters only on a Windows host
+   after shared audio, meeting-event, storage, and performance contracts are stable and macOS quality metrics
+   are frozen; a Mac cross-compile is not a Windows support claim.
 
 ## Resume protocol
 

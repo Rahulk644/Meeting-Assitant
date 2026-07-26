@@ -27,7 +27,8 @@ Product logic depends on these interfaces, not on vendor types:
 
 ```text
 AudioSource             microphone / system / process audio + device changes
-MeetingDetector         call edges and confidence evidence
+MeetingEvidenceSource   bounded OS audio/process/window observations; no lifecycle policy
+MeetingDetector         OS-free call edges, source policy, and confidence evidence
 TranscriptEngine        final and optional incremental speech hypotheses
 Diarizer                timestamped speaker clusters and embeddings
 IdentityResolver        cluster ↔ participant ↔ calendar identity/email evidence
@@ -36,11 +37,13 @@ CalendarProvider        events, attendees, meeting URLs, sync, revoke
 BotMeetingProvider      schedule/join/leave/status/media/transcript/chat artifacts
 IntelligenceProvider    notes, Ask, structured extraction, embeddings
 KnowledgeStore          inspectable Markdown records, links, indexes, retrieval
-WorkflowProvider        approved trigger/action execution and audit receipts
+WorkflowProvider        versioned meeting outputs → approved actions → idempotent audit receipts
 ```
 
 Adapters may change; the event schema, privacy decisions, local store, corrections, and UI do not. Every
 adapter reports capability metadata so unsupported behavior fails closed rather than becoming a dead toggle.
+The shipped macOS adapter already reports observations to the dependency-free Rust detector; new policy must
+land there rather than in Swift, WASAPI, Accessibility, or browser-extension adapters.
 
 ## Component decisions
 
@@ -51,14 +54,15 @@ adapter reports capability metadata so unsupported behavior fails closed rather 
 | [Rodio](https://github.com/RustAudio/rodio) | Evaluate only if cue playback grows beyond `afplay` | A tiny `AudioCuePlayer` | Capture, meeting routing, or a permanent mixer | Smaller/reliable cross-platform cue path with no idle worker or material binary growth |
 | [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) | Adopted primary speech runtime | Pinned authenticated `transcribe-server`; later consider direct library crate | Upstream CLI UX or unpinned model catalog | Existing corpus, protocol, memory, latency, streaming, and physical insertion gates |
 | Handy | Research and model-qualification reference | Clean-room behavior and pinned compatible model metadata | Whole app, settings/UI clone, or upstream state model | Each borrowed artifact independently licensed, hashed, benchmarked, and attributed |
-| [FlexAudio](https://github.com/Studio-Sadola/flexaudio) | Highest-priority audio portability qualification | `AudioSource`; first as an A/B adapter, then replace CPAL/Swift capture only where it wins | Blind migration, full-stack ownership, or assuming a young `0.x` crate is production-proven | Rust toolchain uplift; macOS mic/system/process parity; Windows WASAPI proof; device hot-swap; hours-long soak; TCC; CPU/RSS; no quality regression |
+| [FlexAudio](https://github.com/Studio-Sadola/flexaudio) | Highest-priority audio portability qualification; current `0.2` API advertises mic/system/process capture on macOS, Windows, and Linux | `AudioSource`; first as an A/B adapter, then replace CPAL/Swift capture only where it wins | Blind migration, full-stack ownership, or treating its capability table as our production proof | Rust 1.85 toolchain uplift; macOS mic/system/process parity; device hot-swap; hours-long soak; TCC; CPU/RSS; no quality regression. X-02 separately proves Windows/WASAPI |
 | [Screenpipe](https://github.com/screenpipe/screenpipe) | Selective technology and UX reference | Accessibility-first context, OCR fallback, event-driven capture, timestamped local index, permission ideas | 24/7 recording, full accessibility-tree retention, its database/app/agent stack, or its 0.5–3 GB / multi-GB-per-month operating model | Only a bounded, user-invoked subsystem with explicit filters, retention, privacy, and a lower measured footprint |
 | [Anarlog](https://github.com/fastrepl/anarlog) | Source-level reference and selective extraction | Markdown meeting records, provider adapter patterns, local meeting UX/accessibility parsers after audit | Whole app replacement or abandoned/legacy paths merely because they compile | Per-module license/security review, tests, and a smaller boundary than implementing locally |
 | [Muesli](https://github.com/pHequals7/muesli) | Research/control implementation, not a quality authority | Calendar URL extraction, local diarization wiring, onboarding and meeting-record immutability ideas after source audit | Whole app, unbenchmarked heuristics, or the assumption that a student-maintained project meets production edge cases | Borrowed module beats our implementation under code review, privacy/security checks, real calls, long-run resource tests, and Windows strategy |
 | [FluidAudio](https://github.com/FluidInference/FluidAudio) | Apple-only speech/diarization benchmark candidate | Optional macOS `TranscriptEngine`/`Diarizer` adapter or model-evaluation reference | Shared cross-platform core, a second permanent speech stack, or macOS-version assumptions in product logic | Material Apple Silicon quality/latency/energy win, supported OS coverage, stable API/model terms, and final authoritative output compatibility |
 | Meetily and similar local notetakers | Workflow and recovery reference | Import/export, checkpoint, local provider, and meeting-library patterns after targeted audit | Electron/Node packaging, entire backends, broad dependency graphs, or duplicate product state | A small independently testable module removes more code/maintenance than its dependency and migration cost |
-| [speakrs](https://crates.io/crates/speakrs) | Primary local diarization candidate | `Diarizer` library adapter using ONNX/CoreML | Speaker names inferred from clusters alone | Accuracy/DER and overlap corpus, Apple Silicon latency/RSS, Windows backend, model license/checksum, live/backfill behavior |
-| [pyannote-rs](https://crates.io/crates/pyannote-rs) | Diarization control candidate | Alternative `Diarizer` adapter | Python runtime in the desktop release | Same benchmark as `speakrs`; select one winner, do not ship two pipelines |
+| [speakrs](https://github.com/avencera/speakrs) | Primary local diarization candidate; its Rust community-1-style pipeline preserves overlap and offers CoreML/ONNX modes | `Diarizer` library adapter, initially post-call and then measured for bounded live updates | Speaker names inferred from clusters alone, upstream benchmark claims accepted without reproduction, or uncontrolled first-use model downloads | Reproduce DER/overlap and latency/RSS on our meeting corpus; pin model license/checksum; prove offline lifecycle and corrections; X-03 owns Windows qualification |
+| [pyannote-rs](https://github.com/thewh1teagle/pyannote-rs) | Lightweight diarization/VAD control candidate | Alternative `Diarizer` adapter used in the same benchmark | Assuming it implements the complete pyannote community-1 pipeline or adding Python to the desktop release | Same corpus as `speakrs`; select one winner, do not ship two permanent pipelines |
+| [WebRTC AudioProcessing Rust wrapper](https://github.com/tonarino/webrtc-audio-processing) | AEC3 qualification candidate only when speaker-mode tests show loopback/echo damage | Optional processor behind `AudioSource`, fed the exact render and mic streams | Granola's native module, always-on processing for headsets, or adoption from upstream feature labels alone | Echo return loss/double-talk/near-end quality, delay calibration, device changes, CPU/RSS, long-call stability, exact license/source audit, and rollback |
 | Platform Accessibility APIs | Primary local participant/name/chat evidence where exposed | Small per-platform `MeetingEventSource` adapters; bounded tree queries | Full-tree polling, OCR-first parsing, silent edits, or claims of universal support | Fixture tests plus real Zoom/Meet/Teams matrices across view modes and versions |
 | [Recall.ai](https://www.recall.ai/) | Preferred managed off-PC meeting provider to qualify | `BotMeetingProvider` over webhooks/API; server-side only | Vendor data model in the client, provider credentials in the desktop app, or treating Recall tenant labels as our authorization boundary | Meet/Zoom/Teams reliability, calendar scheduling/deduplication, participant/chat artifacts, retention/region/privacy, cost, webhook replay/idempotency, deletion |
 | [Vexa](https://github.com/Vexa-ai/vexa) | Preferred self-host candidate to qualify | Same `BotMeetingProvider`; pinned containers on managed infrastructure | Embedding its multi-service stack in the desktop app or assuming a low-cost Hostinger plan supports real browser/media workloads | Platform matrix, per-meeting resource measurement, autoscaling, secrets, backups, upgrades/rollback, observability, transcript/speaker quality, failure recovery |
@@ -73,11 +77,27 @@ adapter reports capability metadata so unsupported behavior fails closed rather 
 ### Audio
 
 CPAL is a low-level cross-platform microphone library and is already useful. Rodio is mainly a higher-level
-audio playback layer; it does not solve per-process/system meeting capture. FlexAudio is the most relevant
-off-the-shelf path because it defines microphone, system, and per-process capture across macOS, Windows, and
-Linux. It is also young, requires a newer Rust toolchain than the current crate, and therefore enters through
-an A/B adapter—not a rewrite. If it passes, it can replace a large part of platform capture plumbing while
-upstream improvements arrive through ordinary Cargo upgrades.
+audio playback layer; it does not solve per-process/system meeting capture. FlexAudio `0.2` is the most
+relevant off-the-shelf path because it defines microphone, system, per-process, hot-swap, and device
+notification behavior across macOS, Windows, and Linux. It is also new, has a self-reported rather than
+product-proven capability matrix, and requires Rust 1.85 while this crate declares 1.77.2. It therefore
+enters through an A/B `AudioSource` adapter after the current real-call baseline—not a rewrite. If it passes,
+it can replace platform capture plumbing while upstream improvements arrive through qualified Cargo
+upgrades.
+
+### Immediate meeting adoption order
+
+1. Preserve the working Core Audio path and establish two-person Zoom/Google Meet evidence first.
+2. Implement bounded in-flight audio recovery using the canonical record/checkpoint contract; this is product
+   logic, not a reason to adopt another full meeting app.
+3. Qualify FlexAudio behind `AudioSource` and keep it only where it matches or improves channel quality,
+   device recovery, soak stability, footprint, and permission behavior.
+4. Benchmark `speakrs` against `pyannote-rs` after the canonical schema exists. Diarization improves identity
+   but does not block an honest narrow Beta that labels uncertain speakers.
+5. Add AEC3 only if speaker-mode evidence shows echo or loopback duplication; the headset path should bypass
+   processing that cannot help it.
+6. Keep Recall/Vexa, calendars, connectors, and compounding knowledge on their existing later seams. They do
+   not delay bot-free capture, transcript, scratchpad, or grounded Live Assist.
 
 ### Bot-free meetings
 
