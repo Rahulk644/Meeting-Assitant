@@ -88,6 +88,22 @@ class SpeakerAttribution {
   attribute(caption, meetingAudioState = "ready") {
     if (!caption || caption.type !== "caption") return caption;
     if (caption.self) {
+      const endedAt = Number.isSafeInteger(Number(caption.endedAt))
+        ? Number(caption.endedAt)
+        : Number.isSafeInteger(Number(caption.ts)) ? Number(caption.ts) : Date.now();
+      const requestedStart = Number(caption.startedAt);
+      const startedAt = Number.isSafeInteger(requestedStart) && requestedStart <= endedAt && endedAt - requestedStart <= 60_000
+        ? requestedStart
+        : Math.max(0, endedAt - 1_000);
+      const remote = this.dominant(startedAt, endedAt);
+      if (remote && ["active_speaker_label", "extension_active_speaker"].includes(remote.source)) {
+        caption.speaker = remote.name;
+        caption.self = false;
+        caption.speakerSource = `microphone_playback:${remote.source}`;
+        caption.speakerConfidence = confidence(remote.source);
+        if (remote.context) caption.speakerContext = remote.context;
+        return caption;
+      }
       if (meetingAudioState !== "ready") {
         caption.speaker = "Unknown speaker";
         caption.self = false;

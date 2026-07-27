@@ -105,6 +105,8 @@ Safari, Teams native and browser, Slack Huddles, Discord, and FaceTime. It verif
 - both audio channels, overlap, speaker uncertainty, and live transcript;
 - a system-audio source that opens without delivering buffers never reaches Recording, visibly retries, and
   cannot cause microphone/room playback to be labelled **You**;
+- explicit Zoom `Talking:` evidence reclassifies matching-time room playback away from **You**, while a
+  generic floating tile alone never overrides a microphone segment;
 - alternating remote turns use the correct Zoom display name only when timestamped evidence supports it;
   the local `(Me)` name never leaks onto the remote channel, rapid/overlapping remote turns stay unknown
   when evidence is closely split, and gallery/speaker/share layouts do not inherit a stale name;

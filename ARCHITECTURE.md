@@ -298,8 +298,10 @@ fed into the summary prompt.
   produce duplicate lines; headphones are the reliable workaround. The capture handshake therefore does
   not trust an API-level process-tap start: meeting audio becomes Ready only after the first actual buffer.
   A source that opens without buffers is restarted, and microphone speech remains **Unknown speaker** until
-  the independent meeting-audio channel proves separation—never confidently **You**. AEC/noise-suppression
-  components may be qualified under the audio provider contract, but cannot ship without
+  the independent meeting-audio channel proves separation—never confidently **You**. If Zoom's explicit,
+  time-aligned `Talking:` evidence identifies a remote participant during a microphone segment, Rust
+  reclassifies that room playback to the remote participant; an always-visible floating tile is not strong
+  enough to do so. AEC/noise-suppression components may be qualified under the audio provider contract, but cannot ship without
   transcript-quality evidence. If SCK goes silent after long uptime: `sudo killall coreaudiod`.
 
 ## Speaker names

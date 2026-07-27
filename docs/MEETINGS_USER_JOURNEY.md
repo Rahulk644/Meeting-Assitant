@@ -91,6 +91,9 @@ the recording state.
 If meeting audio opens but supplies no buffers for eight seconds, the app reports that source as restarting
 instead of falsely claiming Recording. Any microphone captions retained during an unverified or recovering
 meeting-audio state display as **Unknown speaker**, not **You**, because room playback may be present.
+After readiness, Zoom's explicit timestamped **Talking:** evidence may reclassify remote playback heard by
+the microphone to that remote participant. A merely visible floating video tile is never sufficient to
+override microphone ownership.
 
 After system audio has produced buffers at least once, an eight-second buffer-heartbeat loss is a dropout:
 the expanded Nub briefly reports **Needs attention** with **restarting automatically**, the native source is
@@ -141,7 +144,8 @@ must remain present.
 
 **Failure:** After 20–30 seconds of clear alternating speech there are no lines, only one channel appears,
 the same remote sentence appears as both You and remote while headphones are used, or uncertain evidence is
-shown as a confident person name.
+shown as a confident person name. With speaker playback, a remote sentence supported by Zoom's explicit
+active-speaker evidence must not remain under **You**.
 
 ### 4. Control and assistance
 

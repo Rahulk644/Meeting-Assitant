@@ -2036,6 +2036,10 @@ fn speaker_confidence(source: &str) -> &'static str {
     }
 }
 
+fn microphone_remote_source(source: &str) -> bool {
+    matches!(source, "active_speaker_label" | "extension_active_speaker")
+}
+
 fn dominant_speaker(
     timeline: &VecDeque<SpeakerTransition>,
     evidence_seen_at: u64,
@@ -2099,6 +2103,25 @@ fn attribute_caption(
         .filter(|start| *start <= ended_at && ended_at - *start <= 60_000)
         .unwrap_or(ended_at.saturating_sub(1_000));
     if object.get("self").and_then(Value::as_bool).unwrap_or(false) {
+        if let Some((name, source, context)) =
+            dominant_speaker(timeline, evidence_seen_at, started_at, ended_at)
+                .filter(|(_, source, _)| microphone_remote_source(source))
+        {
+            object.insert("speaker".into(), Value::String(name));
+            object.insert("self".into(), Value::Bool(false));
+            object.insert(
+                "speakerSource".into(),
+                Value::String(format!("microphone_playback:{source}")),
+            );
+            object.insert(
+                "speakerConfidence".into(),
+                Value::String(speaker_confidence(&source).into()),
+            );
+            if !context.is_empty() {
+                object.insert("speakerContext".into(), Value::String(context));
+            }
+            return;
+        }
         if meeting_audio_state != "ready" {
             object.insert("speaker".into(), Value::String(unknown_speaker()));
             object.insert("self".into(), Value::Bool(false));
@@ -6190,8 +6213,8 @@ mod tests {
             "type":"caption",
             "speaker":"Rahul Khatri",
             "self":true,
-            "startedAt":1_200,
-            "endedAt":2_800,
+            "startedAt":5_200,
+            "endedAt":6_200,
             "text":"My response."
         });
         attribute_caption(&mut own_line, &timeline, 5_000, "ready");
@@ -6199,6 +6222,28 @@ mod tests {
         assert_eq!(
             own_line.get("speakerConfidence").and_then(Value::as_str),
             Some("certain")
+        );
+
+        let mut leaked_remote = json!({
+            "type":"caption",
+            "speaker":"Rahul Khatri",
+            "self":true,
+            "startedAt":1_200,
+            "endedAt":2_800,
+            "text":"Remote playback heard by the microphone."
+        });
+        attribute_caption(&mut leaked_remote, &timeline, 5_000, "ready");
+        assert_eq!(
+            leaked_remote.get("speaker").and_then(Value::as_str),
+            Some("Aditi")
+        );
+        assert_eq!(
+            leaked_remote.get("self").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            leaked_remote.get("speakerSource").and_then(Value::as_str),
+            Some("microphone_playback:active_speaker_label")
         );
 
         let mut unseparated = json!({

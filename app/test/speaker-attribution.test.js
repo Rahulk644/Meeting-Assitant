@@ -120,3 +120,33 @@ test("microphone ownership fails closed until meeting audio proves channel separ
   assert.equal(line.speakerSource, "microphone_unseparated");
   assert.equal(line.speakerConfidence, "unknown");
 });
+
+test("explicit remote talking evidence reclassifies speaker playback heard by the microphone", () => {
+  const attribution = new SpeakerAttribution();
+  attribution.update({
+    type: "state",
+    source: "accessibility",
+    ts: 1_300,
+    state: {
+      selfName: "Rahul Khatri",
+      activeSpeaker: "Aditi",
+      activeSpeakerEvidence: {
+        name: "Aditi",
+        source: "active_speaker_label",
+        context: "Zoom Meeting",
+      },
+    },
+  }, 1_300);
+  const line = attribution.attribute({
+    type: "caption",
+    speaker: "Rahul Khatri",
+    self: true,
+    startedAt: 1_200,
+    endedAt: 2_800,
+    text: "Remote playback heard by the microphone.",
+  }, "ready");
+  assert.equal(line.speaker, "Aditi");
+  assert.equal(line.self, false);
+  assert.equal(line.speakerSource, "microphone_playback:active_speaker_label");
+  assert.equal(line.speakerConfidence, "high");
+});
