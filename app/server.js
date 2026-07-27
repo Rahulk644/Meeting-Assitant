@@ -49,6 +49,7 @@ let cur = null; // the in-progress meeting being recorded to disk
 const gate = new Gate(true);
 const meetingDetector = new MeetingDetector();
 const speakerAttribution = new SpeakerAttribution();
+let captureMeetingAudio = "idle";
 let unloadIdle = true; // "Unload model when idle" setting — off = keep whisper hot between calls
 let whisperIdleMinutes = 10; // user-configurable; 10 minutes balances back-to-back speed with RAM recovery
 let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
@@ -118,7 +119,10 @@ function setManual(action) {
 // helper event so only the server's composed gate state reaches the UI.
 function ingest(obj) {
   if (obj && obj.type === "state") speakerAttribution.update(obj);
-  if (obj && obj.type === "caption") speakerAttribution.attribute(obj);
+  if (obj && obj.type === "capture-status" && ["idle", "starting", "ready", "failed"].includes(obj.meetingAudio)) {
+    captureMeetingAudio = obj.meetingAudio;
+  }
+  if (obj && obj.type === "caption") speakerAttribution.attribute(obj, captureMeetingAudio);
   if (obj && obj.type === "dictation") { // a finished dictation from meeting-tap → keep recent + push to the view
     if (obj.text) { recentDictations.unshift({ text: String(obj.text).slice(0, 4000), ts: obj.ts || Date.now(), ms: obj.ms || 0 }); recentDictations = recentDictations.slice(0, 50); }
     broadcast(obj); return;

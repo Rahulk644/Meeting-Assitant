@@ -295,9 +295,12 @@ fed into the summary prompt.
   Without video, the library resolves the installed native app icon through `NSWorkspace`, then falls back
   to a lightweight platform identity tile.
 - **The current beta has no acoustic echo cancellation.** On speakers the mic can re-hear remote voices and
-  produce duplicate lines; headphones are the reliable workaround. AEC/noise-suppression components may be
-  qualified under the audio provider contract, but cannot ship without transcript-quality evidence. If SCK
-  goes silent after long uptime: `sudo killall coreaudiod`.
+  produce duplicate lines; headphones are the reliable workaround. The capture handshake therefore does
+  not trust an API-level process-tap start: meeting audio becomes Ready only after the first actual buffer.
+  A source that opens without buffers is restarted, and microphone speech remains **Unknown speaker** until
+  the independent meeting-audio channel proves separation—never confidently **You**. AEC/noise-suppression
+  components may be qualified under the audio provider contract, but cannot ship without
+  transcript-quality evidence. If SCK goes silent after long uptime: `sudo killall coreaudiod`.
 
 ## Speaker names
 

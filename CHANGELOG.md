@@ -7,6 +7,9 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ### Added
 
+- First-buffer meeting-audio readiness and fail-closed microphone ownership: a process tap that opens without
+  delivering data now retries instead of claiming Recording, and captions heard before independent channel
+  separation remain **Unknown speaker** rather than being misattributed to **You**.
 - Evidence-backed Zoom speaker names: each caption retains its real audio interval and the Rust meeting core
   matches it against a bounded, self-filtered active-speaker timeline. Trusted matches persist their
   provenance/confidence; stale, conflicting, and unsupported cases stay **Unknown speaker**.

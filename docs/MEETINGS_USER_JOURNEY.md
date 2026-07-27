@@ -76,16 +76,21 @@ audio as separate sources.
 Click the Nub. It expands without moving focus from Zoom. The meeting title remains the primary heading; the
 secondary state says **Zoom · Starting local capture**. **Stop** remains reachable.
 
-The product does not yet claim to be recording. When macOS successfully opens the microphone and Zoom Core
-Audio tap, the secondary state changes to **Zoom · Recording locally · Mic + meeting audio ready**,
+The product does not yet claim to be recording. When macOS successfully opens the microphone and the Zoom
+Core Audio tap produces its first real buffer, the secondary state changes to
+**Zoom · Recording locally · Mic + meeting audio ready**,
 **Pause** and **Stop** are available, and the menu-bar waveform starts. Source-open
-acknowledgement—not speech—is the readiness signal. A silent remote participant must never delay recording
-or discard the user's microphone audio.
+plus first-buffer acknowledgement—not speech—is the readiness signal. A healthy tap delivers buffers during
+remote silence, so a silent participant must never delay recording or discard the user's microphone audio.
 
 If either source cannot start, the expanded Nub says **Audio needs attention** and names the failed source.
 **Open** brings My Assistant forward; the in-app panel exposes **Fix audio permissions** as
 **Allow Microphone** or **Allow System Audio Recording** when one failed channel is known. It must not show
 the recording state.
+
+If meeting audio opens but supplies no buffers for eight seconds, the app reports that source as restarting
+instead of falsely claiming Recording. Any microphone captions retained during an unverified or recovering
+meeting-audio state display as **Unknown speaker**, not **You**, because room playback may be present.
 
 After system audio has produced buffers at least once, an eight-second buffer-heartbeat loss is a dropout:
 the expanded Nub briefly reports **Needs attention** with **restarting automatically**, the native source is
@@ -107,7 +112,8 @@ the menu-bar item **Show My Assistant** deliberately brings forward the full pan
 
 **Failure:** No notification/native panel within five seconds, repeated notifications for the same call,
 the main window steals focus, the product says recording before both channels are confirmed, or a source
-failure has no specific recovery state.
+failure has no specific recovery state. Remote speech appearing as **You** while meeting audio has produced
+no independent lines is also a failure.
 
 ### 3. Live transcript
 

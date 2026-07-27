@@ -104,3 +104,19 @@ test("speaker evidence is scoped to one meeting", () => {
     endedAt: 2_500,
   }).speaker, "Unknown speaker");
 });
+
+test("microphone ownership fails closed until meeting audio proves channel separation", () => {
+  const attribution = new SpeakerAttribution();
+  const line = attribution.attribute({
+    type: "caption",
+    speaker: "Rahul Khatri",
+    self: true,
+    startedAt: 1_500,
+    endedAt: 2_500,
+    text: "Speech heard while meeting audio is unavailable.",
+  }, "starting");
+  assert.equal(line.speaker, "Unknown speaker");
+  assert.equal(line.self, false);
+  assert.equal(line.speakerSource, "microphone_unseparated");
+  assert.equal(line.speakerConfidence, "unknown");
+});

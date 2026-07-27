@@ -2083,11 +2083,39 @@ fn attribute_caption(
     caption: &mut Value,
     timeline: &VecDeque<SpeakerTransition>,
     evidence_seen_at: u64,
+    meeting_audio_state: &str,
 ) {
     let Some(object) = caption.as_object_mut() else {
         return;
     };
+    let ended_at = object
+        .get("endedAt")
+        .and_then(Value::as_u64)
+        .or_else(|| object.get("ts").and_then(Value::as_u64))
+        .unwrap_or_else(now_ms);
+    let started_at = object
+        .get("startedAt")
+        .and_then(Value::as_u64)
+        .filter(|start| *start <= ended_at && ended_at - *start <= 60_000)
+        .unwrap_or(ended_at.saturating_sub(1_000));
     if object.get("self").and_then(Value::as_bool).unwrap_or(false) {
+        if meeting_audio_state != "ready" {
+            object.insert("speaker".into(), Value::String(unknown_speaker()));
+            object.insert("self".into(), Value::Bool(false));
+            object.insert(
+                "speakerSource".into(),
+                Value::String("microphone_unseparated".into()),
+            );
+            object.insert("speakerConfidence".into(), Value::String("unknown".into()));
+            object.insert(
+                "speakerContext".into(),
+                Value::String(
+                    "Meeting-audio channel was not independently verified; room playback may be present."
+                        .into(),
+                ),
+            );
+            return;
+        }
         object.insert("speaker".into(), Value::String("You".into()));
         object.insert("speakerSource".into(), Value::String("user".into()));
         object.insert("speakerConfidence".into(), Value::String("certain".into()));
@@ -2106,16 +2134,6 @@ fn attribute_caption(
         return;
     }
 
-    let ended_at = object
-        .get("endedAt")
-        .and_then(Value::as_u64)
-        .or_else(|| object.get("ts").and_then(Value::as_u64))
-        .unwrap_or_else(now_ms);
-    let started_at = object
-        .get("startedAt")
-        .and_then(Value::as_u64)
-        .filter(|start| *start <= ended_at && ended_at - *start <= 60_000)
-        .unwrap_or(ended_at.saturating_sub(1_000));
     if let Some((name, source, context)) =
         dominant_speaker(timeline, evidence_seen_at, started_at, ended_at)
     {
@@ -2230,6 +2248,7 @@ fn ingest_event(shared: Arc<Shared>, mut value: Value) {
                     &mut value,
                     &state.speaker_attribution.timeline,
                     state.speaker_attribution.evidence_seen_at,
+                    &state.capture_meeting_audio,
                 );
             }
             record_event(&shared.cfg, &mut state, &value);
@@ -6142,7 +6161,7 @@ mod tests {
             "endedAt":2_800,
             "text":"We should ship this week."
         });
-        attribute_caption(&mut aditi, &timeline, 5_000);
+        attribute_caption(&mut aditi, &timeline, 5_000, "ready");
         assert_eq!(aditi.get("speaker").and_then(Value::as_str), Some("Aditi"));
         assert_eq!(
             aditi.get("speakerSource").and_then(Value::as_str),
@@ -6161,7 +6180,7 @@ mod tests {
             "endedAt":4_000,
             "text":"Overlapping turn."
         });
-        attribute_caption(&mut ambiguous, &timeline, 5_000);
+        attribute_caption(&mut ambiguous, &timeline, 5_000, "ready");
         assert_eq!(
             ambiguous.get("speaker").and_then(Value::as_str),
             Some("Unknown speaker")
@@ -6175,11 +6194,33 @@ mod tests {
             "endedAt":2_800,
             "text":"My response."
         });
-        attribute_caption(&mut own_line, &timeline, 5_000);
+        attribute_caption(&mut own_line, &timeline, 5_000, "ready");
         assert_eq!(own_line.get("speaker").and_then(Value::as_str), Some("You"));
         assert_eq!(
             own_line.get("speakerConfidence").and_then(Value::as_str),
             Some("certain")
+        );
+
+        let mut unseparated = json!({
+            "type":"caption",
+            "speaker":"Rahul Khatri",
+            "self":true,
+            "startedAt":3_200,
+            "endedAt":4_800,
+            "text":"Audio heard before the independent meeting channel was ready."
+        });
+        attribute_caption(&mut unseparated, &timeline, 5_000, "starting");
+        assert_eq!(
+            unseparated.get("speaker").and_then(Value::as_str),
+            Some("Unknown speaker")
+        );
+        assert_eq!(
+            unseparated.get("self").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            unseparated.get("speakerSource").and_then(Value::as_str),
+            Some("microphone_unseparated")
         );
     }
     #[test]

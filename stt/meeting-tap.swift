@@ -223,6 +223,7 @@ func capturePhase(microphone: String, meetingAudio: String) -> String {
 }
 
 let SYSTEM_AUDIO_DROPOUT_SECONDS = 8.0
+let SYSTEM_AUDIO_START_TIMEOUT_SECONDS = 8.0
 let SYSTEM_AUDIO_RECYCLE_WINDOW_SECONDS = 60.0
 let SYSTEM_AUDIO_RECYCLE_DROPOUTS = 3
 func shouldRestartSystemAudio(hasReceivedBuffer: Bool, lastBufferAt: TimeInterval?,
@@ -233,6 +234,11 @@ func shouldRestartSystemAudio(hasReceivedBuffer: Bool, lastBufferAt: TimeInterva
 func shouldRecycleCaptureProcess(dropoutCount: Int, windowAge: TimeInterval) -> Bool {
     dropoutCount >= SYSTEM_AUDIO_RECYCLE_DROPOUTS
         && windowAge <= SYSTEM_AUDIO_RECYCLE_WINDOW_SECONDS
+}
+func shouldRejectSilentSystemSource(state: String, hasSource: Bool, hasReceivedBuffer: Bool,
+                                    attemptAge: TimeInterval) -> Bool {
+    state == "starting" && hasSource && !hasReceivedBuffer
+        && attemptAge >= SYSTEM_AUDIO_START_TIMEOUT_SECONDS
 }
 
 if A.contains("--selftest") {
@@ -254,6 +260,12 @@ if A.contains("--selftest") {
           "healthy system-audio heartbeat is retained")
     check(shouldRestartSystemAudio(hasReceivedBuffer: true, lastBufferAt: 590, now: 600),
           "missing system-audio buffers after capture flowed triggers recovery")
+    check(!shouldRejectSilentSystemSource(state: "starting", hasSource: true, hasReceivedBuffer: false, attemptAge: 4),
+          "an opening system-audio source gets a bounded startup window")
+    check(shouldRejectSilentSystemSource(state: "starting", hasSource: true, hasReceivedBuffer: false, attemptAge: 9),
+          "an opened source cannot claim readiness without producing a buffer")
+    check(!shouldRejectSilentSystemSource(state: "starting", hasSource: true, hasReceivedBuffer: true, attemptAge: 9),
+          "first buffer proves the system-audio source is live")
     check(!shouldRecycleCaptureProcess(dropoutCount: 2, windowAge: 20),
           "ordinary source recovery does not recycle the helper")
     check(shouldRecycleCaptureProcess(dropoutCount: 3, windowAge: 40),
@@ -757,7 +769,6 @@ final class Capture {
     var systemAttemptInFlight = false
     var systemHasReceivedBuffer = false
     var lastSystemBufferAt: TimeInterval?
-    var systemRecoveryAwaitingBuffer = false
     var systemDropoutCount = 0
     var systemDropoutWindowStart: TimeInterval?
 
@@ -795,10 +806,15 @@ final class Capture {
     }
 
     private func systemBufferHeartbeat(_ at: TimeInterval, for expectedSession: String) {
-        guard running, session == expectedSession, meetingAudioState == "ready" else { return }
+        guard running, session == expectedSession,
+              meetingAudioState == "starting" || meetingAudioState == "ready" else { return }
+        let opened = meetingAudioState == "starting"
         systemHasReceivedBuffer = true
         lastSystemBufferAt = at
-        systemRecoveryAwaitingBuffer = false
+        if opened {
+            channelReady("meetingAudio", for: expectedSession)
+            err(">> meeting-audio source produced its first buffer")
+        }
     }
 
     private func registerSystemDropout(at: TimeInterval) -> Bool {
@@ -835,7 +851,6 @@ final class Capture {
         meetingAudioState = "starting"; captureDetail = ""
         lastMicAttempt = .distantPast; lastSystemAttempt = .distantPast; systemAttemptInFlight = false
         systemHasReceivedBuffer = false; lastSystemBufferAt = nil
-        systemRecoveryAwaitingBuffer = false
         systemDropoutCount = 0; systemDropoutWindowStart = nil
         let wantVideo = mode == "always" || mode == "share"
         err(">> in a call — starting capture (video: \(mode))")
@@ -862,11 +877,23 @@ final class Capture {
             else { microphoneFailed("Microphone unavailable · allow Microphone access for My Assistant") }
         }
 
-        // Source readiness means the operating system accepted and started the capture source. Silence is
-        // valid meeting content: if the remote side says nothing for ten minutes, the microphone must still
-        // record from second zero and the UI must still say Recording. Buffer liveness is a separate health
-        // signal. Only a source that has previously produced buffers can be classified as having dropped.
+        // An API-level start is not enough: Core Audio can create a tap that never delivers buffers when
+        // permission or routing is broken. A healthy tap delivers buffers even during participant silence,
+        // so the first buffer is the readiness proof and later heartbeats are the dropout proof.
         let heartbeatNow = ProcessInfo.processInfo.systemUptime
+        let wantVideo = mode == "always" || mode == "share"
+        let hasSystemSource = wantVideo ? (stream != nil || systemAttemptInFlight) : tap != nil
+        if shouldRejectSilentSystemSource(
+            state: meetingAudioState,
+            hasSource: hasSystemSource,
+            hasReceivedBuffer: systemHasReceivedBuffer,
+            attemptAge: now.timeIntervalSince(lastSystemAttempt)
+        ) {
+            err("system audio: source opened but produced no buffers — restarting")
+            if registerSystemDropout(at: heartbeatNow) { return }
+            meetingAudioFailed("Meeting audio opened without data · restarting automatically")
+            return
+        }
         if meetingAudioState == "ready",
            shouldRestartSystemAudio(hasReceivedBuffer: systemHasReceivedBuffer,
                                     lastBufferAt: lastSystemBufferAt,
@@ -874,23 +901,12 @@ final class Capture {
             err("system audio: buffer heartbeat stopped — restarting capture source")
             if registerSystemDropout(at: heartbeatNow) { return }
             meetingAudioFailed("Meeting audio stream dropped · restarting automatically")
-            systemRecoveryAwaitingBuffer = true
-            return
-        }
-        if meetingAudioState == "ready", systemRecoveryAwaitingBuffer,
-           !systemHasReceivedBuffer, now.timeIntervalSince(lastSystemAttempt) >= SYSTEM_AUDIO_DROPOUT_SECONDS {
-            err("system audio: restarted source produced no heartbeat")
-            if registerSystemDropout(at: heartbeatNow) { return }
-            meetingAudioFailed("Meeting audio restart did not recover · retrying automatically")
-            systemRecoveryAwaitingBuffer = true
             return
         }
 
         // Two paths, each asking for the MINIMUM permission (Fathom's model):
         //   audio-only → Core Audio tap  → "System Audio Recording Only"      (default; no Screen Recording)
         //   video      → ScreenCaptureKit → "Screen & System Audio Recording"  (only when you record video)
-        let wantVideo = mode == "always" || mode == "share"
-        let hasSystemSource = wantVideo ? (stream != nil || systemAttemptInFlight) : tap != nil
         if !hasSystemSource, now.timeIntervalSince(lastSystemAttempt) >= 5 {
             lastSystemAttempt = now; meetingAudioState = "starting"; captureDetail = ""; publish()
             if wantVideo { startSCK(bundle: bundle) } else { startTap(aoids) }
@@ -903,8 +919,7 @@ final class Capture {
         let t = ProcessTap(sysSeg)
         if t.start(aoids: aoids) {
             self.tap = t
-            channelReady("meetingAudio", for: session)
-            err(">> capture source opened (audio-only, Core Audio tap)")
+            err(">> capture source opened; waiting for first meeting-audio buffer")
         }
         else {
             self.tap = nil
@@ -961,7 +976,7 @@ final class Capture {
                             err("startCapture error: \(e)")
                             self.meetingAudioFailed("Video meeting audio failed to start · check Screen Recording permission")
                         } else {
-                            self.channelReady("meetingAudio", for: expectedSession)
+                            err(">> video meeting-audio source opened; waiting for first buffer")
                         }
                     }
                 }
@@ -991,7 +1006,6 @@ final class Capture {
         session = ""; microphoneState = "idle"; meetingAudioState = "idle"; captureDetail = ""
         systemAttemptInFlight = false
         systemHasReceivedBuffer = false; lastSystemBufferAt = nil
-        systemRecoveryAwaitingBuffer = false
         systemDropoutCount = 0; systemDropoutWindowStart = nil
         targetBundle = ""
     }

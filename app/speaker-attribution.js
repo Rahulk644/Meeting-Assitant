@@ -85,9 +85,17 @@ class SpeakerAttribution {
     return { name: top[0], source: transition.source, context: transition.context };
   }
 
-  attribute(caption) {
+  attribute(caption, meetingAudioState = "ready") {
     if (!caption || caption.type !== "caption") return caption;
     if (caption.self) {
+      if (meetingAudioState !== "ready") {
+        caption.speaker = "Unknown speaker";
+        caption.self = false;
+        caption.speakerSource = "microphone_unseparated";
+        caption.speakerConfidence = "unknown";
+        caption.speakerContext = "Meeting-audio channel was not independently verified; room playback may be present.";
+        return caption;
+      }
       caption.speaker = "You";
       caption.speakerSource = "user";
       caption.speakerConfidence = "certain";

@@ -105,9 +105,10 @@ Node runtime, speech/polish model weights, telemetry client, or Agent helper.
 - The user can always start and stop manually. Pause/resume and call-end transitions have one recording
   lifecycle authority.
 - The Rust lifecycle projects Starting, Recording, Needs attention, Pausing, Paused, Finalizing, and Idle to every
-  meeting surface. Recording requires both capture sources to open successfully; it never waits for either
-  participant to speak. System-audio heartbeat loss is considered a dropout only after that source has
-  produced buffers, then it is torn down and retried automatically. Three failed recoveries inside one
+  meeting surface. Recording requires the microphone to open and meeting audio to produce a real first
+  buffer; an API-level tap start alone cannot claim readiness. Healthy Core Audio taps deliver buffers
+  during participant silence, so this does not wait for either person to speak. A source that opens without
+  buffers or loses its post-flow heartbeat is torn down and retried automatically. Three failed recoveries inside one
   minute recycle the supervised capture helper with bounded relaunch backoff without splitting the Rust
   meeting record. macOS renders a movable 52 × 52 non-activating branded Nub above the active meeting
   Space; it expands into an adaptive vertical conversation card with bounded speaker-grouped transcript,
@@ -118,6 +119,9 @@ Node runtime, speech/polish model weights, telemetry client, or Agent helper.
   when trusted platform evidence dominates that interval. Source and confidence are persisted; stale,
   conflicting, unsupported, or absent evidence remains **Unknown speaker**. Zoom supplies the current
   production evidence; Chrome Meet names and general multi-remote separation remain later Beta work.
+- The microphone is labelled **You** only after the independent meeting-audio channel is verified. While
+  that channel is starting, failed, or recovering, microphone captions are retained as **Unknown speaker**
+  because speaker playback may be present.
 - Recoverable transcript checkpoints are private. Corrections increment transcript revision and mark stale
   derived notes rather than silently presenting them as current.
 - Meeting notes can use an optional local runtime or an explicitly selected BYOK provider. Provider keys live
