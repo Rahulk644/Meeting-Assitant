@@ -125,6 +125,7 @@ struct State: Codable, Equatable {
     var sharing: Bool? = nil       // true = YOU are screen-sharing (hide the overlay!)
     var participants: [String] = []
     var participantEvidence: [ParticipantEvidence] = []
+    var selfName: String? = nil
     var activeSpeaker: String? = nil
     var activeSpeakerEvidence: ParticipantEvidence? = nil
     var ignoredParticipantEvidence: [IgnoredParticipantEvidence] = []
@@ -205,9 +206,10 @@ private func snapshot(preferredKey: String = "", preferredBundle: String = "") -
     deriveControls(from: menuTitles(appEl), into: &s)
     if windowInMeeting(appEl, appKey: key) { s.inMeeting = true }
     if key == "zoom" {
-        let (names, evidence, active, activeEvidence, ignored) = zoomNames(appEl)
+        let (names, evidence, selfName, active, activeEvidence, ignored) = zoomNames(appEl)
         s.participants = names
         s.participantEvidence = evidence
+        s.selfName = selfName
         s.activeSpeaker = active
         s.activeSpeakerEvidence = activeEvidence
         s.ignoredParticipantEvidence = ignored
@@ -316,6 +318,14 @@ private func nameFromTalking(_ s: String) -> String? {
     return validName(raw) ? raw.capitalized : nil
 }
 
+private func tileDescribesSelf(_ description: String) -> Bool {
+    let lower = description.lowercased()
+    guard let open = lower.firstIndex(of: "("),
+          let close = lower[lower.index(after: open)...].firstIndex(of: ")") else { return false }
+    let annotation = lower[lower.index(after: open)..<close]
+    return annotation.split { !$0.isLetter }.contains { $0 == "me" }
+}
+
 private func participantSource(context: String, floating: Bool, profile: Bool) -> String {
     if context.lowercased().contains("participant") { return "participant_list" }
     if floating { return "active_speaker_tile" }
@@ -326,9 +336,9 @@ private func participantSource(context: String, floating: Bool, profile: Bool) -
 /// containing window title travel with every name, so downstream code can distinguish confirmed
 /// participant-list evidence from active-speaker labels and ordinary video tiles. Tile-shaped Zoom
 /// interface text is retained only as rejected evidence; it never enters the participant roster.
-private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], evidence: [ParticipantEvidence], active: String?, activeEvidence: ParticipantEvidence?, ignored: [IgnoredParticipantEvidence]) {
+private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], evidence: [ParticipantEvidence], selfName: String?, active: String?, activeEvidence: ParticipantEvidence?, ignored: [IgnoredParticipantEvidence]) {
     var names: [String] = [], evidence: [ParticipantEvidence] = [], active: String? = nil
-    var activeEvidence: ParticipantEvidence? = nil, ignored: [IgnoredParticipantEvidence] = []
+    var selfName: String? = nil, activeEvidence: ParticipantEvidence? = nil, ignored: [IgnoredParticipantEvidence] = []
     func add(_ ev: ParticipantEvidence) {
         if !names.contains(ev.name) { names.append(ev.name) }
         if !evidence.contains(ev) { evidence.append(ev) }
@@ -349,6 +359,7 @@ private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], evidenc
             if let n = fromTile ?? fromProfile {
                 let ev = ParticipantEvidence(name: n, source: participantSource(context: nextContext, floating: inFloat, profile: fromProfile != nil), role: role, context: nextContext)
                 add(ev)
+                if fromTile != nil && tileDescribesSelf(d) { selfName = n }
                 if inFloat && active == nil { active = n; activeEvidence = ev } // first tile in the floating window = who's on screen
             } else {
                 let low = d.lowercased()
@@ -368,7 +379,7 @@ private func zoomNames(_ appEl: AXUIElement) -> (participants: [String], evidenc
         let context = axStr(w, kTitle) ?? ""
         walk(w, floating: false, context: context, depth: 0)
     }
-    return (names, evidence, active, activeEvidence, ignored)
+    return (names, evidence, selfName, active, activeEvidence, ignored)
 }
 
 // NOTE: live caption TEXT comes from the selected on-device speech model (see ../stt). This layer's job is meeting
@@ -484,7 +495,10 @@ private final class MeetingActivityMonitor {
         permissionStatusSent = false
         installObserverIfPossible()
         let state = snapshot(preferredKey: activeApp, preferredBundle: activeBundle)
-        if state != lastState {
+        // Keep a lightweight timestamped heartbeat while a speaker is visible. Transcript attribution
+        // matches the audio interval against this evidence; emitting only on a name change would make a
+        // long monologue look stale even though the in-call reconciliation scan just confirmed it.
+        if state != lastState || state.activeSpeaker != nil {
             emit(Line(type: "state", source: "accessibility", ts: nowMs(), state: state))
             lastState = state
         }
@@ -579,6 +593,9 @@ private func selftest() -> Never {
     check(canonName("Rahul Khatri (Me)") == "Rahul Khatri", "canon strips (Me)")
     check(canonName("Rahul Khatri (Host, me)") == "Rahul Khatri", "canon strips (Host, me)")
     check(nameFromTileDesc("Rahul Khatri (Me), Computer audio muted") == "Rahul Khatri", "tile desc -> canonical name")
+    check(tileDescribesSelf("Rahul Khatri (Host, me), Computer audio muted"), "self tile detection")
+    check(!tileDescribesSelf("Aditi Mehra, Computer audio connected"), "self detection uses the annotation")
+    check(tileDescribesSelf("Claudio (Me), Computer audio connected"), "self detection does not split names containing audio")
     check(nameFromTileDesc("Set up professional audio in Audio settings, Muted") == nil, "tile-shaped UI hint rejected")
     check(participantSource(context: "Participants", floating: false, profile: true) == "participant_list", "participant panel provenance")
     check(participantSource(context: "zoom floating video window", floating: true, profile: false) == "active_speaker_tile", "active tile provenance")

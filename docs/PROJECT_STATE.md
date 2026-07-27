@@ -113,6 +113,11 @@ Node runtime, speech/polish model weights, telemetry client, or Agent helper.
   Space; it expands into an adaptive vertical conversation card with bounded speaker-grouped transcript,
   direct last-minute catch-up, and recording controls. Platform overlays remain projections and never
   become a second lifecycle authority.
+- Meeting captions carry their actual audio interval. The Rust meeting core keeps a bounded, timestamped
+  active-speaker evidence timeline, filters the local participant, and applies a remote display name only
+  when trusted platform evidence dominates that interval. Source and confidence are persisted; stale,
+  conflicting, unsupported, or absent evidence remains **Unknown speaker**. Zoom supplies the current
+  production evidence; Chrome Meet names and general multi-remote separation remain later Beta work.
 - Recoverable transcript checkpoints are private. Corrections increment transcript revision and mark stale
   derived notes rather than silently presenting them as current.
 - Meeting notes can use an optional local runtime or an explicitly selected BYOK provider. Provider keys live

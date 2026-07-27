@@ -165,6 +165,11 @@ schemas. The desktop app is still useful offline; server features are additive.
 Display names never fabricate email addresses. Emails come only from an authorized calendar/provider source.
 Identity data is local by default, deletable, scoped to the user/workspace, and excluded from logs.
 
+The first bounded merger is shipped in the Rust meeting core: actual caption audio intervals are matched
+against timestamped, self-filtered Zoom active-speaker evidence, with observation-lag compensation and an
+honest unknown result for stale or competing evidence. M-05/M-06 remain open because broad multi-remote
+separation still needs a qualified acoustic diarizer plus durable cross-source identity resolution.
+
 ## Packaging and tiers hypothesis
 
 Tiers are product hypotheses until billing and entitlement are deliberately shipped.

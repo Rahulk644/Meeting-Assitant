@@ -284,6 +284,12 @@ The installed 3.3.3 app exposes the product model the user described:
 
 Its process inventory also shows a useful separation of concerns: the Electron UI is backed by small native audio and meeting-monitor helpers. The meeting monitor explicitly starts with Zoom, Google Meet, Microsoft Teams, and Slack Huddle adapters. That validates an adapter architecture, but not any specific internal implementation.
 
+The desktop bundle does not contain a local speaker-attribution or diarization implementation. Its native
+bridge carries meeting context plus audio/video frames to a separate Chrome-extension/service boundary, and
+Fathom's Name Picker handles the user's own Zoom display identity. The useful conclusion is architectural:
+the lightweight desktop capture client cannot, by itself, be treated as the source of Fathom's named
+speaker intelligence.
+
 Decision for My Assistant:
 
 - Model the pre-call choice as **Off / Transcript only / Audio / Video**. Bot capture is a later hosted mode, not a hidden fallback.
@@ -293,7 +299,7 @@ Decision for My Assistant:
 - End detection must finalize the transcript once, persist it, and queue notes automatically with visible progress and retry.
 - Make consent a product feature. Recording should never become covert merely because capture is local or bot-free.
 
-Official references: [Fathom Desktop App](https://help.fathom.video/en/articles/449088), [new bot-free experience](https://help.fathom.video/en/articles/11577345), [Slack Huddles](https://help.fathom.video/en/articles/11870465), and [recording consent](https://help.fathom.video/en/articles/6150977).
+Official references: [Fathom Desktop App](https://help.fathom.video/en/articles/449088), [new bot-free experience](https://help.fathom.video/en/articles/11577345), [Name Picker](https://help.fathom.video/en/articles/297152), [Slack Huddles](https://help.fathom.video/en/articles/11870465), and [recording consent](https://help.fathom.video/en/articles/6150977).
 
 ### Granola: human notes, audio quality, and connector benchmark
 
@@ -308,6 +314,11 @@ The installed 7.441.6 package is the strongest reference for what happens after 
 - connector execution is normalized around connector, connection, action/tool, arguments, result, and
   destination identities; and
 - organization policy can restrict connectors and MCP server/tool access.
+- transcript words retain provider speaker clusters, while a separate detected-speaker identity can replace
+  the generic cluster label;
+- active-speaker changes are retained as a bounded timestamped history, filtered against the local
+  participant, adjusted for observation lag, and resolved by the dominant evidence over the transcript
+  chunk's actual interval—not whichever tile is visible after transcription finishes.
 
 Decision for My Assistant:
 
@@ -317,6 +328,9 @@ Decision for My Assistant:
   should bypass work that cannot improve their path.
 - Keep OAuth secrets, provider SDKs, retries, and write execution out of the desktop process. The desktop
   previews, asks for approval, and shows a durable receipt.
+- Keep the same evidence categories but implement the merger in the shared Rust core. Caption timing,
+  trusted platform evidence, self filtering, uncertainty, and corrections are product contracts rather
+  than code taken from a reference app.
 - Start with follow-up email/Slack drafts and signed webhooks, then Notion and CRM writes. Broad connector
   count matters less than reliable completion, idempotency, and recovery.
 - Put MCP behind the same allowlisted action contract. It is not an authorization bypass or an excuse to
@@ -363,6 +377,9 @@ Observed useful patterns:
 - The desktop app also includes a diagnostic export, update status, meeting-prep notification, and screen-share hiding.
 - AskFred works both within one meeting and across meeting history.
 - Bot mode and no-bot mode have honest capability differences: named speakers, sales assist, and saved media are not promised where the system-audio mode cannot provide them.
+- Compiled transcript helpers keep a provider `speaker_id` separate from `speakerMeta`; when an identity is
+  not available the UI falls back to `Speaker N`, and a later label correction updates that mapping. This
+  reinforces that diarization clusters and participant identity are separate facts.
 
 Decision for My Assistant:
 

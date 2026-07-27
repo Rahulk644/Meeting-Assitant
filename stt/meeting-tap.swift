@@ -269,6 +269,7 @@ if A.contains("--selftest") {
 final class Segmenter {
     let speaker: String, isSelf: Bool, tag: String, threshold: Float
     var seg = [Float](), inSpeech = false, silentDur = 0.0, segIdx = 0
+    var speechStartedAtMs: Int? = nil
     var bufN = 0; var peak: Float = 0; var announced = false
     var lastHeartbeatAt: TimeInterval = 0
     var onBufferHeartbeat: ((TimeInterval) -> Void)?
@@ -280,6 +281,7 @@ final class Segmenter {
     }
     func reset() {
         seg.removeAll(keepingCapacity: true); inSpeech = false; silentDur = 0
+        speechStartedAtMs = nil
         bufN = 0; peak = 0; announced = false; lastHeartbeatAt = 0
     }   // between calls
 
@@ -301,7 +303,11 @@ final class Segmenter {
         bufN += 1; peak = max(peak, rms)
         if bufN % 500 == 0 { err("\(tag): · listening (peak \(f2(peak)))"); peak = 0 }
         if rms > threshold {
-            if !inSpeech { inSpeech = true; seg.removeAll(keepingCapacity: true) }
+            if !inSpeech {
+                inSpeech = true
+                speechStartedAtMs = Int(Date().timeIntervalSince1970 * 1000)
+                seg.removeAll(keepingCapacity: true)
+            }
             seg.append(contentsOf: s); silentDur = 0
         } else if inSpeech {
             seg.append(contentsOf: s); silentDur += dur
@@ -311,13 +317,16 @@ final class Segmenter {
     }
 
     func flush() {
+        let endedAtMs = Int(Date().timeIntervalSince1970 * 1000)
+        let startedAtMs = speechStartedAtMs ?? endedAtMs
         let samples = seg; seg.removeAll(keepingCapacity: true); inSpeech = false; silentDur = 0
+        speechStartedAtMs = nil
         guard Double(samples.count) / SR >= MIN_SEG else { return }
         segIdx += 1; let idx = segIdx
-        procQ.async { self.process(samples, idx) }
+        procQ.async { self.process(samples, idx, startedAtMs: startedAtMs, endedAtMs: endedAtMs) }
     }
 
-    func process(_ samples: [Float], _ idx: Int) {
+    func process(_ samples: [Float], _ idx: Int, startedAtMs: Int, endedAtMs: Int) {
         let wav = URL(fileURLWithPath: TEMP_DIR).appendingPathComponent("meeting-\(tag)-\(idx)-\(UUID().uuidString).wav")
         writeWav16(samples, to: wav)
         defer { try? FileManager.default.removeItem(at: wav) }
@@ -330,12 +339,12 @@ final class Segmenter {
         let clean = EXPRESSIONS ? keepExpressions(raw) : cleanTranscript(raw)
         err("\(tag) seg#\(idx) \(secs)s accepted (\(clean.count) characters)")
         guard clean.count > 1 else { return }
-        postCaption(clean)
+        postCaption(clean, startedAtMs: startedAtMs, endedAtMs: endedAtMs)
     }
 
-    func postCaption(_ text: String) {
+    func postCaption(_ text: String, startedAtMs: Int, endedAtMs: Int) {
         let obj: [String: Any] = ["type": "caption", "speaker": speaker, "text": text, "self": isSelf,
-                                  "ts": Int(Date().timeIntervalSince1970 * 1000)]
+                                  "startedAt": startedAtMs, "endedAt": endedAtMs, "ts": endedAtMs]
         postJSON(obj)
     }
 }

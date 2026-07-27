@@ -15,7 +15,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
@@ -38,6 +38,10 @@ const KEYCHAIN_SERVICE: &str = "com.myassistant.desktop.ai-provider";
 const AGENT_ACTION_PREVIEW_BUNDLE_ID: &str = "com.apple.TextEdit";
 const MAX_JSON_BODY: usize = 1_000_000;
 const MAX_AUDIO_BODY: usize = 64 * 1024 * 1024;
+const SPEAKER_HISTORY_LIMIT: usize = 600;
+const SPEAKER_DETECTION_LAG_MS: u64 = 300;
+const SPEAKER_EVIDENCE_TAIL_MS: u64 = 10_000;
+const MIN_SPEAKER_OVERLAP_MS: u64 = 200;
 
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
 static LLM_HTTP: OnceLock<ureq::Agent> = OnceLock::new();
@@ -167,10 +171,25 @@ struct State {
     capture_meeting_audio: String,
     capture_detail: String,
     meeting_last_checkpoint: Option<Instant>,
+    speaker_attribution: SpeakerAttributionState,
     #[cfg(feature = "agent-research")]
     agent_proposal: Option<AgentProposal>,
     #[cfg(feature = "agent-research")]
     agent_undo: Option<AgentUndo>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SpeakerTransition {
+    name: Option<String>,
+    source: String,
+    context: String,
+    at: u64,
+}
+
+#[derive(Default)]
+struct SpeakerAttributionState {
+    timeline: VecDeque<SpeakerTransition>,
+    evidence_seen_at: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -185,7 +204,13 @@ struct Line {
     #[serde(default)]
     speaker_context: String,
     #[serde(default)]
+    speaker_confidence: String,
+    #[serde(default)]
     text: String,
+    #[serde(default)]
+    started_at: u64,
+    #[serde(default)]
+    ended_at: u64,
     #[serde(default)]
     ts: u64,
     #[serde(default, rename = "self")]
@@ -529,6 +554,7 @@ pub fn start(
         capture_meeting_audio: "idle".into(),
         capture_detail: String::new(),
         meeting_last_checkpoint: None,
+        speaker_attribution: SpeakerAttributionState::default(),
         #[cfg(feature = "agent-research")]
         agent_proposal: None,
         #[cfg(feature = "agent-research")]
@@ -1887,6 +1913,229 @@ fn state_response(request: Request, shared: &Shared) {
     json_response(request, 200, Value::Object(out));
 }
 
+fn generic_speaker(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    normalized.is_empty()
+        || matches!(
+            normalized.as_str(),
+            "speaker" | "unknown" | "unknown speaker" | "other speaker" | "them"
+        )
+        || normalized.strip_prefix("speaker ").is_some_and(|suffix| {
+            suffix
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric())
+        })
+}
+
+fn trusted_speaker_source(value: &str) -> bool {
+    matches!(
+        value,
+        "active_speaker_label"
+            | "active_speaker_tile"
+            | "meet_dom"
+            | "zoom_ax"
+            | "extension_active_speaker"
+    )
+}
+
+fn update_speaker_timeline(attribution: &mut SpeakerAttributionState, event: &Value) {
+    if event.get("source").and_then(Value::as_str) != Some("accessibility")
+        && event.get("source").and_then(Value::as_str) != Some("browser-extension")
+    {
+        return;
+    }
+    let Some(snapshot) = event.get("state").and_then(Value::as_object) else {
+        return;
+    };
+    if !snapshot.contains_key("activeSpeaker") {
+        return;
+    }
+
+    let now = now_ms();
+    let reported_at = event.get("ts").and_then(Value::as_u64).unwrap_or(now);
+    let observed_at = if reported_at.abs_diff(now) <= 60_000 {
+        reported_at
+    } else {
+        now
+    };
+    attribution.evidence_seen_at = observed_at;
+
+    let self_name = snapshot
+        .get("selfName")
+        .and_then(Value::as_str)
+        .map(|value| clean(value, 120))
+        .unwrap_or_default();
+    let requested_name = snapshot
+        .get("activeSpeaker")
+        .and_then(Value::as_str)
+        .map(|value| clean(value, 120))
+        .filter(|value| !generic_speaker(value))
+        .filter(|value| self_name.is_empty() || !value.eq_ignore_ascii_case(&self_name));
+
+    let evidence = snapshot
+        .get("activeSpeakerEvidence")
+        .and_then(Value::as_object);
+    let accepted = requested_name.and_then(|name| {
+        let evidence_name = evidence
+            .and_then(|item| item.get("name"))
+            .and_then(Value::as_str)
+            .map(|value| clean(value, 120))
+            .unwrap_or_default();
+        let source = evidence
+            .and_then(|item| item.get("source"))
+            .and_then(Value::as_str)
+            .map(|value| clean(value, 80))
+            .unwrap_or_default();
+        if !name.eq_ignore_ascii_case(&evidence_name) || !trusted_speaker_source(&source) {
+            return None;
+        }
+        Some((
+            name,
+            source,
+            evidence
+                .and_then(|item| item.get("context"))
+                .and_then(Value::as_str)
+                .map(|value| clean(value, 240))
+                .unwrap_or_default(),
+        ))
+    });
+
+    let (name, source, context, at) = if let Some((name, source, context)) = accepted {
+        (
+            Some(name),
+            source,
+            context,
+            observed_at.saturating_sub(SPEAKER_DETECTION_LAG_MS),
+        )
+    } else {
+        (None, String::new(), String::new(), observed_at)
+    };
+    let unchanged = attribution
+        .timeline
+        .back()
+        .is_some_and(|last| last.name == name && last.source == source && last.context == context);
+    if unchanged {
+        return;
+    }
+    attribution.timeline.push_back(SpeakerTransition {
+        name,
+        source,
+        context,
+        at,
+    });
+    while attribution.timeline.len() > SPEAKER_HISTORY_LIMIT {
+        attribution.timeline.pop_front();
+    }
+}
+
+fn speaker_confidence(source: &str) -> &'static str {
+    match source {
+        "active_speaker_label" | "zoom_ax" => "high",
+        "active_speaker_tile" | "meet_dom" | "extension_active_speaker" => "medium",
+        _ => "unknown",
+    }
+}
+
+fn dominant_speaker(
+    timeline: &VecDeque<SpeakerTransition>,
+    evidence_seen_at: u64,
+    started_at: u64,
+    ended_at: u64,
+) -> Option<(String, String, String)> {
+    if timeline.is_empty() || ended_at < started_at {
+        return None;
+    }
+    let mut durations: HashMap<String, (u64, usize)> = HashMap::new();
+    for (index, transition) in timeline.iter().enumerate() {
+        let Some(name) = transition.name.as_ref() else {
+            continue;
+        };
+        let interval_end = timeline
+            .get(index + 1)
+            .map(|next| next.at)
+            .unwrap_or_else(|| evidence_seen_at.saturating_add(SPEAKER_EVIDENCE_TAIL_MS));
+        let overlap_start = started_at.max(transition.at);
+        let overlap_end = ended_at.min(interval_end);
+        if overlap_end <= overlap_start {
+            continue;
+        }
+        let entry = durations.entry(name.clone()).or_insert((0, index));
+        entry.0 = entry.0.saturating_add(overlap_end - overlap_start);
+        entry.1 = index;
+    }
+
+    let mut ranked = durations.into_iter().collect::<Vec<_>>();
+    ranked.sort_by_key(|item| std::cmp::Reverse(item.1 .0));
+    let (name, (top_duration, transition_index)) = ranked.first()?.clone();
+    if top_duration < MIN_SPEAKER_OVERLAP_MS {
+        return None;
+    }
+    if ranked.get(1).is_some_and(|(_, (second_duration, _))| {
+        top_duration < second_duration.saturating_mul(5) / 4
+    }) {
+        return None;
+    }
+    let transition = timeline.get(transition_index)?;
+    Some((name, transition.source.clone(), transition.context.clone()))
+}
+
+fn attribute_caption(
+    caption: &mut Value,
+    timeline: &VecDeque<SpeakerTransition>,
+    evidence_seen_at: u64,
+) {
+    let Some(object) = caption.as_object_mut() else {
+        return;
+    };
+    if object.get("self").and_then(Value::as_bool).unwrap_or(false) {
+        object.insert("speaker".into(), Value::String("You".into()));
+        object.insert("speakerSource".into(), Value::String("user".into()));
+        object.insert("speakerConfidence".into(), Value::String("certain".into()));
+        object.remove("speakerContext");
+        return;
+    }
+
+    let existing = object.get("speaker").and_then(Value::as_str).unwrap_or("");
+    if !generic_speaker(existing) {
+        object
+            .entry("speakerSource")
+            .or_insert_with(|| Value::String("capturer".into()));
+        object
+            .entry("speakerConfidence")
+            .or_insert_with(|| Value::String("provided".into()));
+        return;
+    }
+
+    let ended_at = object
+        .get("endedAt")
+        .and_then(Value::as_u64)
+        .or_else(|| object.get("ts").and_then(Value::as_u64))
+        .unwrap_or_else(now_ms);
+    let started_at = object
+        .get("startedAt")
+        .and_then(Value::as_u64)
+        .filter(|start| *start <= ended_at && ended_at - *start <= 60_000)
+        .unwrap_or(ended_at.saturating_sub(1_000));
+    if let Some((name, source, context)) =
+        dominant_speaker(timeline, evidence_seen_at, started_at, ended_at)
+    {
+        object.insert("speaker".into(), Value::String(name));
+        object.insert(
+            "speakerConfidence".into(),
+            Value::String(speaker_confidence(&source).into()),
+        );
+        object.insert("speakerSource".into(), Value::String(source));
+        if !context.is_empty() {
+            object.insert("speakerContext".into(), Value::String(context));
+        }
+    } else {
+        object.insert("speaker".into(), Value::String(unknown_speaker()));
+        object.insert("speakerSource".into(), Value::String("unknown".into()));
+        object.insert("speakerConfidence".into(), Value::String("unknown".into()));
+        object.remove("speakerContext");
+    }
+}
+
 fn ingest_event(shared: Arc<Shared>, mut value: Value) {
     let kind = value
         .get("type")
@@ -1974,6 +2223,15 @@ fn ingest_event(shared: Arc<Shared>, mut value: Value) {
     {
         let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
         if !value.is_null() {
+            if kind == "state" {
+                update_speaker_timeline(&mut state.speaker_attribution, &value);
+            } else if kind == "caption" {
+                attribute_caption(
+                    &mut value,
+                    &state.speaker_attribution.timeline,
+                    state.speaker_attribution.evidence_seen_at,
+                );
+            }
             record_event(&shared.cfg, &mut state, &value);
         }
         if authoritative {
@@ -2085,6 +2343,12 @@ fn record_event(cfg: &Config, state: &mut State, value: &Value) {
                 .get("ts")
                 .and_then(Value::as_u64)
                 .unwrap_or_else(now_ms);
+            let ended_at = value.get("endedAt").and_then(Value::as_u64).unwrap_or(ts);
+            let started_at = value
+                .get("startedAt")
+                .and_then(Value::as_u64)
+                .filter(|start| *start <= ended_at && ended_at - *start <= 60_000)
+                .unwrap_or(ended_at);
             let index = meeting.lines.len();
             meeting.lines.push(Line {
                 id: format!("line-{ts}-{index}"),
@@ -2115,10 +2379,19 @@ fn record_event(cfg: &Config, state: &mut State, value: &Value) {
                         .unwrap_or(""),
                     240,
                 ),
+                speaker_confidence: clean(
+                    value
+                        .get("speakerConfidence")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    20,
+                ),
                 text: clean(
                     value.get("text").and_then(Value::as_str).unwrap_or(""),
                     4000,
                 ),
+                started_at,
+                ended_at,
                 ts,
                 is_self: value.get("self").and_then(Value::as_bool).unwrap_or(false),
                 excluded: false,
@@ -2439,6 +2712,17 @@ fn call_state_value(state: &State) -> Value {
 
 fn finalize_locked(cfg: &Config, state: &mut State) -> Option<String> {
     let mut meeting = state.current.take()?;
+    state.speaker_attribution = SpeakerAttributionState::default();
+    for key in [
+        "activeSpeaker",
+        "activeSpeakerEvidence",
+        "selfName",
+        "participants",
+        "participantEvidence",
+        "ignoredParticipantEvidence",
+    ] {
+        state.last_state.remove(key);
+    }
     meeting.ended_at = Some(now_ms());
     if meeting.lines.is_empty() {
         return None;
@@ -5266,6 +5550,13 @@ fn ensure_line_ids(m: &mut Meeting) {
                 "unknown".into()
             };
         }
+        if line.speaker_confidence.is_empty() {
+            line.speaker_confidence = if line.is_self || line.speaker_source == "user_correction" {
+                "certain".into()
+            } else {
+                "unknown".into()
+            };
+        }
     }
 }
 fn finalize_orphans(dir: &Path) {
@@ -5521,6 +5812,7 @@ fn apply_correction(m: &mut Meeting, c: &Value) -> Result<(), String> {
                 if l.speaker == from {
                     l.speaker = to.clone();
                     l.speaker_source = "user_correction".into();
+                    l.speaker_confidence = "certain".into();
                 }
             }
         }
@@ -5531,6 +5823,7 @@ fn apply_correction(m: &mut Meeting, c: &Value) -> Result<(), String> {
                 if l.speaker == n {
                     l.speaker = unknown_speaker();
                     l.speaker_source = "user_correction".into();
+                    l.speaker_confidence = "unknown".into();
                 }
             }
         }
@@ -5548,6 +5841,7 @@ fn apply_correction(m: &mut Meeting, c: &Value) -> Result<(), String> {
                 if l.speaker == from {
                     l.speaker = into.clone();
                     l.speaker_source = "user_correction".into();
+                    l.speaker_confidence = "certain".into();
                 }
             }
         }
@@ -5573,6 +5867,7 @@ fn apply_correction(m: &mut Meeting, c: &Value) -> Result<(), String> {
                 line.speaker = speaker.clone();
                 line.is_self = speaker == "You";
                 line.speaker_source = "user_correction".into();
+                line.speaker_confidence = "certain".into();
                 if !line.is_self
                     && speaker != "Unknown speaker"
                     && !m.participants.contains(&speaker)
@@ -5768,6 +6063,126 @@ mod tests {
         .is_err());
     }
     #[test]
+    fn speaker_timeline_accepts_only_provenanced_non_self_names() {
+        let now = now_ms();
+        let mut attribution = SpeakerAttributionState::default();
+        update_speaker_timeline(
+            &mut attribution,
+            &json!({
+                "type":"state",
+                "source":"accessibility",
+                "ts":now,
+                "state":{
+                    "selfName":"Rahul Khatri",
+                    "activeSpeaker":"Aditi Rao",
+                    "activeSpeakerEvidence":{
+                        "name":"Aditi Rao",
+                        "source":"active_speaker_label",
+                        "context":"Zoom Meeting"
+                    }
+                }
+            }),
+        );
+        assert_eq!(attribution.timeline.len(), 1);
+        assert_eq!(
+            attribution
+                .timeline
+                .back()
+                .and_then(|item| item.name.as_deref()),
+            Some("Aditi Rao")
+        );
+
+        update_speaker_timeline(
+            &mut attribution,
+            &json!({
+                "type":"state",
+                "source":"accessibility",
+                "ts":now + 10,
+                "state":{
+                    "selfName":"Rahul Khatri",
+                    "activeSpeaker":"Rahul Khatri",
+                    "activeSpeakerEvidence":{
+                        "name":"Rahul Khatri",
+                        "source":"active_speaker_label",
+                        "context":"Zoom Meeting"
+                    }
+                }
+            }),
+        );
+        assert_eq!(attribution.timeline.len(), 2);
+        assert!(attribution.timeline.back().unwrap().name.is_none());
+    }
+    #[test]
+    fn captions_use_the_dominant_speaker_during_the_audio_interval() {
+        let timeline = VecDeque::from([
+            SpeakerTransition {
+                name: Some("Aditi".into()),
+                source: "active_speaker_label".into(),
+                context: "Zoom Meeting".into(),
+                at: 1_000,
+            },
+            SpeakerTransition {
+                name: Some("Rajat".into()),
+                source: "active_speaker_tile".into(),
+                context: "zoom floating video window".into(),
+                at: 3_000,
+            },
+            SpeakerTransition {
+                name: None,
+                source: String::new(),
+                context: String::new(),
+                at: 5_000,
+            },
+        ]);
+        let mut aditi = json!({
+            "type":"caption",
+            "speaker":"Speaker",
+            "self":false,
+            "startedAt":1_200,
+            "endedAt":2_800,
+            "text":"We should ship this week."
+        });
+        attribute_caption(&mut aditi, &timeline, 5_000);
+        assert_eq!(aditi.get("speaker").and_then(Value::as_str), Some("Aditi"));
+        assert_eq!(
+            aditi.get("speakerSource").and_then(Value::as_str),
+            Some("active_speaker_label")
+        );
+        assert_eq!(
+            aditi.get("speakerConfidence").and_then(Value::as_str),
+            Some("high")
+        );
+
+        let mut ambiguous = json!({
+            "type":"caption",
+            "speaker":"Speaker",
+            "self":false,
+            "startedAt":2_000,
+            "endedAt":4_000,
+            "text":"Overlapping turn."
+        });
+        attribute_caption(&mut ambiguous, &timeline, 5_000);
+        assert_eq!(
+            ambiguous.get("speaker").and_then(Value::as_str),
+            Some("Unknown speaker")
+        );
+
+        let mut own_line = json!({
+            "type":"caption",
+            "speaker":"Rahul Khatri",
+            "self":true,
+            "startedAt":1_200,
+            "endedAt":2_800,
+            "text":"My response."
+        });
+        attribute_caption(&mut own_line, &timeline, 5_000);
+        assert_eq!(own_line.get("speaker").and_then(Value::as_str), Some("You"));
+        assert_eq!(
+            own_line.get("speakerConfidence").and_then(Value::as_str),
+            Some("certain")
+        );
+    }
+    #[test]
     fn live_assist_uses_the_requested_grounded_time_window() {
         let mut meeting = new_meeting(&Map::new());
         let line = |speaker: &str, text: &str, ts: u64, excluded: bool| Line {
@@ -5775,7 +6190,10 @@ mod tests {
             speaker: speaker.into(),
             speaker_source: "fixture".into(),
             speaker_context: String::new(),
+            speaker_confidence: "certain".into(),
             text: text.into(),
+            started_at: ts,
+            ended_at: ts,
             ts,
             is_self: speaker == "You",
             excluded,
@@ -5821,7 +6239,10 @@ mod tests {
                 speaker: if index % 2 == 0 { "You" } else { "Speaker" }.into(),
                 speaker_source: "fixture".into(),
                 speaker_context: String::new(),
+                speaker_confidence: "certain".into(),
                 text: format!("Transcript line {index} {}", "x".repeat(220)),
+                started_at: index,
+                ended_at: index,
                 ts: index,
                 is_self: index % 2 == 0,
                 excluded: index == 6,
@@ -5971,7 +6392,10 @@ mod tests {
             speaker: "You".into(),
             speaker_source: "user".into(),
             speaker_context: String::new(),
+            speaker_confidence: "certain".into(),
             text: "A recoverable transcript line".into(),
+            started_at: now_ms(),
+            ended_at: now_ms(),
             ts: now_ms(),
             is_self: true,
             excluded: false,

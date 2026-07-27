@@ -13,6 +13,7 @@ const { fetchProviderModels, providerError, sanitizeDeveloperAiModel } = require
 const { injectMultipartFields } = require("./multipart.js");
 const { releasePayload } = require("./release.js");
 const { DEFAULT_MODEL_ID, SPEECH_MODELS, speechModel } = require("./speech-models.js");
+const { SpeakerAttribution } = require("./speaker-attribution.js");
 const { appThumbnailSvg } = require("./thumbnail.js");
 const {
   applyCorrection,
@@ -47,6 +48,7 @@ let cur = null; // the in-progress meeting being recorded to disk
 // lifecycle and what the UI/tray show.
 const gate = new Gate(true);
 const meetingDetector = new MeetingDetector();
+const speakerAttribution = new SpeakerAttribution();
 let unloadIdle = true; // "Unload model when idle" setting — off = keep whisper hot between calls
 let whisperIdleMinutes = 10; // user-configurable; 10 minutes balances back-to-back speed with RAM recovery
 let vocabPrompt = ""; // custom vocabulary → whisper initial prompt (handed to meeting-tap via /api/state)
@@ -115,6 +117,8 @@ function setManual(action) {
 // enrichment only; an open Zoom process must never start a recording. Peel inMeeting off every
 // helper event so only the server's composed gate state reaches the UI.
 function ingest(obj) {
+  if (obj && obj.type === "state") speakerAttribution.update(obj);
+  if (obj && obj.type === "caption") speakerAttribution.attribute(obj);
   if (obj && obj.type === "dictation") { // a finished dictation from meeting-tap → keep recent + push to the view
     if (obj.text) { recentDictations.unshift({ text: String(obj.text).slice(0, 4000), ts: obj.ts || Date.now(), ms: obj.ms || 0 }); recentDictations = recentDictations.slice(0, 50); }
     broadcast(obj); return;
@@ -173,7 +177,9 @@ function finalizeMeeting() {
     finalizedId = cur.id;
   } // skip empty meetings
   cur = null;
+  speakerAttribution.reset();
   delete lastState.startedAt; // meeting over — drop the echoed start time
+  for (const key of ["activeSpeaker", "activeSpeakerEvidence", "selfName", "participants", "participantEvidence", "ignoredParticipantEvidence"]) delete lastState[key];
   unloadWhisperSoon(); // free ~1.5 GB after the call
   if (finalizedId) broadcast({ type: "meeting-updated", id: finalizedId, summaryState: finalizedSummaryState });
   if (finalizedId) queueAutomaticSummary(finalizedId);
@@ -190,12 +196,18 @@ function record(obj) {
     if (!effectiveRecording()) return;                             // dropped while paused / stopped / not in a call
     if (!cur) startMeeting(lastState);
     const index = cur.lines.length, ts = obj.ts || Date.now();
+    const endedAt = Number.isSafeInteger(Number(obj.endedAt)) ? Number(obj.endedAt) : ts;
+    const requestedStart = Number(obj.startedAt);
+    const startedAt = Number.isSafeInteger(requestedStart) && requestedStart <= endedAt && endedAt - requestedStart <= 60_000 ? requestedStart : endedAt;
     cur.lines.push({
       id: `line-${ts}-${index}`,
       speaker: obj.speaker || "Unknown speaker",
       speakerSource: obj.speakerSource || (obj.self ? "user" : "unknown"),
       speakerContext: obj.speakerContext || "",
+      speakerConfidence: obj.speakerConfidence || (obj.self ? "certain" : "unknown"),
       text: obj.text,
+      startedAt,
+      endedAt,
       ts,
       self: !!obj.self,
       excluded: false,
@@ -582,22 +594,6 @@ http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const obj = JSON.parse(body);
-        // Tag a remote line with whoever meeting-state says is speaking now. "You"/self lines untouched.
-        if (obj.type === "caption") {
-          if (obj.self) {
-            obj.speaker = obj.speaker || "You";
-            obj.speakerSource = "user";
-          } else if ((!obj.speaker || obj.speaker === "Speaker") && lastState.activeSpeaker) {
-            obj.speaker = lastState.activeSpeaker;
-            obj.speakerSource = lastState.activeSpeakerEvidence?.source || "active_speaker";
-            obj.speakerContext = lastState.activeSpeakerEvidence?.context || "";
-          } else if (!obj.speaker || obj.speaker === "Speaker") {
-            obj.speaker = "Unknown speaker";
-            obj.speakerSource = "unknown";
-          } else {
-            obj.speakerSource = obj.speakerSource || "capturer";
-          }
-        }
         ingest(obj);
       } catch {}
       res.writeHead(204); res.end();

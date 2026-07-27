@@ -30,6 +30,9 @@ Zoom's always-on-top **floating video window** follows the active speaker in spe
 
 **Accuracy:** reliable for 1-on-1 (the floating window shows the remote person); in large gallery-view
 calls the active-speaker pick is best-effort. Names update at the watch `--interval` (default 1s).
+The helper emits `selfName` when Zoom exposes a `(Me)` annotation and refreshes timestamped evidence while
+an active speaker remains visible. The Rust meeting core—not this helper—matches that transition history to
+each caption's real audio interval, filters self, and keeps ambiguous turns unknown.
 
 Every accepted name includes `participantEvidence` with its AX source, element role, and containing window
 context. `activeSpeakerEvidence` distinguishes participant-list, video-tile, floating-tile, and active-speaker

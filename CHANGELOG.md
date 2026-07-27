@@ -7,6 +7,9 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ### Added
 
+- Evidence-backed Zoom speaker names: each caption retains its real audio interval and the Rust meeting core
+  matches it against a bounded, self-filtered active-speaker timeline. Trusted matches persist their
+  provenance/confidence; stale, conflicting, and unsupported cases stay **Unknown speaker**.
 - A native in-meeting Nub that expands into an adaptive live conversation surface with speaker-grouped
   transcript bubbles, honest capture-source status, and a direct **What did I miss?** action.
 - Capability-gated live Dictation for Parakeet Unified and the two Nemotron streaming models. Provisional

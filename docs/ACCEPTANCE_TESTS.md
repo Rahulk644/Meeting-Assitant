@@ -103,6 +103,9 @@ Safari, Teams native and browser, Slack Huddles, Discord, and FaceTime. It verif
   relaunch after repeated failures without splitting the meeting;
 - scheduled versus impromptu title truth;
 - both audio channels, overlap, speaker uncertainty, and live transcript;
+- alternating remote turns use the correct Zoom display name only when timestamped evidence supports it;
+  the local `(Me)` name never leaks onto the remote channel, rapid/overlapping remote turns stay unknown
+  when evidence is closely split, and gallery/speaker/share layouts do not inherit a stale name;
 - mute, pause/resume, scratchpad, optional video, thumbnail, and screen-sharing behavior;
 - automatic end, notes, permission recovery, platform crash, and assistant relaunch;
 - a 45-minute resource soak; and

@@ -117,8 +117,16 @@ failure has no specific recovery state.
 utterance, and appended to the meeting. Temporary utterance audio is removed after transcription.
 
 **What the user sees:** Transcript lines appear after the pause plus inference time, not word by word. The mic
-channel is **You**. A remote line uses available Zoom/Accessibility evidence or an honest uncertain label.
-The expanded Nub keeps the five most recent lines; the Live view keeps the longer feed.
+channel is always **You**. On supported Zoom layouts, a remote line shows the participant name only when
+timestamped Accessibility evidence dominates that line's actual audio interval. Closely split, stale,
+missing, or unsupported evidence shows **Unknown speaker**; the product does not guess. The expanded Nub
+keeps the five most recent lines; the Live view keeps the longer feed.
+
+For the acceptance call, alternate clean remote turns first and confirm their Zoom display names. Then
+overlap two remote speakers or change Zoom layouts: an uncertain line is expected to stay unknown rather
+than inherit the last visible name. Google Meet in Chrome does not yet promise named remote speakers; that
+requires the later authenticated extension path. User corrections remain authoritative in the saved
+transcript.
 
 **Silence regression:** Start the call, speak from the local microphone while the remote person remains
 silent, and confirm the Nub already says **Recording** and self transcript lines appear. The remote person

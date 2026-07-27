@@ -66,6 +66,7 @@ function ensureLineIds(meeting) {
     if (!line.id) line.id = `line-${Number(line.ts) || Number(meeting.startedAt) || 0}-${index}`;
     if (!line.speaker) line.speaker = "Unknown speaker";
     if (!line.speakerSource) line.speakerSource = line.self ? "user" : "unknown";
+    if (!line.speakerConfidence) line.speakerConfidence = line.self || line.speakerSource === "user_correction" ? "certain" : "unknown";
   });
   return meeting;
 }
@@ -126,16 +127,16 @@ function applyCorrection(meeting, correction) {
   if (operation === "rename_participant") {
     const from = requireName(correction.from, "from"), to = requireName(correction.to, "to");
     meeting.participants = uniqueNames(meeting.participants.map((name) => name === from ? to : name).concat(to));
-    meeting.lines.forEach((line) => { if (line.speaker === from) { line.speaker = to; line.speakerSource = "user_correction"; } });
+    meeting.lines.forEach((line) => { if (line.speaker === from) { line.speaker = to; line.speakerSource = "user_correction"; line.speakerConfidence = "certain"; } });
   } else if (operation === "remove_participant") {
     const name = requireName(correction.name, "name");
     meeting.participants = meeting.participants.filter((value) => value !== name);
-    meeting.lines.forEach((line) => { if (line.speaker === name) { line.speaker = "Unknown speaker"; line.speakerSource = "user_correction"; } });
+    meeting.lines.forEach((line) => { if (line.speaker === name) { line.speaker = "Unknown speaker"; line.speakerSource = "user_correction"; line.speakerConfidence = "unknown"; } });
   } else if (operation === "merge_speakers") {
     const from = requireName(correction.from, "from"), into = requireName(correction.into, "into");
     if (from === into) throw new Error("speaker identities must be different");
     meeting.participants = uniqueNames(meeting.participants.filter((name) => name !== from).concat(into));
-    meeting.lines.forEach((line) => { if (line.speaker === from) { line.speaker = into; line.speakerSource = "user_correction"; } });
+    meeting.lines.forEach((line) => { if (line.speaker === from) { line.speaker = into; line.speakerSource = "user_correction"; line.speakerConfidence = "certain"; } });
   } else if (["edit_transcript", "reassign_line", "exclude_line"].includes(operation)) {
     const line = findLine(meeting, correction);
     if (!line) throw new Error("transcript line not found");
@@ -148,6 +149,7 @@ function applyCorrection(meeting, correction) {
       line.speaker = speaker;
       line.self = speaker === "You";
       line.speakerSource = "user_correction";
+      line.speakerConfidence = "certain";
       if (!line.self && speaker !== "Unknown speaker") meeting.participants = uniqueNames(meeting.participants.concat(speaker));
     } else {
       line.excluded = correction.excluded !== false;

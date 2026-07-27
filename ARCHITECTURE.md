@@ -306,8 +306,22 @@ fed into the summary prompt.
 **Trap:** Zoom labels non-people ("Set up professional audio…", "Waiting for host…") with the same
 AX-string shape as tiles, so `validName()` must reject UI/chrome words (whole-word list) and cap length,
 and `canonName()` strips trailing "(Me)"/"(Host, me)" so a person doesn't appear twice. `--selftest` covers
-it. The helper only installs its observer and reconciliation timer after Core Audio confirms a call. Solid
-1-on-1; best-effort in large gallery calls.
+it. The helper also identifies the local participant from Zoom's `(Me)` annotation and keeps a timestamped
+heartbeat while active-speaker evidence remains visible. It only installs its observer and reconciliation
+timer after Core Audio confirms a call.
+
+Each caption carries the start and end of the actual captured utterance. Rust, not the Swift adapter, owns a
+bounded active-speaker transition timeline and matches each remote caption to the participant who dominates
+that audio interval. It compensates for the small UI-observation delay, rejects self-name leakage, requires
+the name to match trusted evidence provenance, stores source/confidence, and returns **Unknown speaker**
+when evidence is stale, missing, or closely split. A transcription result is never named merely because
+someone happened to be visible when inference finished.
+
+This provides named remote turns for supported Zoom layouts—strongest for the explicit `Talking:` label and
+reliable 1-on-1 remote-channel attribution, best-effort in large gallery calls. Google Meet participant
+names require the later authenticated Chrome extension adapter. Acoustic diarization remains a separate
+future worker: it can split repeated remote voices into clusters, but a cluster is not a participant name
+until the identity resolver has independent evidence.
 
 ## Dictation
 
