@@ -39,7 +39,7 @@ macos-accessibility-client = "0.0.2"        # prompt for Accessibility under the
 objc2 = "0.6.4"                             # typed Objective-C ownership for the native AppKit dictation panel
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSAttributedString", "NSData", "NSDictionary", "NSGeometry", "NSObject", "NSString", "NSURL", "NSValue"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAccessibility", "NSApplication", "NSAppearance", "NSAttributedString", "NSBitmapImageRep", "NSBox", "NSButton", "NSButtonCell", "NSCell", "NSColor", "NSControl", "NSEvent", "NSFont", "NSGraphics", "NSImage", "NSImageRep", "NSImageView", "NSPanel", "NSProgressIndicator", "NSResponder", "NSScreen", "NSText", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
-cpal = "0.15"                               # record the mic IN-PROCESS (like Handy) — no meeting-tap spawn, so no ~300ms start lag
+cpal = "0.18"                               # record the mic IN-PROCESS (like Handy) — no meeting-tap spawn, so no ~300ms start lag
 hound = "3.5"                               # encode the captured audio to a 16-bit PCM WAV for the STT server
 libc = "0.2"                                # validate ownership of an optional user-installed Codex executable
 voice_activity_detector = "0.2"             # Silero VAD (same model family Handy bundles) — strips non-speech before Whisper so silence can't hallucinate; statically links onnxruntime via `ort`, so the binary stays self-contained
