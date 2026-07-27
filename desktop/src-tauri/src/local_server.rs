@@ -2088,6 +2088,7 @@ fn attribute_caption(
     timeline: &VecDeque<SpeakerTransition>,
     evidence_seen_at: u64,
     meeting_audio_state: &str,
+    self_muted: Option<bool>,
 ) {
     let Some(object) = caption.as_object_mut() else {
         return;
@@ -2103,9 +2104,42 @@ fn attribute_caption(
         .filter(|start| *start <= ended_at && ended_at - *start <= 60_000)
         .unwrap_or(ended_at.saturating_sub(1_000));
     if object.get("self").and_then(Value::as_bool).unwrap_or(false) {
+        let remote = dominant_speaker(timeline, evidence_seen_at, started_at, ended_at);
+        if self_muted == Some(true) {
+            if let Some((name, source, context)) = remote {
+                object.insert("speaker".into(), Value::String(name));
+                object.insert("self".into(), Value::Bool(false));
+                object.insert(
+                    "speakerSource".into(),
+                    Value::String(format!("microphone_playback:{source}")),
+                );
+                object.insert(
+                    "speakerConfidence".into(),
+                    Value::String(speaker_confidence(&source).into()),
+                );
+                if !context.is_empty() {
+                    object.insert("speakerContext".into(), Value::String(context));
+                }
+            } else {
+                object.insert("speaker".into(), Value::String(unknown_speaker()));
+                object.insert("self".into(), Value::Bool(false));
+                object.insert(
+                    "speakerSource".into(),
+                    Value::String("microphone_while_muted".into()),
+                );
+                object.insert("speakerConfidence".into(), Value::String("unknown".into()));
+                object.insert(
+                    "speakerContext".into(),
+                    Value::String(
+                        "The meeting app reported the local participant muted, so microphone audio cannot be asserted as You."
+                            .into(),
+                    ),
+                );
+            }
+            return;
+        }
         if let Some((name, source, context)) =
-            dominant_speaker(timeline, evidence_seen_at, started_at, ended_at)
-                .filter(|(_, source, _)| microphone_remote_source(source))
+            remote.filter(|(_, source, _)| microphone_remote_source(source))
         {
             object.insert("speaker".into(), Value::String(name));
             object.insert("self".into(), Value::Bool(false));
@@ -2272,6 +2306,7 @@ fn ingest_event(shared: Arc<Shared>, mut value: Value) {
                     &state.speaker_attribution.timeline,
                     state.speaker_attribution.evidence_seen_at,
                     &state.capture_meeting_audio,
+                    state.last_state.get("selfMuted").and_then(Value::as_bool),
                 );
             }
             record_event(&shared.cfg, &mut state, &value);
@@ -6184,7 +6219,7 @@ mod tests {
             "endedAt":2_800,
             "text":"We should ship this week."
         });
-        attribute_caption(&mut aditi, &timeline, 5_000, "ready");
+        attribute_caption(&mut aditi, &timeline, 5_000, "ready", Some(false));
         assert_eq!(aditi.get("speaker").and_then(Value::as_str), Some("Aditi"));
         assert_eq!(
             aditi.get("speakerSource").and_then(Value::as_str),
@@ -6203,7 +6238,7 @@ mod tests {
             "endedAt":4_000,
             "text":"Overlapping turn."
         });
-        attribute_caption(&mut ambiguous, &timeline, 5_000, "ready");
+        attribute_caption(&mut ambiguous, &timeline, 5_000, "ready", Some(false));
         assert_eq!(
             ambiguous.get("speaker").and_then(Value::as_str),
             Some("Unknown speaker")
@@ -6217,7 +6252,7 @@ mod tests {
             "endedAt":6_200,
             "text":"My response."
         });
-        attribute_caption(&mut own_line, &timeline, 5_000, "ready");
+        attribute_caption(&mut own_line, &timeline, 5_000, "ready", Some(false));
         assert_eq!(own_line.get("speaker").and_then(Value::as_str), Some("You"));
         assert_eq!(
             own_line.get("speakerConfidence").and_then(Value::as_str),
@@ -6232,7 +6267,7 @@ mod tests {
             "endedAt":2_800,
             "text":"Remote playback heard by the microphone."
         });
-        attribute_caption(&mut leaked_remote, &timeline, 5_000, "ready");
+        attribute_caption(&mut leaked_remote, &timeline, 5_000, "ready", Some(false));
         assert_eq!(
             leaked_remote.get("speaker").and_then(Value::as_str),
             Some("Aditi")
@@ -6254,7 +6289,7 @@ mod tests {
             "endedAt":4_800,
             "text":"Audio heard before the independent meeting channel was ready."
         });
-        attribute_caption(&mut unseparated, &timeline, 5_000, "starting");
+        attribute_caption(&mut unseparated, &timeline, 5_000, "starting", Some(false));
         assert_eq!(
             unseparated.get("speaker").and_then(Value::as_str),
             Some("Unknown speaker")
@@ -6266,6 +6301,46 @@ mod tests {
         assert_eq!(
             unseparated.get("speakerSource").and_then(Value::as_str),
             Some("microphone_unseparated")
+        );
+
+        let mut muted_playback = json!({
+            "type":"caption",
+            "speaker":"Rahul Khatri",
+            "self":true,
+            "startedAt":3_200,
+            "endedAt":4_800,
+            "text":"Remote playback heard while Zoom reports the local participant muted."
+        });
+        attribute_caption(&mut muted_playback, &timeline, 5_000, "ready", Some(true));
+        assert_eq!(
+            muted_playback.get("speaker").and_then(Value::as_str),
+            Some("Rajat")
+        );
+        assert_eq!(
+            muted_playback.get("self").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            muted_playback.get("speakerSource").and_then(Value::as_str),
+            Some("microphone_playback:active_speaker_tile")
+        );
+
+        let mut muted_unknown = json!({
+            "type":"caption",
+            "speaker":"Rahul Khatri",
+            "self":true,
+            "startedAt":5_200,
+            "endedAt":6_200,
+            "text":"Audio without identity evidence while muted."
+        });
+        attribute_caption(&mut muted_unknown, &timeline, 5_000, "ready", Some(true));
+        assert_eq!(
+            muted_unknown.get("speaker").and_then(Value::as_str),
+            Some("Unknown speaker")
+        );
+        assert_eq!(
+            muted_unknown.get("speakerSource").and_then(Value::as_str),
+            Some("microphone_while_muted")
         );
     }
     #[test]

@@ -10,7 +10,9 @@ versions will use semantic versioning once the first public beta tag is cut.
 - First-buffer meeting-audio readiness and fail-closed microphone ownership: a process tap that opens without
   delivering data now retries instead of claiming Recording, and captions heard before independent channel
   separation remain **Unknown speaker** rather than being misattributed to **You**. Explicit timestamped
-  Zoom `Talking:` evidence also reclassifies remote room playback heard by the microphone to that participant.
+  Zoom `Talking:` evidence also reclassifies remote room playback heard by the microphone to that participant;
+  while Zoom reports the local participant muted, its active-speaker tile can name that playback and missing
+  identity evidence remains **Unknown speaker**, never **You**.
 - Evidence-backed Zoom speaker names: each caption retains its real audio interval and the Rust meeting core
   matches it against a bounded, self-filtered active-speaker timeline. Trusted matches persist their
   provenance/confidence; stale, conflicting, and unsupported cases stay **Unknown speaker**.

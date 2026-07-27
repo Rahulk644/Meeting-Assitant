@@ -122,8 +122,10 @@ Node runtime, speech/polish model weights, telemetry client, or Agent helper.
 - The microphone is labelled **You** only after the independent meeting-audio channel is verified. While
   that channel is starting, failed, or recovering, microphone captions are retained as **Unknown speaker**
   because speaker playback may be present. Even after readiness, explicit timestamped Zoom `Talking:`
-  evidence can reclassify a microphone segment to the named remote participant; generic/floating-tile
-  evidence cannot override microphone ownership.
+  evidence can reclassify a microphone segment to the named remote participant. A generic/floating-tile
+  name cannot override microphone ownership while the local participant may be speaking, but it can name
+  playback when Zoom independently reports the local participant muted; without a remote identity that
+  muted microphone segment remains **Unknown speaker**, never **You**.
 - Recoverable transcript checkpoints are private. Corrections increment transcript revision and mark stale
   derived notes rather than silently presenting them as current.
 - Meeting notes can use an optional local runtime or an explicitly selected BYOK provider. Provider keys live

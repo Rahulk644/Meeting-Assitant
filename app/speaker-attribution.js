@@ -33,17 +33,23 @@ class SpeakerAttribution {
   constructor() {
     this.timeline = [];
     this.evidenceSeenAt = 0;
+    this.selfMuted = null;
   }
 
   reset() {
     this.timeline = [];
     this.evidenceSeenAt = 0;
+    this.selfMuted = null;
   }
 
   update(event, now = Date.now()) {
     if (!event || event.type !== "state" || !["accessibility", "browser-extension"].includes(event.source)) return;
     const snapshot = event.state;
-    if (!snapshot || !Object.prototype.hasOwnProperty.call(snapshot, "activeSpeaker")) return;
+    if (!snapshot) return;
+    if (Object.prototype.hasOwnProperty.call(snapshot, "selfMuted")) {
+      this.selfMuted = typeof snapshot.selfMuted === "boolean" ? snapshot.selfMuted : null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(snapshot, "activeSpeaker")) return;
     const reportedAt = Number(event.ts);
     const observedAt = Number.isSafeInteger(reportedAt) && Math.abs(reportedAt - now) <= 60_000 ? reportedAt : now;
     this.evidenceSeenAt = observedAt;
@@ -96,6 +102,22 @@ class SpeakerAttribution {
         ? requestedStart
         : Math.max(0, endedAt - 1_000);
       const remote = this.dominant(startedAt, endedAt);
+      if (this.selfMuted === true) {
+        if (remote) {
+          caption.speaker = remote.name;
+          caption.self = false;
+          caption.speakerSource = `microphone_playback:${remote.source}`;
+          caption.speakerConfidence = confidence(remote.source);
+          if (remote.context) caption.speakerContext = remote.context;
+        } else {
+          caption.speaker = "Unknown speaker";
+          caption.self = false;
+          caption.speakerSource = "microphone_while_muted";
+          caption.speakerConfidence = "unknown";
+          caption.speakerContext = "The meeting app reported the local participant muted, so microphone audio cannot be asserted as You.";
+        }
+        return caption;
+      }
       if (remote && ["active_speaker_label", "extension_active_speaker"].includes(remote.source)) {
         caption.speaker = remote.name;
         caption.self = false;

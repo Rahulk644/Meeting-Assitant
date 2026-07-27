@@ -300,8 +300,10 @@ fed into the summary prompt.
   A source that opens without buffers is restarted, and microphone speech remains **Unknown speaker** until
   the independent meeting-audio channel proves separation—never confidently **You**. If Zoom's explicit,
   time-aligned `Talking:` evidence identifies a remote participant during a microphone segment, Rust
-  reclassifies that room playback to the remote participant; an always-visible floating tile is not strong
-  enough to do so. AEC/noise-suppression components may be qualified under the audio provider contract, but cannot ship without
+  reclassifies that room playback to the remote participant. An always-visible floating tile is not strong
+  enough to override microphone ownership while the local participant may be talking, but it becomes valid
+  identity evidence when Zoom independently reports that participant muted; absent a remote identity, the
+  line remains **Unknown speaker**. AEC/noise-suppression components may be qualified under the audio provider contract, but cannot ship without
   transcript-quality evidence. If SCK goes silent after long uptime: `sudo killall coreaudiod`.
 
 ## Speaker names

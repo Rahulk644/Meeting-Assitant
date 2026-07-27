@@ -150,3 +150,58 @@ test("explicit remote talking evidence reclassifies speaker playback heard by th
   assert.equal(line.speakerSource, "microphone_playback:active_speaker_label");
   assert.equal(line.speakerConfidence, "high");
 });
+
+test("meeting mute evidence prevents microphone playback from being labelled as You", () => {
+  const attribution = new SpeakerAttribution();
+  attribution.update({
+    type: "state",
+    source: "accessibility",
+    ts: 1_300,
+    state: {
+      selfMuted: true,
+      selfName: "Rahul Khatri",
+      activeSpeaker: "Vikram Prasanna",
+      activeSpeakerEvidence: {
+        name: "Vikram Prasanna",
+        source: "active_speaker_tile",
+        context: "zoom floating video window",
+      },
+    },
+  }, 1_300);
+  const line = attribution.attribute({
+    type: "caption",
+    speaker: "Rahul Khatri",
+    self: true,
+    startedAt: 1_200,
+    endedAt: 2_800,
+    text: "Remote playback heard while the local Zoom participant is muted.",
+  }, "ready");
+  assert.equal(line.speaker, "Vikram Prasanna");
+  assert.equal(line.self, false);
+  assert.equal(line.speakerSource, "microphone_playback:active_speaker_tile");
+  assert.equal(line.speakerConfidence, "medium");
+});
+
+test("meeting mute evidence fails closed when no remote identity is available", () => {
+  const attribution = new SpeakerAttribution();
+  attribution.update({
+    type: "state",
+    source: "accessibility",
+    ts: 1_300,
+    state: {
+      selfMuted: true,
+    },
+  }, 1_300);
+  const line = attribution.attribute({
+    type: "caption",
+    speaker: "Rahul Khatri",
+    self: true,
+    startedAt: 1_200,
+    endedAt: 2_800,
+    text: "Audio without identity evidence.",
+  }, "ready");
+  assert.equal(line.speaker, "Unknown speaker");
+  assert.equal(line.self, false);
+  assert.equal(line.speakerSource, "microphone_while_muted");
+  assert.equal(line.speakerConfidence, "unknown");
+});
