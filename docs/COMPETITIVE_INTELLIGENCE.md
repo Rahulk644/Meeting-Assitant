@@ -197,6 +197,13 @@ so a consumer Flow subscription is not a supported credential. My Assistant may 
 `TranscriptEngine` only after supported access is granted; private desktop tokens or embedded service
 credentials must never be reused.
 
+[`script/probe_wispr_flow_api.mjs`](../script/probe_wispr_flow_api.mjs) exercises only that documented
+boundary. Its credential-free mode verifies service reachability and the authorization gate; with an
+explicit partner-issued organization key or client JWT, it can submit a user-selected 16-kHz WAV without
+reading or printing desktop credentials. On 2 August the warm-up returned HTTP 200 while a correctly shaped
+credential-free transcription request returned HTTP 401, confirming that a Flow subscription session is
+not silently accepted as API authorization.
+
 The current desktop meeting implementation also confirms that named speakers are an evidence-merging
 problem, not an ASR endpoint feature. It stores separate mic/system/refined transcript sources, participant
 records, timestamped speaking/mute observations, and user speaker-map corrections, then uploads those
