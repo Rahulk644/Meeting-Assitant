@@ -235,7 +235,7 @@ delay ordinary dictation reliability.
 | M-07 | Add Google Calendar and EventKit adapters | M-03 | OAuth/revoke/sync/dedup/recurrence/offline cache work; event never triggers capture without call evidence; attendee emails retain provenance |
 | M-08 | Add bounded in-flight audio checkpoints and recovery | M-01/M-03 | A forced kill loses at most the defined window; private checkpoints recover once and clean up; no orphan audio remains |
 | M-09 | Complete real two-person Zoom/Meet/Teams/FaceTime/Slack and device-change matrix | M-02/M-04/M-06/M-08 | Detection, transcript, speaker names, chat where supported, pause/resume/end, recovery, and resource gates pass on exact installed candidate |
-| M-10 | Qualify open-source WebRTC AudioProcessing AEC3 behind `AudioSource` | M-01/H-06 | Speaker playback is removed from the mic channel without damaging near-end speech; headset bypass, delay, double-talk, hot-plug, long-call, CPU/RSS, licensing, and macOS gates pass. X-03 owns Windows qualification |
+| M-10 | Add `EchoCanceller`; qualify direct Apache-2.0 LocalVQE first and retain AEC3/raw bypass as controls | M-01/H-06 | Speaker playback is removed from the mic channel without damaging near-end speech; missing-reference and headset bypass, delay, double-talk, hot-plug, long-call, CPU/RSS, pinned model/library/SBOM, licensing, and macOS gates pass. X-03 owns Windows qualification |
 
 ### Mac Meetings Beta release cuts
 

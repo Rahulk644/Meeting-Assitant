@@ -5,7 +5,7 @@ capability shipped. Current product direction lives in [`PRODUCT_STRATEGY.md`](.
 implementation and OSS adoption decisions live in [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md)
 and [`OSS_COMPONENT_STRATEGY.md`](OSS_COMPONENT_STRATEGY.md).
 
-**Observed:** 14 July 2026; local package refresh 26 July 2026
+**Observed:** 14 July 2026; local package refresh 26 July 2026; meeting/API refresh 2 August 2026
 
 **Scope:** Wispr Flow, Handy, FluidVoice, Fathom, Granola, Fireflies, Meetily, Snaply, and Apple SpeechAnalyzer
 
@@ -40,7 +40,10 @@ separately extracted copies of their compiled first-party JavaScript were inspec
 boundaries, permission use, event contracts, and connector boundaries. No proprietary code, assets, native
 libraries, or extracted files enter this repository, and no implementation may be copied from them. They
 remain clean-room behavioural and architecture references. No account credentials, local databases, user
-documents, tokens, or network traffic were inspected. Wispr Flow was not extracted in this refresh.
+documents, tokens, or network traffic were inspected. On 2 August, the installed Wispr Flow 1.6.326 package
+was inspected through a temporary code-only extraction to identify its supported public API boundary and
+meeting event schemas. The extraction remains outside this repository; private application credentials and
+session tokens were neither recorded nor used.
 
 The local observations below are point-in-time measurements on this Mac, not a universal benchmark. Use
 `script/benchmark_app_footprint.sh` for repeatable bundle and live-process snapshots; it is read-only and
@@ -56,7 +59,7 @@ The current installed bundles reinforce the existing Tauri/native direction:
 | Fathom 3.5.0 | 329 MB | 255 MB Electron frameworks, 62 MB ASAR, four small arm64 native helpers | Study the helper/event boundaries and user journey, not the shell |
 | Granola 7.441.6 | 606 MB | 483 MB Electron frameworks, 56 MB ASAR, native audio/calendar/TCC helpers, and multiple utility processes | Study the audio and connector contracts; reject the runtime footprint and cloud-cache assumptions |
 | Fireflies 0.1.38 | 352 MB | 263 MB Electron frameworks, 67 MB ASAR, 20 MB Expo Web app, native audio monitor and keyboard/glass modules | Study no-driver capture, per-app policy, permission UX, reconnecting live transport, and Live Assist; reject the shell and cloud coupling |
-| Wispr Flow 1.6.224 | 570 MB | 268 MB Electron frameworks, 187 MB ASAR, 95 MB assets, unpacked native modules, and a Swift helper app | Study dictation interaction quality; reject the multi-renderer baseline |
+| Wispr Flow 1.6.326 | about 570 MB | Electron frameworks, a large ASAR, unpacked native modules, and a Swift helper app | Study dictation/meeting interaction and evidence contracts; reject the multi-renderer baseline |
 
 The extracted Fathom first-party package is small compared with its shell: 76 compiled JavaScript files use
 about 616 KB, with about 1.3 MB of assets. This supports the earlier conclusion that most installed size is
@@ -184,7 +187,24 @@ Decision for My Assistant:
 - Add recoverable last-result behavior before adding richer animation.
 - Treat nearby-text context as a separately permissioned capability with a clear on/off control and a small data boundary.
 
-Official references: [Wispr Flow navigation](https://docs.wisprflow.ai/articles/5096240724-navigating-the-wispr-flow-app-desktop-ios-and-android), [Command Mode](https://docs.wisprflow.ai/articles/4816967992-how-to-use-command-mode), [Context Awareness](https://docs.wisprflow.ai/articles/4678293671-feature-context-awareness), and [shortcut support](https://docs.wisprflow.ai/articles/2612050838-supported-unsupported-keyboard-hotkey-shortcuts).
+The supported Wispr Flow developer API is distinct from the signed-in desktop application's private
+transport. The documented public endpoints are `wss://platform-api.wisprflow.ai/api/v1/dash/ws` for
+server-held API keys, `wss://platform-api.wisprflow.ai/api/v1/dash/client_ws` for short-lived client keys,
+and matching `/api` and `/client_api` REST endpoints. The documented result is formatted text plus language,
+timing, and token metadata; it does not expose diarization, word timestamps, participant identities, or the
+desktop meeting-refinement pipeline. Access currently requires Wispr approval and an organization API key,
+so a consumer Flow subscription is not a supported credential. My Assistant may add it as an optional
+`TranscriptEngine` only after supported access is granted; private desktop tokens or embedded service
+credentials must never be reused.
+
+The current desktop meeting implementation also confirms that named speakers are an evidence-merging
+problem, not an ASR endpoint feature. It stores separate mic/system/refined transcript sources, participant
+records, timestamped speaking/mute observations, and user speaker-map corrections, then uploads those
+artifacts for refinement when cloud synchronization is enabled. Calendar attendee names are candidates,
+not proof of who spoke. My Assistant should preserve the same independent product properties through its
+own canonical event log and `IdentityResolver`, keeping unsupported or conflicting identity as Unknown.
+
+Official references: [Wispr Flow navigation](https://docs.wisprflow.ai/articles/5096240724-navigating-the-wispr-flow-app-desktop-ios-and-android), [Command Mode](https://docs.wisprflow.ai/articles/4816967992-how-to-use-command-mode), [Context Awareness](https://docs.wisprflow.ai/articles/4678293671-feature-context-awareness), [shortcut support](https://docs.wisprflow.ai/articles/2612050838-supported-unsupported-keyboard-hotkey-shortcuts), [API introduction](https://api-docs.wisprflow.ai/introduction), [WebSocket API](https://api-docs.wisprflow.ai/websocket_api), [REST API](https://api-docs.wisprflow.ai/rest_api), and [client-side authentication](https://api-docs.wisprflow.ai/client_side_auth_basics).
 
 ### Handy: local dictation and model operations benchmark
 
@@ -284,11 +304,14 @@ The installed 3.3.3 app exposes the product model the user described:
 
 Its process inventory also shows a useful separation of concerns: the Electron UI is backed by small native audio and meeting-monitor helpers. The meeting monitor explicitly starts with Zoom, Google Meet, Microsoft Teams, and Slack Huddle adapters. That validates an adapter architecture, but not any specific internal implementation.
 
-The desktop bundle does not contain a local speaker-attribution or diarization implementation. Its native
-bridge carries meeting context plus audio/video frames to a separate Chrome-extension/service boundary, and
-Fathom's Name Picker handles the user's own Zoom display identity. The useful conclusion is architectural:
-the lightweight desktop capture client cannot, by itself, be treated as the source of Fathom's named
-speaker intelligence.
+Fathom's native meeting helper does contain local participant and active-speaker observation plumbing. It
+emits `participants-changed` and `active-speaker-changed`, maintains a participant monitor over bounded
+Accessibility queries, and includes platform-specific speaking semantics for Zoom, Google Meet, and Slack
+Huddles. Its native bridge also carries meeting context plus audio/video frames across the Chrome-extension
+boundary, while Fathom's Name Picker handles the user's own Zoom display identity. No local acoustic
+diarizer or final cluster-to-person transcript resolver was found in the desktop package. The useful
+conclusion is architectural: local UI events provide timestamped identity evidence, but the lightweight
+capture client alone is not the complete source of Fathom's named transcript intelligence.
 
 Decision for My Assistant:
 
