@@ -6,24 +6,32 @@
 //   POST /stream/finalize flush the streaming utterance
 //   POST /stream/reset    abandon/clear the streaming utterance
 //
-// One process loads the selected model once. A separate session owns streaming state so meeting/final
-// inference and a compatible model's incremental dictation path never corrupt one another.
+// Streaming routes accept a bounded `session` query parameter (or X-Transcribe-Session header). One process
+// loads the selected model once while independent sessions retain microphone/system state. transcribe.cpp 0.x
+// does not support concurrent compute against one loaded model, so every run/feed/finalize is intentionally
+// serialized through one compute mutex. That preserves correctness and matches a one-vCPU deployment without
+// duplicating model weights. Omitting the session keeps the legacy single-stream `default` behavior.
 #include "transcribe.h"
 #include "transcribe/parakeet.h"
 #include "transcribe/whisper.h"
 #include "httplib.h"
+#include <algorithm>
+#include <cctype>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <memory>
 #include <mutex>
 #include <string>
-#include <vector>
-#include <algorithm>
-#include <cerrno>
-#include <chrono>
-#include <csignal>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 #include <unistd.h>
 
 // Our capturer writes a fixed 16 kHz mono s16 WAV (writeWav16). Scan for the "data" chunk and expand to
@@ -109,11 +117,109 @@ static bool selftest_json_escape() {
     return parse_pcm16(bytes, pcm) && pcm.size() == 3 && pcm[0] == -1.0f && pcm[1] == 0.0f && pcm[2] > 0.999f;
 }
 
+static bool valid_stream_id(const std::string &id) {
+    if (id.empty() || id.size() > 64) return false;
+    return std::all_of(id.begin(), id.end(), [](unsigned char c) {
+        return std::isalnum(c) || c == '-' || c == '_' || c == '.';
+    });
+}
+
+static bool selftest_stream_ids() {
+    return valid_stream_id("meeting-42.microphone") &&
+           valid_stream_id("meeting-42_system") &&
+           !valid_stream_id("") &&
+           !valid_stream_id("../../escape") &&
+           !valid_stream_id("contains space") &&
+           !valid_stream_id(std::string(65, 'a'));
+}
+
+static bool read_token_file(const std::string &path, std::string &token) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return false;
+    token.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    while (!token.empty() && (token.back() == '\n' || token.back() == '\r')) token.pop_back();
+    return token.size() >= 32 && token.size() <= 512 &&
+           std::none_of(token.begin(), token.end(), [](unsigned char c) { return std::isspace(c); });
+}
+
 static struct transcribe_model   *g_model      = nullptr;
 static struct transcribe_session *g_ctx        = nullptr;
-static struct transcribe_session *g_stream_ctx = nullptr;
-static std::mutex g_mtx;          // authoritative inference session is single-result
-static std::mutex g_stream_mtx;   // one active incremental utterance
+// The pinned transcribe.cpp 0.x contract allows many sessions to borrow one model but prohibits overlapping
+// compute across them. This mutex therefore covers authoritative final inference and every named live stream.
+static std::mutex g_compute_mtx;
+
+struct StreamSlot {
+    explicit StreamSlot(struct transcribe_session *value) : ctx(value) {}
+    ~StreamSlot() { transcribe_session_free(ctx); }
+    StreamSlot(const StreamSlot &) = delete;
+    StreamSlot &operator=(const StreamSlot &) = delete;
+
+    struct transcribe_session *ctx;
+    std::mutex mutex;
+};
+
+static std::mutex g_streams_mtx;
+static std::unordered_map<std::string, std::shared_ptr<StreamSlot>> g_streams;
+static size_t g_max_streams = 4;
+
+static std::string requested_stream_id(const httplib::Request &req) {
+    if (req.has_param("session")) return req.get_param_value("session");
+    const std::string header = req.get_header_value("X-Transcribe-Session");
+    return header.empty() ? "default" : header;
+}
+
+static std::shared_ptr<StreamSlot> stream_slot(const httplib::Request &req,
+                                               httplib::Response &res,
+                                               bool create) {
+    const std::string id = requested_stream_id(req);
+    if (!valid_stream_id(id)) {
+        res.status = 400;
+        res.set_content("{\"error\":\"invalid stream session\"}", "application/json");
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(g_streams_mtx);
+    const auto found = g_streams.find(id);
+    if (found != g_streams.end()) return found->second;
+    if (!create) {
+        res.status = 404;
+        res.set_content("{\"error\":\"stream session not found; call /stream/begin first\"}",
+                        "application/json");
+        return nullptr;
+    }
+    if (g_streams.size() >= g_max_streams) {
+        res.status = 429;
+        res.set_content("{\"error\":\"stream session capacity reached\"}", "application/json");
+        return nullptr;
+    }
+    struct transcribe_session_params params;
+    transcribe_session_params_init(&params);
+    struct transcribe_session *ctx = nullptr;
+    const transcribe_status status = transcribe_session_init(g_model, &params, &ctx);
+    if (status != TRANSCRIBE_OK) {
+        res.status = 500;
+        res.set_content("{\"error\":\"stream session initialization failed\"}", "application/json");
+        fprintf(stderr, "transcribe-server: session %s init failed: %s\n", id.c_str(),
+                transcribe_status_string(status));
+        return nullptr;
+    }
+    auto slot = std::make_shared<StreamSlot>(ctx);
+    g_streams.emplace(id, slot);
+    fprintf(stderr, "transcribe-server: session %s created (%zu/%zu)\n", id.c_str(),
+            g_streams.size(), g_max_streams);
+    return slot;
+}
+
+static void release_stream_slot(const std::string &id, const std::shared_ptr<StreamSlot> &slot) {
+    std::lock_guard<std::mutex> lock(g_streams_mtx);
+    const auto found = g_streams.find(id);
+    // Map ownership plus this request is exactly two references. If another request already borrowed the
+    // slot, retain it rather than creating two live sessions with the same public identifier.
+    if (found != g_streams.end() && found->second == slot && slot.use_count() == 2) {
+        g_streams.erase(found);
+        fprintf(stderr, "transcribe-server: session %s released (%zu/%zu)\n", id.c_str(),
+                g_streams.size(), g_max_streams);
+    }
+}
 
 static void set_stream_error(httplib::Response &res, transcribe_status status, const char *operation) {
     fprintf(stderr, "transcribe-server: %s failed: %s\n", operation, transcribe_status_string(status));
@@ -123,21 +229,25 @@ static void set_stream_error(httplib::Response &res, transcribe_status status, c
 }
 
 static std::string stream_snapshot_json(struct transcribe_session *ctx,
-                                        const struct transcribe_stream_update &update) {
+                                        const struct transcribe_stream_update &update,
+                                        const std::string &session_id) {
     struct transcribe_stream_text text;
     transcribe_stream_text_init(&text);
     const transcribe_status status = transcribe_stream_get_text(ctx, &text);
     if (status != TRANSCRIBE_OK) {
         return "{\"error\":\"" + json_escape(transcribe_status_string(status)) + "\"}";
     }
-    const std::string full = text.full_text ? std::string(text.full_text, text.full_text_bytes) : std::string();
+    const std::string full = text.full_text
+        ? std::string(text.full_text, text.full_text_bytes)
+        : std::string();
     const std::string committed = text.committed_text
         ? std::string(text.committed_text, text.committed_text_bytes)
         : std::string();
     const std::string tentative = text.tentative_text
         ? std::string(text.tentative_text, text.tentative_text_bytes)
         : std::string();
-    return "{\"full\":\"" + json_escape(full) + "\",\"committed\":\"" + json_escape(committed) +
+    return "{\"session\":\"" + json_escape(session_id) + "\",\"full\":\"" +
+           json_escape(full) + "\",\"committed\":\"" + json_escape(committed) +
            "\",\"tentative\":\"" + json_escape(tentative) + "\",\"changed\":" +
            (update.result_changed ? "true" : "false") + ",\"final\":" +
            (update.is_final ? "true" : "false") + ",\"revision\":" + std::to_string(update.revision) +
@@ -164,7 +274,7 @@ static void start_parent_watchdog() {
 
 int main(int argc, char **argv) {
     if (argc == 2 && std::strcmp(argv[1], "--selftest") == 0) {
-        if (!selftest_json_escape()) {
+        if (!selftest_json_escape() || !selftest_stream_ids()) {
             fprintf(stderr, "transcribe-server self-test failed\n");
             return 1;
         }
@@ -173,7 +283,7 @@ int main(int argc, char **argv) {
     }
     start_parent_watchdog();
     const char *token_env = getenv("ASSISTANT_STT_TOKEN");
-    std::string model_path, host = "127.0.0.1", token = token_env ? token_env : "";
+    std::string model_path, host = "127.0.0.1", token = token_env ? token_env : "", token_file;
     int port = 8091;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -181,11 +291,24 @@ int main(int argc, char **argv) {
         else if (a == "--host" && i + 1 < argc) host = argv[++i];
         else if (a == "--port" && i + 1 < argc) port = atoi(argv[++i]);
         else if (a == "--token" && i + 1 < argc) token = argv[++i];
+        else if (a == "--token-file" && i + 1 < argc) token_file = argv[++i];
+        else if (a == "--max-streams" && i + 1 < argc) {
+            const int parsed = atoi(argv[++i]);
+            if (parsed < 1 || parsed > 32) {
+                fprintf(stderr, "transcribe-server: --max-streams must be between 1 and 32\n");
+                return 2;
+            }
+            g_max_streams = static_cast<size_t>(parsed);
+        }
         // -t / other whisper-server flags are accepted and ignored for CLI compatibility
         else if (a == "-t"     && i + 1 < argc) ++i;
     }
+    if (!token_file.empty() && !read_token_file(token_file, token)) {
+        fprintf(stderr, "transcribe-server: token file is unreadable or invalid\n");
+        return 2;
+    }
     if (model_path.empty() || token.empty()) {
-        fprintf(stderr, "usage: ASSISTANT_STT_TOKEN=SECRET transcribe-server -m model.gguf [--host H] [--port P]\n");
+        fprintf(stderr, "usage: transcribe-server -m model.gguf (--token-file PATH | ASSISTANT_STT_TOKEN=SECRET) [--host H] [--port P] [--max-streams N]\n");
         return 2;
     }
 
@@ -198,10 +321,6 @@ int main(int argc, char **argv) {
     if (transcribe_session_init(g_model, &sp, &g_ctx) != TRANSCRIBE_OK) {
         fprintf(stderr, "transcribe-server: session init failed\n"); return 1;
     }
-    if (transcribe_session_init(g_model, &sp, &g_stream_ctx) != TRANSCRIBE_OK) {
-        fprintf(stderr, "transcribe-server: streaming session init failed\n"); return 1;
-    }
-
     httplib::Server srv;
     srv.set_payload_max_length(64ULL * 1024ULL * 1024ULL);
     auto authorized = [&token](const httplib::Request &req, httplib::Response &res) {
@@ -212,9 +331,19 @@ int main(int argc, char **argv) {
         }
         return true;
     };
+    srv.Get("/livez", [](const httplib::Request &, httplib::Response &res) {
+        res.set_content("ok", "text/plain");
+    });
     srv.Get("/", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
         if (!authorized(req, res)) return;
         res.set_content("ok", "text/plain");
+    });
+    srv.Get("/health", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
+        if (!authorized(req, res)) return;
+        std::lock_guard<std::mutex> lock(g_streams_mtx);
+        res.set_content("{\"ok\":true,\"activeSessions\":" + std::to_string(g_streams.size()) +
+                        ",\"maxStreams\":" + std::to_string(g_max_streams) + "}",
+                        "application/json");
     });
     srv.Post("/inference", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
         if (!authorized(req, res)) return;
@@ -227,7 +356,7 @@ int main(int argc, char **argv) {
         bool translate   = req.has_file("translate") && req.get_file_value("translate").content == "true";
         std::string prompt = req.has_file("prompt") ? req.get_file_value("prompt").content : "";  // custom vocabulary / bias
 
-        std::lock_guard<std::mutex> lk(g_mtx);
+        std::lock_guard<std::mutex> lk(g_compute_mtx);
         struct transcribe_run_params rp; transcribe_run_params_init(&rp);
         if (translate) rp.task = TRANSCRIBE_TASK_TRANSLATE;
         if (!lang.empty() && lang != "auto") rp.language = lang.c_str();  // else auto-detect
@@ -264,8 +393,12 @@ int main(int argc, char **argv) {
     // gate. Whisper therefore remains final-only rather than being repeatedly re-decoded in fake chunks.
     srv.Post("/stream/begin", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
         if (!authorized(req, res)) return;
-        std::lock_guard<std::mutex> lk(g_stream_mtx);
-        transcribe_stream_reset(g_stream_ctx);
+        const std::string session_id = requested_stream_id(req);
+        const auto slot = stream_slot(req, res, true);
+        if (!slot) return;
+        std::lock_guard<std::mutex> session_lock(slot->mutex);
+        std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
+        transcribe_stream_reset(slot->ctx);
         struct transcribe_run_params rp;
         transcribe_run_params_init(&rp);
         rp.task = TRANSCRIBE_TASK_TRANSCRIBE;
@@ -289,9 +422,13 @@ int main(int argc, char **argv) {
             parakeet_buffered.right_ms = 560;
             sp.family = &parakeet_buffered.ext;
         }
-        const transcribe_status status = transcribe_stream_begin(g_stream_ctx, &rp, &sp);
-        if (status != TRANSCRIBE_OK) return set_stream_error(res, status, "stream begin");
-        res.set_content("{\"ok\":true}", "application/json");
+        const transcribe_status status = transcribe_stream_begin(slot->ctx, &rp, &sp);
+        if (status != TRANSCRIBE_OK) {
+            release_stream_slot(session_id, slot);
+            return set_stream_error(res, status, "stream begin");
+        }
+        res.set_content("{\"ok\":true,\"session\":\"" + json_escape(session_id) + "\"}",
+                        "application/json");
     });
 
     srv.Post("/stream/feed", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
@@ -302,32 +439,55 @@ int main(int argc, char **argv) {
             res.set_content("{\"error\":\"little-endian s16 PCM required\"}", "application/json");
             return;
         }
-        std::lock_guard<std::mutex> lk(g_stream_mtx);
+        const std::string session_id = requested_stream_id(req);
+        const auto slot = stream_slot(req, res, false);
+        if (!slot) return;
+        std::lock_guard<std::mutex> session_lock(slot->mutex);
+        std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
         struct transcribe_stream_update update;
         transcribe_stream_update_init(&update);
-        const transcribe_status status = transcribe_stream_feed(g_stream_ctx, pcm.data(), static_cast<int>(pcm.size()), &update);
+        const transcribe_status status = transcribe_stream_feed(
+            slot->ctx, pcm.data(), static_cast<int>(pcm.size()), &update);
         if (status != TRANSCRIBE_OK) return set_stream_error(res, status, "stream feed");
-        res.set_content(stream_snapshot_json(g_stream_ctx, update), "application/json");
+        res.set_content(stream_snapshot_json(slot->ctx, update, session_id), "application/json");
     });
 
     srv.Post("/stream/finalize", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
         if (!authorized(req, res)) return;
-        std::lock_guard<std::mutex> lk(g_stream_mtx);
+        const std::string session_id = requested_stream_id(req);
+        const auto slot = stream_slot(req, res, false);
+        if (!slot) return;
+        std::lock_guard<std::mutex> session_lock(slot->mutex);
+        std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
         struct transcribe_stream_update update;
         transcribe_stream_update_init(&update);
-        const transcribe_status status = transcribe_stream_finalize(g_stream_ctx, &update);
+        const transcribe_status status = transcribe_stream_finalize(slot->ctx, &update);
         if (status != TRANSCRIBE_OK) return set_stream_error(res, status, "stream finalize");
-        res.set_content(stream_snapshot_json(g_stream_ctx, update), "application/json");
+        res.set_content(stream_snapshot_json(slot->ctx, update, session_id), "application/json");
     });
 
     srv.Post("/stream/reset", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
         if (!authorized(req, res)) return;
-        std::lock_guard<std::mutex> lk(g_stream_mtx);
-        transcribe_stream_reset(g_stream_ctx);
-        res.set_content("{\"ok\":true}", "application/json");
+        const std::string session_id = requested_stream_id(req);
+        const auto slot = stream_slot(req, res, false);
+        if (!slot) return;
+        std::lock_guard<std::mutex> session_lock(slot->mutex);
+        std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
+        transcribe_stream_reset(slot->ctx);
+        release_stream_slot(session_id, slot);
+        res.set_content("{\"ok\":true,\"session\":\"" + json_escape(session_id) + "\"}",
+                        "application/json");
     });
 
-    fprintf(stderr, "transcribe-server ready on %s:%d (model held hot)\n", host.c_str(), port);
+    fprintf(stderr, "transcribe-server ready on %s:%d (model held hot, max streams %zu)\n",
+            host.c_str(), port, g_max_streams);
     srv.listen(host.c_str(), port);
+    {
+        std::lock_guard<std::mutex> lock(g_streams_mtx);
+        g_streams.clear();
+    }
+    transcribe_session_free(g_ctx);
+    transcribe_model_free(g_model);
     return 0;
 }
+
