@@ -16,6 +16,7 @@
 #include "transcribe/whisper.h"
 #include "httplib.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -149,18 +150,76 @@ static struct transcribe_session *g_ctx        = nullptr;
 static std::mutex g_compute_mtx;
 
 struct StreamSlot {
-    explicit StreamSlot(struct transcribe_session *value) : ctx(value) {}
+    explicit StreamSlot(struct transcribe_session *value,
+                        std::chrono::steady_clock::time_point now)
+        : ctx(value), last_request_at(now) {}
     ~StreamSlot() { transcribe_session_free(ctx); }
     StreamSlot(const StreamSlot &) = delete;
     StreamSlot &operator=(const StreamSlot &) = delete;
 
     struct transcribe_session *ctx;
     std::mutex mutex;
+    // Accessed under g_streams_mtx. A live request owns an additional shared
+    // pointer, so the reaper can never free a session that a handler is using.
+    std::chrono::steady_clock::time_point last_request_at;
 };
 
 static std::mutex g_streams_mtx;
 static std::unordered_map<std::string, std::shared_ptr<StreamSlot>> g_streams;
 static size_t g_max_streams = 4;
+static std::chrono::milliseconds g_stream_idle_timeout{120000};
+static std::atomic<bool> g_stream_reaper_running{false};
+static std::thread g_stream_reaper;
+
+static bool stream_slot_is_expired(std::chrono::steady_clock::time_point last_request_at,
+                                   std::chrono::steady_clock::time_point now,
+                                   size_t external_references) {
+    return external_references == 0 && now - last_request_at >= g_stream_idle_timeout;
+}
+
+// Must hold g_streams_mtx. Map-only ownership means no handler currently has
+// the session; erasing releases buffered PCM and its transcribe.cpp state.
+static std::vector<std::shared_ptr<StreamSlot>> take_expired_streams_locked(
+        std::chrono::steady_clock::time_point now) {
+    std::vector<std::shared_ptr<StreamSlot>> expired;
+    for (auto it = g_streams.begin(); it != g_streams.end();) {
+        const auto &slot = it->second;
+        const size_t external_references = slot.use_count() - 1; // map owns one reference
+        if (!stream_slot_is_expired(slot->last_request_at, now, external_references)) {
+            ++it;
+            continue;
+        }
+        fprintf(stderr, "transcribe-server: session %s expired after idle timeout\n", it->first.c_str());
+        expired.push_back(std::move(it->second));
+        it = g_streams.erase(it);
+    }
+    return expired;
+}
+
+static void reap_expired_streams() {
+    std::vector<std::shared_ptr<StreamSlot>> expired;
+    {
+        std::lock_guard<std::mutex> lock(g_streams_mtx);
+        expired = take_expired_streams_locked(std::chrono::steady_clock::now());
+    }
+    // Session destruction shares the model boundary with inference. The
+    // registry lock is already released, so this cannot invert the
+    // session/compute-to-registry lock order used by request cleanup.
+    std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
+    expired.clear();
+}
+
+static bool selftest_stream_reaping() {
+    const auto now = std::chrono::steady_clock::now();
+    const auto saved_timeout = g_stream_idle_timeout;
+    g_stream_idle_timeout = std::chrono::milliseconds(100);
+    const bool passed =
+        stream_slot_is_expired(now - std::chrono::milliseconds(100), now, 0) &&
+        !stream_slot_is_expired(now - std::chrono::milliseconds(99), now, 0) &&
+        !stream_slot_is_expired(now - std::chrono::milliseconds(1000), now, 1);
+    g_stream_idle_timeout = saved_timeout;
+    return passed;
+}
 
 static std::string requested_stream_id(const httplib::Request &req) {
     if (req.has_param("session")) return req.get_param_value("session");
@@ -177,9 +236,14 @@ static std::shared_ptr<StreamSlot> stream_slot(const httplib::Request &req,
         res.set_content("{\"error\":\"invalid stream session\"}", "application/json");
         return nullptr;
     }
+    const auto now = std::chrono::steady_clock::now();
+    reap_expired_streams();
     std::lock_guard<std::mutex> lock(g_streams_mtx);
     const auto found = g_streams.find(id);
-    if (found != g_streams.end()) return found->second;
+    if (found != g_streams.end()) {
+        found->second->last_request_at = now;
+        return found->second;
+    }
     if (!create) {
         res.status = 404;
         res.set_content("{\"error\":\"stream session not found; call /stream/begin first\"}",
@@ -202,11 +266,21 @@ static std::shared_ptr<StreamSlot> stream_slot(const httplib::Request &req,
                 transcribe_status_string(status));
         return nullptr;
     }
-    auto slot = std::make_shared<StreamSlot>(ctx);
+    auto slot = std::make_shared<StreamSlot>(ctx, now);
     g_streams.emplace(id, slot);
     fprintf(stderr, "transcribe-server: session %s created (%zu/%zu)\n", id.c_str(),
             g_streams.size(), g_max_streams);
     return slot;
+}
+
+static void start_stream_reaper() {
+    g_stream_reaper_running.store(true);
+    g_stream_reaper = std::thread([] {
+        while (g_stream_reaper_running.load()) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            reap_expired_streams();
+        }
+    });
 }
 
 static void release_stream_slot(const std::string &id, const std::shared_ptr<StreamSlot> &slot) {
@@ -274,7 +348,7 @@ static void start_parent_watchdog() {
 
 int main(int argc, char **argv) {
     if (argc == 2 && std::strcmp(argv[1], "--selftest") == 0) {
-        if (!selftest_json_escape() || !selftest_stream_ids()) {
+        if (!selftest_json_escape() || !selftest_stream_ids() || !selftest_stream_reaping()) {
             fprintf(stderr, "transcribe-server self-test failed\n");
             return 1;
         }
@@ -300,6 +374,15 @@ int main(int argc, char **argv) {
             }
             g_max_streams = static_cast<size_t>(parsed);
         }
+        else if (a == "--stream-idle-timeout-ms" && i + 1 < argc) {
+            char *end = nullptr;
+            const long parsed = strtol(argv[++i], &end, 10);
+            if (!end || *end != '\0' || parsed < 15000 || parsed > 600000) {
+                fprintf(stderr, "transcribe-server: --stream-idle-timeout-ms must be between 15000 and 600000\n");
+                return 2;
+            }
+            g_stream_idle_timeout = std::chrono::milliseconds(parsed);
+        }
         // -t / other whisper-server flags are accepted and ignored for CLI compatibility
         else if (a == "-t"     && i + 1 < argc) ++i;
     }
@@ -308,7 +391,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (model_path.empty() || token.empty()) {
-        fprintf(stderr, "usage: transcribe-server -m model.gguf (--token-file PATH | ASSISTANT_STT_TOKEN=SECRET) [--host H] [--port P] [--max-streams N]\n");
+        fprintf(stderr, "usage: transcribe-server -m model.gguf (--token-file PATH | ASSISTANT_STT_TOKEN=SECRET) [--host H] [--port P] [--max-streams N] [--stream-idle-timeout-ms N]\n");
         return 2;
     }
 
@@ -340,9 +423,11 @@ int main(int argc, char **argv) {
     });
     srv.Get("/health", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
         if (!authorized(req, res)) return;
+        reap_expired_streams();
         std::lock_guard<std::mutex> lock(g_streams_mtx);
         res.set_content("{\"ok\":true,\"activeSessions\":" + std::to_string(g_streams.size()) +
-                        ",\"maxStreams\":" + std::to_string(g_max_streams) + "}",
+                        ",\"maxStreams\":" + std::to_string(g_max_streams) +
+                        ",\"streamIdleTimeoutMs\":" + std::to_string(g_stream_idle_timeout.count()) + "}",
                         "application/json");
     });
     srv.Post("/inference", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
@@ -396,9 +481,6 @@ int main(int argc, char **argv) {
         const std::string session_id = requested_stream_id(req);
         const auto slot = stream_slot(req, res, true);
         if (!slot) return;
-        std::lock_guard<std::mutex> session_lock(slot->mutex);
-        std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
-        transcribe_stream_reset(slot->ctx);
         struct transcribe_run_params rp;
         transcribe_run_params_init(&rp);
         rp.task = TRANSCRIBE_TASK_TRANSCRIBE;
@@ -422,7 +504,13 @@ int main(int argc, char **argv) {
             parakeet_buffered.right_ms = 560;
             sp.family = &parakeet_buffered.ext;
         }
-        const transcribe_status status = transcribe_stream_begin(slot->ctx, &rp, &sp);
+        transcribe_status status = TRANSCRIBE_OK;
+        {
+            std::lock_guard<std::mutex> session_lock(slot->mutex);
+            std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
+            transcribe_stream_reset(slot->ctx);
+            status = transcribe_stream_begin(slot->ctx, &rp, &sp);
+        }
         if (status != TRANSCRIBE_OK) {
             release_stream_slot(session_id, slot);
             return set_stream_error(res, status, "stream begin");
@@ -457,13 +545,25 @@ int main(int argc, char **argv) {
         const std::string session_id = requested_stream_id(req);
         const auto slot = stream_slot(req, res, false);
         if (!slot) return;
-        std::lock_guard<std::mutex> session_lock(slot->mutex);
-        std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
         struct transcribe_stream_update update;
         transcribe_stream_update_init(&update);
-        const transcribe_status status = transcribe_stream_finalize(slot->ctx, &update);
-        if (status != TRANSCRIBE_OK) return set_stream_error(res, status, "stream finalize");
-        res.set_content(stream_snapshot_json(slot->ctx, update, session_id), "application/json");
+        transcribe_status status = TRANSCRIBE_OK;
+        std::string snapshot;
+        {
+            std::lock_guard<std::mutex> session_lock(slot->mutex);
+            std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
+            status = transcribe_stream_finalize(slot->ctx, &update);
+            if (status == TRANSCRIBE_OK) snapshot = stream_snapshot_json(slot->ctx, update, session_id);
+        }
+        if (status != TRANSCRIBE_OK) {
+            release_stream_slot(session_id, slot);
+            return set_stream_error(res, status, "stream finalize");
+        }
+        // Finalization is terminal. Releasing here makes UI Stop robust even
+        // when the renderer is torn down before its best-effort reset reaches
+        // the VPS. A duplicate reset sees 404 and is intentionally ignored.
+        release_stream_slot(session_id, slot);
+        res.set_content(snapshot, "application/json");
     });
 
     srv.Post("/stream/reset", [authorized](const httplib::Request &req, httplib::Response &res) mutable {
@@ -471,17 +571,23 @@ int main(int argc, char **argv) {
         const std::string session_id = requested_stream_id(req);
         const auto slot = stream_slot(req, res, false);
         if (!slot) return;
-        std::lock_guard<std::mutex> session_lock(slot->mutex);
-        std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
-        transcribe_stream_reset(slot->ctx);
+        {
+            std::lock_guard<std::mutex> session_lock(slot->mutex);
+            std::lock_guard<std::mutex> compute_lock(g_compute_mtx);
+            transcribe_stream_reset(slot->ctx);
+        }
         release_stream_slot(session_id, slot);
         res.set_content("{\"ok\":true,\"session\":\"" + json_escape(session_id) + "\"}",
                         "application/json");
     });
 
-    fprintf(stderr, "transcribe-server ready on %s:%d (model held hot, max streams %zu)\n",
-            host.c_str(), port, g_max_streams);
+    start_stream_reaper();
+    fprintf(stderr, "transcribe-server ready on %s:%d (model held hot, max streams %zu, idle timeout %lld ms)\n",
+            host.c_str(), port, g_max_streams,
+            static_cast<long long>(g_stream_idle_timeout.count()));
     srv.listen(host.c_str(), port);
+    g_stream_reaper_running.store(false);
+    if (g_stream_reaper.joinable()) g_stream_reaper.join();
     {
         std::lock_guard<std::mutex> lock(g_streams_mtx);
         g_streams.clear();
@@ -490,4 +596,3 @@ int main(int argc, char **argv) {
     transcribe_model_free(g_model);
     return 0;
 }
-
