@@ -27,7 +27,7 @@ The architecture should remain Rust/Tauri with narrowly scoped native macOS help
 
 ## How this research was performed
 
-This was a clean-room product study using:
+This was compatibility and product research using:
 
 1. official product documentation and public release notes;
 2. public open-source repositories for Handy, FluidVoice, and Meetily;
@@ -39,8 +39,9 @@ Fathom, Granola, and Fireflies packages and
 separately extracted copies of their compiled first-party JavaScript were inspected to validate process
 boundaries, permission use, event contracts, and connector boundaries. No proprietary code, assets, native
 libraries, or extracted files enter this repository, and no implementation may be copied from them. They
-remain clean-room behavioural and architecture references. No account credentials, local databases, user
-documents, tokens, or network traffic were inspected. On 2 August, the installed Wispr Flow 1.6.326 package
+remain implementation-independent behavioural and architecture references. No account credentials, local
+databases, user documents, tokens, or network traffic were inspected. On 2 August, the installed Wispr Flow
+1.6.326 package
 was inspected through a temporary code-only extraction to identify its supported public API boundary and
 meeting event schemas. The extraction remains outside this repository; private application credentials and
 session tokens were neither recorded nor used.
@@ -80,9 +81,9 @@ server-side use for every account. Those must be tested through the product and 
 policy before making broader claims.
 
 My Assistant should retain the narrower privacy boundary: Dictation never captures screens or walks the
-Accessibility tree; meeting video remains separately permission-gated; meeting audio stays local; and a
-future cloud transfer must be explicit and scoped. Fathom's event split is still a strong validation of the
-planned `MeetingDetector` and `MeetingEventSource` seams.
+Accessibility tree; meeting video remains separately permission-gated; meeting audio stays local by default;
+and private-server speech transfer is explicit, authenticated, and scoped. Fathom's event split is still a
+strong validation of the planned `MeetingDetector` and `MeetingEventSource` seams.
 
 Granola separates its desktop work into bounded audio, microphone-monitor, calendar, permission, window,
 encrypted-cache, and third-party-meeting utility processes. Its local encrypted database behaves as a

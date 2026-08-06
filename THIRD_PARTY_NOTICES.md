@@ -43,9 +43,12 @@ terms continue to apply.
 - **indic-transliteration:** the pinned Python package is used only to construct a clearly labelled machine
   Roman proxy. It never substitutes for the human Roman promotion corpus.
 
-Wispr Flow, Fathom, Fireflies, Snaply, Handy, FluidVoice, and Meetily product assets or proprietary
-implementations are not included. Competitive study is behavioral and clean-room. Open-source code may be
-adopted only after its exact license and attribution obligations are recorded here.
+Wispr Flow, Fathom, Granola, Fireflies, Snaply, Handy, FluidVoice, and Meetily proprietary assets,
+implementations, credentials, and private API clients are not included. Some compatibility research used
+installed-package metadata and locally inspected compiled packages; implementation in this repository is
+independent, and only separately identified open-source material may be adopted. Open-source code enters the
+project only after its exact source, revision, license, retained notices, and qualification obligations are
+recorded here.
 
 A generated SBOM and consolidated dependency-license bundle are required before the first public release;
 this human-readable inventory does not replace that release gate.

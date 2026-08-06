@@ -89,5 +89,4 @@ jobs:
         working-directory: desktop/src-tauri
         run: cargo test --locked
       - name: RustSec advisory audit
-        working-directory: desktop/src-tauri
-        run: cargo audit
+        run: ./script/audit_rust_dependencies.sh
