@@ -1,0 +1,7 @@
+**
+!stt/transcribe-server/PINNED_COMMIT
+!stt/transcribe-server/transcribe-server.cpp
+!stt/transcribe-server/httplib.h
+!stt/transcribe-server/patches/qwen3-output-budget.patch
+!deploy/self-hosted-stt/Dockerfile.cpu
+!deploy/self-hosted-stt/server.CMakeLists.txt

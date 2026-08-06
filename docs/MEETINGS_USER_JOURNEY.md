@@ -1,6 +1,6 @@
 # Meetings Beta user journey
 
-This is the observable contract for a bot-free local meeting. It tells an operator what My Assistant is
+This is the observable contract for a bot-free meeting captured locally. It tells an operator what My Assistant is
 doing, what should be visible, what each state means, and when to stop a test. Automated checks do not replace
 this physical journey.
 
@@ -31,7 +31,12 @@ Needs attention, Pausing, Paused, Finalizing, or hidden when idle. They never in
    - **Detect meeting start & end automatically** is on;
    - **Desktop meeting apps** is on for Zoom; and
    - **Screen recording** is **Off** for the first audio-only test.
-3. Select and download a speech model. Meetings and Dictation use the selected speech model.
+3. Under **Meeting transcription compute**, keep **On this Mac** for the local baseline. To qualify a private
+   worker, select **Private server**, enter its HTTPS or SSH-tunnelled loopback URL and bearer token, then use
+   **Test & use private server**. The token moves to Keychain. Private-worker mode is strict: if the selected
+   local service, tunnel, or remote host is unavailable, the overlay says **Needs attention** and no on-device
+   speech model starts. Dictation remains a
+   separate on-device path unless its product contract is changed independently.
 4. Open **Settings → General → Permissions**. Microphone captures the user; System Audio Recording captures
    the other callers; Accessibility enriches names and meeting state. Screen Recording is unnecessary while
    meeting video is off.
@@ -78,7 +83,8 @@ secondary state says **Zoom · Starting local capture**. **Stop** remains reacha
 
 The product does not yet claim to be recording. When macOS successfully opens the microphone and the Zoom
 Core Audio tap produces its first real buffer, the secondary state changes to
-**Zoom · Recording locally · Mic + meeting audio ready**,
+**Zoom · Recording locally · Mic + meeting audio ready · on-device transcription** or
+**Zoom · Recording locally · Mic + meeting audio ready · private transcription**,
 **Pause** and **Stop** are available, and the menu-bar waveform starts. Source-open
 plus first-buffer acknowledgement—not speech—is the readiness signal. A healthy tap delivers buffers during
 remote silence, so a silent participant must never delay recording or discard the user's microphone audio.
@@ -122,8 +128,11 @@ no independent lines is also a failure.
 
 **User action:** Each person speaks a clear sentence and pauses naturally. Then speak over one another once.
 
-**What My Assistant does:** Each channel is split at a natural pause, transcribed locally as a complete
-utterance, and appended to the meeting. Temporary utterance audio is removed after transcription.
+**What My Assistant does:** Each channel is split at a natural pause and transcribed as a complete utterance.
+The default path is the selected local model. If the private worker is selected, the bounded utterance is
+sent through the authenticated tunnel; a connection failure retries through the installed local model.
+Temporary utterance audio is removed after transcription, and speaker evidence/video never goes to the
+private worker.
 
 **What the user sees:** Transcript lines appear after the pause plus inference time, not word by word. The mic
 channel is always **You**. On supported Zoom layouts, a remote line shows the participant name only when

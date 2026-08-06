@@ -1,0 +1,49 @@
+name: my-assistant-stt
+
+services:
+  transcribe:
+    build:
+      context: ../..
+      dockerfile: deploy/self-hosted-stt/Dockerfile.cpu
+    image: ${STT_IMAGE:-my-assistant-stt:nemotron-3.5-q8}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "10001:10001"
+    command:
+      - -m
+      - /models/${STT_MODEL_FILE:-nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8091"
+      - --token-file
+      - /run/secrets/stt-token
+      - --max-streams
+      - ${STT_MAX_STREAMS:-2}
+    ports:
+      - "${STT_BIND_ADDRESS:-127.0.0.1}:${STT_HOST_PORT:-18091}:8091"
+    volumes:
+      - ${STT_MODEL_DIR:-./models}:/models:ro
+      - ${STT_TOKEN_FILE:-./secrets/stt-token}:/run/secrets/stt-token:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: ${STT_MEMORY_LIMIT:-1800m}
+    mem_reservation: ${STT_MEMORY_RESERVATION:-900m}
+    cpu_shares: ${STT_CPU_SHARES:-128}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8091/livez"]
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

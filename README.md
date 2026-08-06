@@ -3,17 +3,29 @@
 My Assistant is a local-first macOS app for dependable system-wide dictation and private, no-bot meeting
 transcription.
 
+> [!IMPORTANT]
+> **Open-source checkpoint — contributors welcome.** The standalone app is not a finished public release.
+> Its source contains a working dictation path, a substantial Meetings Beta, native macOS capture helpers,
+> and reproducible automated checks, but the full physical acceptance matrix, notarized distribution, and
+> cross-platform adapters are incomplete. Active product exploration moved toward contributing these native
+> capabilities to [Rowboat](https://github.com/rowboatlabs/rowboat) and importing finalized meeting knowledge
+> from Wispr Flow. See [`docs/PROJECT_CHECKPOINT.md`](docs/PROJECT_CHECKPOINT.md) for the candid history,
+> evidence, and contribution map.
+
 ## Product status
 
 | Surface | Release status | Contract |
 |---|---|---|
 | Dictation | Primary feature | Works system-wide, processes speech on-device, and inserts into the field that was focused when recording began. |
-| Meetings | Beta | Captures local meeting audio without joining as a bot, shows a live transcript, and keeps the meeting library on the Mac. |
+| Meetings | Beta | Captures locally without joining as a bot, transcribes on-device by default or through an explicitly selected private worker, and keeps the meeting library on the Mac. |
 | Agents | Coming soon | A greyed-out, disabled navigation label only. The initial product exposes no Agent route, settings, shortcut, helper, or product details. |
 
 The exact production boundary is enforced by [`PRODUCT_RELEASE_MATRIX.md`](PRODUCT_RELEASE_MATRIX.md) and a
 server-owned release contract. Saved browser state cannot unlock a hidden surface, and the release pipeline
 always packages the production channel.
+
+In that matrix, **shipped** means implemented and enabled in this repository's production-channel build. It
+does not mean generally available, notarized, fully platform-qualified, or covered by a support SLA.
 
 ## Dictation
 
@@ -45,13 +57,22 @@ participant corrections, meeting titles, notes, Ask, Markdown export, and an opt
 Meeting summaries can stay local when the optional local Intelligence runtime is installed, or use a
 provider selected by the user with a key stored in macOS Keychain.
 
+Meeting transcription uses the selected on-device model by default. An optional private server can receive
+bounded speech segments over authenticated HTTPS or a restricted SSH tunnel; its bearer token is stored in
+Keychain, while video and speaker evidence stay local. Private-worker mode is strict: if the selected local
+or remote worker is unavailable, the meeting reports **Needs attention** and does not silently load the
+on-device transcription model.
+
 ## Requirements
 
 - Apple Silicon Mac
 - macOS 14.4 or newer
 - Free disk space for the selected speech model (roughly 44 MB–1.2 GB)
 
-## Install the beta DMG
+## Install a controlled beta DMG
+
+This checkpoint does not publish a notarized general-availability binary. If you build a candidate yourself
+or receive an explicitly identified controlled-beta DMG:
 
 1. Open the DMG and drag **My Assistant** to **Applications**.
 2. Open the app once.
@@ -126,6 +147,10 @@ The release command runs the source checks, builds every native resource from it
 production UI contract, signs and inspects all nested executables, creates the DMG, mounts it read-only, and
 verifies the exact installable contents.
 
+Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and choose a bounded item from the checkpoint's
+[contribution map](docs/PROJECT_CHECKPOINT.md#contribution-map). Do not download a speech model or build a DMG
+to work on most domain, UI-contract, documentation, or fixture tasks.
+
 ## Repository map
 
 | Path | Purpose |
@@ -152,6 +177,10 @@ verifies the exact installable contents.
   actionable work, dependencies, estimates, and parallel-session rules
 - [`docs/OSS_COMPONENT_STRATEGY.md`](docs/OSS_COMPONENT_STRATEGY.md) — component adoption decisions and safe
   upstream-update policy
+- [`docs/RESEARCH_AND_ADOPTION_METHOD.md`](docs/RESEARCH_AND_ADOPTION_METHOD.md) — evidence levels,
+  provenance, license review, and clean implementation boundaries
+- [`docs/PROJECT_CHECKPOINT.md`](docs/PROJECT_CHECKPOINT.md) — why the standalone product paused, what is
+  reusable today, what remains unproven, and where contributors can help
 - [`RELEASE_READINESS.md`](RELEASE_READINESS.md) — evergreen release gates and known distribution limits
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — runtime architecture and invariants
 - [`SECURITY.md`](SECURITY.md) — privacy, storage, permissions, secrets, and reporting

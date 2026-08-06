@@ -34,8 +34,9 @@ Mac and store the provider key in macOS Keychain.
 
 ### Local first, explicit otherwise
 
-Audio and transcription stay on-device. Optional cloud intelligence is opt-in per configured provider, and
-the UI names the data being sent before use. No telemetry or My Assistant account is required.
+Audio capture and transcription stay on-device by default. Private-server meeting transcription and optional
+cloud intelligence are explicit opt-ins, and the UI names the data being sent before use. No telemetry or My
+Assistant account is required.
 
 ### Truth over theatre
 

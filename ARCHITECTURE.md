@@ -16,8 +16,10 @@ belong in `docs/OSS_COMPONENT_STRATEGY.md` and `docs/IMPLEMENTATION_ROADMAP.md` 
                                 │     • energy gate → splits speech into WHOLE utterances (natural pauses)
                                 ├─▶ Rust MeetingDetector (shared two-hit/three-miss policy + source controls)
                             ▼
-              transcribe-server (transcribe.cpp + Metal · selected final model) ← on demand
-                            │  POST /inference → authoritative {"text": …}
+              Rust TranscriptEngine provider boundary
+                    ├─ local transcribe-server (transcribe.cpp + Metal · selected model)
+                    └─ optional private CPU worker (local loopback or authenticated HTTPS/SSH tunnel; strict selected-worker mode)
+                            │  authoritative {"text": …}
                             ▼
               Rust local_server ──Server-Sent Events──▶ http://127.0.0.1:8790  (the UI, app/index.html)
                             ▲
@@ -32,8 +34,10 @@ shortcut, compute runtime, state, and helper paths; maintainers must opt into th
 feature explicitly. Release Web assets are separately stripped and verified. Reopening that surface requires
 a separate product and release decision.
 
-Every current capture and transcription component is on-device. No bot joins the call and audio does not
-leave the Mac. Only meeting transcript text can leave when the user explicitly selects a cloud provider for
+Capture is always local and no bot joins the call. Transcription is on-device by default. A user may
+explicitly select their own authenticated private transcription server; only bounded meeting speech segments
+then leave the Mac, while capture state, speaker evidence, transcript storage, and optional video remain
+local. Meeting transcript text can separately leave when the user explicitly selects a cloud provider for
 notes or Ask. The authenticated Rust server inside the Tauri process
 relays captions over SSE and serves the same UI used by the developer browser harness. No Node runtime or
 second always-on server process is shipped.
@@ -46,6 +50,12 @@ second always-on server process is shipped.
   no dropped word-onsets) than whisper.cpp's `whisper-server`. It ships CLI-only, so we wrap it in
   `transcribe-server` (below). whisper.cpp remains an automatic fallback. Choosing this engine also keeps
   a future model picker (Parakeet / Qwen3-ASR / Voxtral) cheap — the wire format is already engine-neutral.
+- **One private model, bounded sessions, serialized compute.** The pinned transcribe.cpp contract permits
+  several sessions to share one loaded model, but not concurrent compute against that model. The CPU worker
+  therefore keeps one verified Nemotron 3.5 Q8 model resident, accepts two named sessions, and serializes
+  final/feed/finalize work globally. Microphone and meeting-audio capture remain independent, so overlapping
+  local/remote speech is buffered and timestamped instead of overwriting a track. A single mixed playback
+  track still cannot reconstruct two remote people talking over one another.
 - **Tauri, not Electron.** Rust shell + OS WebView rendering vanilla HTML/CSS/JS. Cross-platform, tiny
   footprint. The heavy compute (transcription) is native C++/Metal, so the UI language never bottlenecks.
   The packaged app and the browser build load the *same* UI from loopback port 8790 — one codebase.
