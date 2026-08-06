@@ -92,10 +92,11 @@ self-test, prerecorded WAV, or screenshot passed.
 - [Rowboat PR #834](https://github.com/rowboatlabs/rowboat/pull/834) imports finalized Wispr Flow meetings
   through the supported OAuth/MCP boundary into Rowboat's Markdown knowledge store. It does not use desktop
   credentials, private endpoints, or proprietary code.
-- A provider-neutral self-hosted meeting-transcription seam belongs in a separate Rowboat proposal/PR. It
-  should preserve current Deepgram behavior, accept local loopback or authenticated TLS services, keep
-  credentials outside renderer state, and specify protocol/capability negotiation instead of hard-coding a
-  hosting company or one model.
+- [Rowboat PR #835](https://github.com/rowboatlabs/rowboat/pull/835) proposes a provider-neutral self-hosted
+  meeting-transcription seam. It preserves current managed/Deepgram behavior when the override is absent,
+  accepts local loopback or authenticated TLS services, keeps credentials in Electron main, and specifies a
+  bounded versioned protocol instead of hard-coding a hosting company or one model. It remains draft until
+  the documented real-worker meeting matrix is complete.
 
 These upstream contributions are intentionally independent. A maintainer can accept, reject, or revise one
 without inheriting this application's complete architecture.
