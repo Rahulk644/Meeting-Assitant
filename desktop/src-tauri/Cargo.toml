@@ -32,7 +32,7 @@ tauri-plugin-log = "2"
 tauri-plugin-notification = "2"               # native meeting-start alerts, emitted only after Core Audio confirms a live call
 # In-app dictation (runs as the app itself, so one Accessibility grant covers it — no fragmented helper):
 tauri-plugin-global-shortcut = "2"          # Carbon ordinary-key combinations; bare modifiers use the Input Monitoring event tap
-core-graphics = "0.23"                      # synth ⌘V (explicit Command flag) to paste — the proven CGEvent method
+core-graphics = "0.25"                      # synth ⌘V (explicit Command flag) to paste — the proven CGEvent method
 core-foundation = "0.9"                     # CFRunLoop that services the bare-modifier event tap (Handy-style right-⌘/Option trigger)
 core-foundation-code-signing = { package = "core-foundation", version = "0.10" } # CFURL bridge for Security.framework's native code-signing validation
 macos-accessibility-client = "0.0.2"        # prompt for Accessibility under the app's own identity
