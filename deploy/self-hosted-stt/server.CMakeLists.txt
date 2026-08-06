@@ -1,0 +1,5 @@
+# Minimal self-hosted worker target layered onto the pinned transcribe.cpp checkout.
+add_executable(transcribe-server transcribe-server.cpp)
+target_include_directories(transcribe-server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+find_package(Threads REQUIRED)
+target_link_libraries(transcribe-server PRIVATE transcribe Threads::Threads)

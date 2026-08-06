@@ -7,6 +7,10 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ### Added
 
+- Optional private meeting transcription through an authenticated self-hosted worker over HTTPS or an
+  SSH-tunnelled loopback address. The bearer token stays in macOS Keychain, microphone/system speech tracks
+  share one resident model through bounded serialized sessions, and strict private mode never starts the
+  local speech runtime after a remote failure.
 - First-buffer meeting-audio readiness and fail-closed microphone ownership: a process tap that opens without
   delivering data now retries instead of claiming Recording, and captions heard before independent channel
   separation remain **Unknown speaker** rather than being misattributed to **You**. Explicit timestamped
@@ -41,6 +45,9 @@ versions will use semantic versioning once the first public beta tag is cut.
 
 ### Changed
 
+- The standalone application is now documented as an open-source source checkpoint. Capability states refer
+  to the repository's production-channel build and no longer imply a notarized, generally available, or
+  fully physically qualified public release.
 - The Meetings Beta overlay now keeps recording controls secondary to the live transcript and catch-up
   action, grows vertically for recent speech, and preserves its screen edge while resizing.
 - Local release candidates default to the honest `unreleased` artifact label; a named beta label must be

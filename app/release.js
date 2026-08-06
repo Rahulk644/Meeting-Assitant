@@ -71,6 +71,7 @@ const CAPABILITIES = Object.freeze({
   automaticMeetingDetection: { state: "shipped", verification: "recording gate config" },
   deeperMeetingReasoning:    { state: "shipped", verification: "summary request option" },
   transcriptionLanguage:     { state: "shipped", verification: "capture config handler" },
+  privateMeetingTranscription:{ state: "shipped", verification: "Keychain, authenticated health check, secure URL policy, and strict selected-worker failure tests" },
   translation:               { state: "shipped", verification: "capability-gated Whisper translation task and incompatible-model fail-closed routing" },
   videoRecording:            { state: "shipped", verification: "screen-recording mode handler" },
   meetingTemplates:          { state: "shipped", verification: "summary prompt templates" },
@@ -151,7 +152,7 @@ const SETTING_CAPABILITY = Object.freeze({
   live_indicator: "liveMeetingIndicator", auto_detect: "automaticMeetingDetection",
   desktop_meet: "automaticMeetingDetection", browser_meet: "automaticMeetingDetection", deeper: "deeperMeetingReasoning",
   default_view: "calendarView", folders: "folders", trans_lang: "transcriptionLanguage", translate_en: "translation",
-  screen_rec: "videoRecording", audio_storage: "storageLimits", templates: "meetingTemplates", mtg_model: "aiProvider",
+  meeting_transcription_compute: "privateMeetingTranscription", screen_rec: "videoRecording", audio_storage: "storageLimits", templates: "meetingTemplates", mtg_model: "aiProvider",
   mtg_shortcut: "meetingShortcut", unload_model: "unloadModel", whisper_idle_minutes: "unloadModel", whats_new: "whatsNew",
   support_creator: "supportCreator", copilot: "experimental", agents_exp: "experimental",
   agent_shortcut: "agentGlobalShortcut",
@@ -176,7 +177,7 @@ const HANDLED_SETTINGS = Object.freeze([
   "appearance", "accent", "stealth", "permissions", "show_tray", "overlay_enabled", "overlay_pos",
   "dict_enabled", "push_to_talk", "speech_models", "smart_polish", "cleanup_timing", "polish_models", "dict_lang", "punctuation", "clipboard", "custom_vocab", "dict_sound",
   "volume", "sc_start", "sc_cancel", "live_indicator", "auto_detect", "desktop_meet", "browser_meet", "deeper", "trans_lang",
-  "translate_en", "screen_rec", "templates", "mtg_model", "unload_model", "whisper_idle_minutes",
+  "meeting_transcription_compute", "translate_en", "screen_rec", "templates", "mtg_model", "unload_model", "whisper_idle_minutes",
 ]);
 const PRODUCTION_CTAS = Object.freeze([
   "meeting-record", "meeting-pause", "meeting-resume", "meeting-stop", "meeting-open", "meeting-rename",

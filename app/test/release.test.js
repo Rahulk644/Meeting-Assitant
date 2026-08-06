@@ -165,6 +165,29 @@ test("Meetings Beta makes the current outside-app recording journey explicit", (
   assert.match(journey, /four to six\s+seconds/);
 });
 
+test("private meeting transcription is explicit, credential-isolated, and selected-worker-only", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "../../desktop/src-tauri/src/local_server.rs"), "utf8");
+  const shell = fs.readFileSync(path.join(__dirname, "../../desktop/src-tauri/src/lib.rs"), "utf8");
+  const adapter = fs.readFileSync(path.join(__dirname, "../../stt/meeting-tap.swift"), "utf8");
+  assert.equal(CAPABILITIES.privateMeetingTranscription.state, "shipped");
+  assert.match(html, /Meeting transcription compute/);
+  assert.match(html, /token is stored only in macOS Keychain/);
+  assert.match(html, /\/api\/transcription\/provider/);
+  assert.match(core, /MEETING_STT_KEYCHAIN_SERVICE/);
+  assert.match(core, /Private transcription must use HTTPS or a loopback URL for a local worker or SSH tunnel/);
+  assert.match(core, /no on-device model was started/);
+  const proxy = core.slice(core.indexOf("fn transcribe_proxy"), core.indexOf("fn configured_private_meeting_stt"));
+  const routing = proxy.slice(proxy.indexOf("let transcription ="));
+  const privateStart = routing.indexOf("Ok(Some((base, token)))");
+  const privateBranch = routing.slice(privateStart, routing.indexOf("Ok(None)", privateStart));
+  assert.match(privateBranch, /forward_private_stt/);
+  assert.doesNotMatch(privateBranch, /ensure_stt|forward_stt/);
+  assert.match(shell, /http:\/\/127\.0\.0\.1:8790\/api\/transcribe/);
+  assert.match(adapter, /X-Assistant-Audio-Source/);
+  assert.doesNotMatch(adapter, /MEETING_STT_KEYCHAIN_SERVICE|private-server/);
+});
+
 test("the speech model stays cold at boot and warms only after real capture starts", () => {
   const native = fs.readFileSync(path.join(__dirname, "../../desktop/src-tauri/src/lib.rs"), "utf8");
   const settings = native.slice(native.indexOf("fn set_dictation("), native.indexOf("// Tray \"Stop\""));

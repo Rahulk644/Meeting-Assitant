@@ -25,8 +25,9 @@ clean-machine installation, and two-person calls still require the named physica
   runtimes load on demand and unload after bounded idle periods.
 - **Safe dictation semantics:** one authoritative final result, exact live-span ownership, conservative
   cleanup, secure-field exclusion, and clipboard fallback when target evidence drifts.
-- **Defensible privacy and integrity:** local audio/transcription, Keychain-backed cloud credentials,
-  revision-pinned models, checksum verification, private storage, and signed nested executables.
+- **Defensible privacy and integrity:** local audio/transcription by default; explicit authenticated private
+  meeting transcription with Keychain credentials and strict selected-worker failure behavior; revision-pinned models, checksum
+  verification, private storage, and signed nested executables.
 - **Recoverable meeting records:** incremental private checkpoints, explicit corrections, transcript
   revisions, and stale-derived-note handling.
 - **A real portability seam:** automatic call-edge policy is dependency-free Rust; the Swift helper reports

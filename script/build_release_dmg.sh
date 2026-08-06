@@ -47,7 +47,7 @@ python3 -m json.tool "$ROOT/acceptance/cases.json" >/dev/null
   cargo clippy --locked --all-targets -- -D warnings
   cargo check --locked
   cargo test --locked
-  cargo audit
+  "$ROOT/script/audit_rust_dependencies.sh"
 )
 
 SIGN_IDENTITY="" "$ROOT/script/build_native_resources.sh"

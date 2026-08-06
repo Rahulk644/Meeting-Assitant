@@ -20,7 +20,9 @@ beta distribution with documented **Open Anyway** instructions, not a low-fricti
 
 1. validate shell, Python, JSON, benchmark, and acceptance-runner sources;
 2. pass Node tests and the desktop npm vulnerability audit;
-3. pass Rust formatting, Clippy with warnings denied, locked compile checks, tests, and the RustSec audit;
+3. pass Rust formatting, Clippy with warnings denied, locked compile checks, tests, and the RustSec audit,
+   including the executable inactive-dependency guard documented in
+   `docs/SECURITY_ADVISORY_EXCEPTIONS.md`;
 4. build every production native executable from the pinned source path;
 5. force the packaged WebView to the production release channel;
 6. strip and sign the main app and all nested executables with hardened runtime;

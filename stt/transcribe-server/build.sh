@@ -7,6 +7,11 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 COMMIT="$(cat "$ROOT/PINNED_COMMIT")"
 SRC="$ROOT/.transcribe.cpp"
 REPO="https://github.com/handy-computer/transcribe.cpp"
+BUILD_JOBS="${ASSISTANT_BUILD_JOBS:-2}"
+[[ "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]] || {
+  echo "ASSISTANT_BUILD_JOBS must be a positive integer" >&2
+  exit 2
+}
 
 if [ ! -e "$SRC/.git" ]; then
   echo "Fetching transcribe.cpp @ ${COMMIT:0:12} …"
@@ -57,7 +62,7 @@ grep -q "add_subdirectory(server)" "$SRC/examples/CMakeLists.txt" || echo "add_s
 
 echo "Building transcribe-server (Metal) — first build compiles ggml, ~2–4 min …"
 cmake -S "$SRC" -B "$SRC/build" -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_EXAMPLES=ON >/dev/null
-cmake --build "$SRC/build" --target transcribe-server -j >/dev/null
+cmake --build "$SRC/build" --target transcribe-server -j "$BUILD_JOBS" >/dev/null
 cp "$SRC/build/bin/transcribe-server" "$ROOT/transcribe-server"
 # Give the freshly linked local binary a valid code directory. Release/local app builds replace this with
 # the configured stable identity and hardened runtime before the executable enters a bundle.

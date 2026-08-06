@@ -241,6 +241,7 @@ fn meeting_pill_preview_state(phase: String) -> local_server::MeetingUiState {
         started_at: Some(0),
         microphone: "ready".into(),
         meeting_audio: "ready".into(),
+        transcription: "ready".into(),
         detail: detail.into(),
         transcript: vec![
             local_server::MeetingUiLine {
@@ -316,7 +317,9 @@ fn spawn_meeting_capture_helper() -> Option<u32> {
     let child = Command::new(tap)
         .args([
             "8790",
-            "http://127.0.0.1:8091/inference",
+            // Keep provider selection and credentials in Rust. The capture helper sends private WAV bytes
+            // only to the authenticated in-process API and never learns a private-worker bearer token.
+            "http://127.0.0.1:8790/api/transcribe",
             "--gate",
             "on",
             "--rec-dir",

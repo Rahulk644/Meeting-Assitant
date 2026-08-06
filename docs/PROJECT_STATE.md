@@ -39,6 +39,19 @@ When documents disagree, resolve them in this order:
 The release build forces `ASSISTANT_RELEASE_CHANNEL=production`; ambient shell state cannot accidentally
 produce a preview DMG. Saved WebView state is sanitized against the server-owned capability map.
 
+## Maintainer checkpoint
+
+The standalone application is preserved as an open-source source checkpoint. New standalone product
+features are paused while the maintainer tests whether its bounded native capture and evidence components
+are better maintained as upstream Rowboat contributions and uses Wispr Flow as an optional finalized-meeting
+source. This is a prioritization decision, not an assertion that every roadmap item is complete.
+
+The repository's `shipped` capability state means implemented and reachable in its production-channel build.
+There is no generally available, notarized public binary and no claim that the complete physical meeting,
+dictation, clean-install, or cross-platform matrices passed. The candid historical and contribution handoff
+is [`PROJECT_CHECKPOINT.md`](PROJECT_CHECKPOINT.md); the roadmap remains a contribution map rather than an
+active delivery commitment.
+
 ## Runtime shape
 
 ```text
@@ -52,7 +65,7 @@ My Assistant.app
 ├─ dictation-target
 │  └─ bounded Accessibility session for target classification and live-span reconciliation
 ├─ transcribe-server
-│  └─ pinned transcribe.cpp with separate final and capability-gated streaming sessions
+│  └─ pinned transcribe.cpp with final inference and bounded named streaming sessions
 ├─ polish-runtime
 │  └─ pinned static llama.cpp server; optional Gemma weights are downloaded separately
 ├─ meeting-tap
@@ -130,10 +143,18 @@ Node runtime, speech/polish model weights, telemetry client, or Agent helper.
   derived notes rather than silently presenting them as current.
 - Meeting notes can use an optional local runtime or an explicitly selected BYOK provider. Provider keys live
   in macOS Keychain and are never stored in settings or browser state.
+- Meeting transcription defaults to the selected on-device model. The user can explicitly select an
+  authenticated private server over HTTPS or an SSH-tunnelled loopback address; its bearer token lives only
+  in Keychain and the capture helper talks only to Rust's authenticated API. Private-worker mode is strict:
+  an unavailable or invalid local/remote service moves the meeting to **Needs attention**, and Rust never
+  starts the on-device speech runtime as an implicit fallback. The qualified KVM profile holds one Nemotron 3.5 model with two
+  bounded sessions and serializes compute because the pinned runtime does not support concurrent work on
+  one model.
 - Live Assist is a Meetings Beta surface, not Agent mode. Catch-up uses only the last 60 seconds of the
   current non-excluded transcript; summary, explicit actions, and follow-up questions use only the meeting
   so far plus the operator's scratchpad. It performs no external write or send action.
-- Meeting audio remains local. Optional screen recording is separately permission-gated.
+- Meeting audio remains local unless the user explicitly selects private-server transcription. Optional
+  screen recording is separately permission-gated and is never sent to that transcription worker.
 
 ## Repository and release invariants
 
@@ -167,7 +188,7 @@ cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked
 cargo test --locked
-cargo audit
+../../script/audit_rust_dependencies.sh
 
 # Corpus/acceptance-runner unit tests
 cd ../../..

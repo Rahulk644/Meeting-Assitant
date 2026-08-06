@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1.7
+
+FROM ubuntu:24.04 AS build
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        libopenblas-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+COPY stt/transcribe-server/PINNED_COMMIT /work/PINNED_COMMIT
+RUN set -eux; \
+    commit="$(tr -d '\r\n' < /work/PINNED_COMMIT)"; \
+    git init -q /src/transcribe; \
+    git -C /src/transcribe remote add origin https://github.com/handy-computer/transcribe.cpp; \
+    git -C /src/transcribe fetch -q --depth 1 origin "$commit"; \
+    git -C /src/transcribe checkout -q FETCH_HEAD; \
+    test "$(git -C /src/transcribe rev-parse HEAD)" = "$commit"; \
+    git -C /src/transcribe submodule update -q --init --recursive --depth 1
+
+RUN mkdir -p /src/transcribe/examples/server
+COPY stt/transcribe-server/transcribe-server.cpp /src/transcribe/examples/server/transcribe-server.cpp
+COPY stt/transcribe-server/httplib.h /src/transcribe/examples/server/httplib.h
+COPY deploy/self-hosted-stt/server.CMakeLists.txt /src/transcribe/examples/server/CMakeLists.txt
+COPY stt/transcribe-server/patches/qwen3-output-budget.patch /work/qwen3-output-budget.patch
+RUN set -eux; \
+    git -C /src/transcribe apply --check /work/qwen3-output-budget.patch; \
+    git -C /src/transcribe apply /work/qwen3-output-budget.patch; \
+    grep -q 'add_subdirectory(server)' /src/transcribe/examples/CMakeLists.txt || \
+        printf '\nadd_subdirectory(server)\n' >> /src/transcribe/examples/CMakeLists.txt
+
+# GGML_NATIVE is intentionally enabled: this image is built on and for the target KVM host. Rebuild after
+# migrating to a different CPU family. One build job avoids starving co-resident services on a one-vCPU host.
+RUN cmake -S /src/transcribe -B /src/transcribe/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DTRANSCRIBE_BUILD_EXAMPLES=ON \
+        -DTRANSCRIBE_BUILD_TESTS=OFF \
+        -DTRANSCRIBE_BUILD_TOOLS=OFF \
+        -DTRANSCRIBE_USE_SYSTEM_BLAS=ON \
+        -DGGML_NATIVE=ON \
+    && cmake --build /src/transcribe/build --target transcribe-server -j 1 \
+    && /src/transcribe/build/bin/transcribe-server --selftest
+
+FROM ubuntu:24.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        libopenblas0-pthread \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --uid 10001 assistant-stt
+
+COPY --from=build /src/transcribe/build/bin/transcribe-server /usr/local/bin/transcribe-server
+
+USER 10001:10001
+EXPOSE 8091
+ENTRYPOINT ["/usr/local/bin/transcribe-server"]

@@ -18,8 +18,8 @@ release. “Upstream improves, therefore My Assistant improves” means an updat
 CI rebuilds and qualifies it, and a human accepts the evidence. It does not mean unreviewed runtime updates.
 
 Licenses are part of the engineering contract. User permission cannot waive an upstream author's copyright
-or license conditions. A component with incompatible or unclear terms is used only as a clean-room design
-reference unless appropriate rights are obtained.
+or license conditions. A component with incompatible or unclear terms is used only as an
+implementation-neutral product reference unless appropriate rights are obtained.
 
 ## Stable internal seams
 
@@ -53,7 +53,7 @@ land there rather than in Swift, WASAPI, Accessibility, or browser-extension ada
 | [Tauri](https://github.com/tauri-apps/tauri) | Adopted shell | Direct locked dependency | Electron process model | Existing release, security, and physical UI gates |
 | [CPAL](https://github.com/RustAudio/cpal) | Current microphone I/O | `AudioSource` implementation | Meeting orchestration or playback policy | Keep until a higher-level adapter proves equal latency and reliability |
 | [Rodio](https://github.com/RustAudio/rodio) | Evaluate only if cue playback grows beyond `afplay` | A tiny `AudioCuePlayer` | Capture, meeting routing, or a permanent mixer | Smaller/reliable cross-platform cue path with no idle worker or material binary growth |
-| [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) | Adopted primary speech runtime | Pinned authenticated `transcribe-server`; later consider direct library crate | Upstream CLI UX or unpinned model catalog | Existing corpus, protocol, memory, latency, streaming, and physical insertion gates |
+| [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) | Adopted primary speech runtime | Pinned authenticated `transcribe-server` locally and as an optional private CPU worker; one shared model with bounded sessions and globally serialized compute; later consider direct library crate | Upstream CLI UX, unpinned model catalog, duplicate workers on a one-vCPU host, or public unauthenticated ports | Existing corpus, protocol, memory, latency, streaming, remote-fallback, and physical insertion gates |
 | [Wispr Flow Voice Interface API](https://api-docs.wisprflow.ai/introduction) | Optional hosted dictation-quality candidate after Wispr grants organization access | `TranscriptEngine` provider using the documented WebSocket/client-auth contract | Desktop session tokens, private gRPC transport, undocumented endpoints, or treating formatted dictation text as meeting diarization | Partner-issued API/client key; pinned request schema; corpus quality/latency/privacy/cost; revocation and failover; no participant-name claims |
 | Handy | Research and model-qualification reference | Clean-room behavior and pinned compatible model metadata | Whole app, settings/UI clone, or upstream state model | Each borrowed artifact independently licensed, hashed, benchmarked, and attributed |
 | [FlexAudio](https://github.com/Studio-Sadola/flexaudio) | Highest-priority audio portability qualification; current `0.2` API advertises mic/system/process capture on macOS, Windows, and Linux | `AudioSource`; first as an A/B adapter, then replace CPAL/Swift capture only where it wins | Blind migration, full-stack ownership, or treating its capability table as our production proof | Rust 1.85 toolchain uplift; macOS mic/system/process parity; device hot-swap; hours-long soak; TCC; CPU/RSS; no quality regression. X-02 separately proves Windows/WASAPI |

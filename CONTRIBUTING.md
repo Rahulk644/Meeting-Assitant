@@ -4,11 +4,22 @@ Thank you for improving My Assistant. The initial product is a local-first macOS
 surfaces: Dictation and Meetings (Beta). Agents is a disabled **Coming soon** label; contributions must not
 expose Agent details, routes, settings, runtimes, or helpers in a production build.
 
+The standalone application is currently maintained as a source checkpoint rather than a finished public
+release. Read [`docs/PROJECT_CHECKPOINT.md`](docs/PROJECT_CHECKPOINT.md) before choosing work. Small fixes,
+tests, portability seams, privacy improvements, documentation, and independently verifiable native adapters
+are welcome; broad feature additions need an issue first so contributors do not build against a paused
+product direction.
+
 Read [README.md](README.md), [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md),
 [docs/ENGINEERING_HEALTH.md](docs/ENGINEERING_HEALTH.md), and [ARCHITECTURE.md](ARCHITECTURE.md) before
 changing runtime behavior. Consult [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for task
 boundaries and [docs/OSS_COMPONENT_STRATEGY.md](docs/OSS_COMPONENT_STRATEGY.md) before adopting a component.
+Use [docs/RESEARCH_AND_ADOPTION_METHOD.md](docs/RESEARCH_AND_ADOPTION_METHOD.md) for evidence and provenance.
 Update project state only when a lasting invariant or priority changes.
+
+Before starting a large change, open an issue containing the user problem, intended boundary, privacy
+impact, acceptance evidence, and explicit non-goals. A maintainer acknowledgement is especially important
+for new dependencies, packaged helpers, network providers, permissions, or product surfaces.
 
 ## Repository map
 
@@ -52,7 +63,7 @@ cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked
 cargo test --locked
-cargo audit
+../../script/audit_rust_dependencies.sh
 
 # Speech benchmark and acceptance-runner tests (no model or private-corpus download)
 ./script/benchmark_speech.sh test
@@ -99,3 +110,8 @@ verified. Update the following when applicable:
 
 Before requesting review, run the automated gates relevant to the diff and use
 `script/build_release_dmg.sh` for any release, signing, entitlement, resource, or packaging change.
+
+Keep a pull request reviewable: one problem, one stable boundary, focused tests, and no generated/private
+artifacts. If adopting upstream code, record its URL, exact revision, license, retained notices, local changes,
+qualification suite, and rollback. Proprietary products may inform interoperability or behavior, but their
+code, assets, credentials, private APIs, and copied implementation details do not belong in a contribution.

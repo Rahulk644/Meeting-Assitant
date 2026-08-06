@@ -1278,6 +1278,7 @@ const SCHEMA={
       {id:'folders',title:'Organise into custom folders',desc:'',type:'toggle'},
     ]},
     {label:'TRANSCRIPTION', rows:[
+      {id:'meeting_transcription_compute',title:'Meeting transcription compute',badge:'BETA',desc:'Run on this Mac or your authenticated private server. Private mode fails visibly and never starts a local model as fallback.',type:'button',btn:'Configure'},
       {id:'trans_lang',title:'Transcription language',desc:'Auto-detect handles mixed Hindi + English per utterance.',type:'select',options:['Auto-detect','English','हिन्दी','Español','Deutsch']},
       {id:'translate_en',title:'Translate to English',desc:'Output English whatever the spoken language.',type:'toggle'},
       {id:'screen_rec',title:'Screen recording',desc:'Capture the call’s video alongside audio.',type:'segmented',options:['Off','Always','Only when shared']},
@@ -1550,6 +1551,7 @@ const IC_AXS='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke
 function settingAction(id){
   if(id==='speech_models') return openSpeechModels(false);
   if(id==='polish_models') return openPolishModels(false);
+  if(id==='meeting_transcription_compute') return openMeetingTranscription();
   if(id==='custom_vocab') return openVocab();
   if(id==='templates') return openTemplates();
   if(id==='wa_modes') return openModes();
@@ -1558,6 +1560,37 @@ function settingAction(id){
   if(id==='support_creator') return toast('Thank you for the support! 💛');
 }
 function grow(){ const d=el('div'); d.style.flex='1'; d.style.minWidth='0'; return d; }
+
+async function meetingTranscriptionConfig(){
+  try{
+    const response=await fetch('/api/transcription/provider',{cache:'no-store'});
+    if(response.ok)return await response.json();
+  }catch{}
+  return {mode:'local',base:'',keySaved:false};
+}
+function openMeetingTranscription(){
+  openModal('Meeting transcription compute', box=>{
+    box.append(el('div','msub','On-device runs meeting transcription directly in My Assistant. Private worker uses only the authenticated local or remote service you select; an outage is shown immediately instead of silently starting an on-device model.'));
+    const loading=el('div','mnote','Checking the current provider…'); box.append(loading);
+    meetingTranscriptionConfig().then(initial=>{
+      loading.remove(); let mode=initial.mode==='private'?'private':'local';
+      const choices=el('div','mlist');
+      const local=el('button','mitem pick'),localText=grow(); local.type='button'; localText.innerHTML='<div class="nm">On this Mac</div><div class="ds">Default · audio never leaves this device</div>'; local.append(el('div','mradio'),localText);
+      const remote=el('button','mitem pick'),remoteText=grow(); remote.type='button'; remoteText.innerHTML='<div class="nm">Private worker</div><div class="ds">Local or remote self-hosted compute · no implicit on-device fallback</div>'; remote.append(el('div','mradio'),remoteText);
+      choices.append(local,remote); box.append(choices);
+      const fields=el('div','maddrow'),base=el('input','minput'),token=el('input','minput'),note=el('div','mnote'),save=el('button','maddbtn','Test & use private server');
+      base.type='url'; base.value=initial.base||'http://127.0.0.1:18091'; base.placeholder='http://127.0.0.1:18091'; base.autocomplete='off'; base.spellcheck=false;
+      token.type='password'; token.placeholder=initial.keySaved?'Saved securely — leave blank to reuse':'Paste the server token'; token.autocomplete='new-password';
+      note.textContent='The bearer token is stored only in macOS Keychain. Plain HTTP is accepted only on loopback, for a same-machine worker or SSH tunnel. If the selected worker cannot be reached, the meeting shows Needs attention and no on-device speech model starts.';
+      fields.append(base,token,save,note); box.append(fields);
+      const paint=()=>{local.classList.toggle('on',mode==='local');remote.classList.toggle('on',mode==='private');fields.hidden=mode!=='private'};
+      local.onclick=async()=>{mode='local';paint();local.disabled=true;try{const response=await fetch('/api/transcription/provider',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'local'})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not select local transcription');toast('Meetings will transcribe on this Mac.');closeModal();renderSettings()}catch(error){toast(String(error.message||error));local.disabled=false}};
+      remote.onclick=()=>{mode='private';paint();base.focus()};
+      save.onclick=async()=>{save.disabled=true;save.textContent='Testing…';try{const response=await fetch('/api/transcription/provider',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'private',base:base.value.trim(),token:token.value.trim()})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Private server test failed');token.value='';toast(`Private transcription ready${result.maxStreams?` · ${result.maxStreams} streams`:''}.`);closeModal();renderSettings()}catch(error){toast(String(error.message||error));save.disabled=false;save.textContent='Test & use private server'}};
+      paint();
+    });
+  });
+}
 
 /* Custom vocabulary — real: fed to Whisper as an initial prompt via meeting-tap */
 function saveVocab(list){ store.set('vocab',list); cfg({vocab:vocabPrompt()}); syncDictation(false); }
@@ -2084,7 +2117,7 @@ es.onmessage=(e)=>{let m;try{m=JSON.parse(e.data)}catch{return}
 let callRec=false, callMin=false, callPaused=false, callPhase='idle';
 let callStart=0, callSec=0, callTab='transcript', callTick=null;
 let callLines=[]; const CALL_MAX=5;
-let callInfo={title:'',app:'',count:0}, callCapture={microphone:'idle',meetingAudio:'idle',detail:''}, callNotesVal='';
+let callInfo={title:'',app:'',count:0}, callCapture={microphone:'idle',meetingAudio:'idle',transcription:'idle',detail:''}, callNotesVal='';
 let callAssistAnswer='', callAssistLoading=false, callAssistError=false;
 let callXY=null, callDragging=false, _callDragMoved=false, callRecoveryPane='';
 
@@ -2135,8 +2168,8 @@ function callRender(){
     paused:'Microphone and meeting audio released',
     finalizing:'Saving transcript and preparing notes'
   }[callPhase]||'');
-  const fix=$('#cpFix'), micFailed=callCapture.microphone==='failed', audioFailed=callCapture.meetingAudio==='failed';
-  fix.hidden=callPhase!=='needs_attention';
+  const fix=$('#cpFix'), micFailed=callCapture.microphone==='failed', audioFailed=callCapture.meetingAudio==='failed', transcriptionFailed=callCapture.transcription==='failed';
+  fix.hidden=callPhase!=='needs_attention'||transcriptionFailed;
   callRecoveryPane=micFailed&&!audioFailed?'Privacy_Microphone':(!micFailed&&audioFailed?'Privacy_AudioCapture':'');
   fix.textContent=callRecoveryPane==='Privacy_Microphone'?'Allow Microphone':(callRecoveryPane==='Privacy_AudioCapture'?'Allow System Audio Recording':'Review audio permissions');
   $('#cpTitle').textContent = callInfo.title || 'Impromptu meeting';
@@ -2186,6 +2219,7 @@ function callOnState(s){
   if(s.startedAt && !callStart) callStart=s.startedAt;                 // true start; kept for the elapsed timer
   if(s.captureMicrophone!==undefined)callCapture.microphone=s.captureMicrophone||'idle';
   if(s.captureMeetingAudio!==undefined)callCapture.meetingAudio=s.captureMeetingAudio||'idle';
+  if(s.captureTranscription!==undefined)callCapture.transcription=s.captureTranscription||'idle';
   if(s.captureDetail!==undefined)callCapture.detail=s.captureDetail||'';
   if(s.meetingPhase){
     const previous=callPhase; callPhase=s.meetingPhase;
@@ -2242,7 +2276,7 @@ function callSetRecording(on){
     callStopTick();
     try{ localStorage.removeItem('call.notes.'+callStart); }catch{}
     callStart=0; callSec=0; callNotesVal=''; callLines=[]; callAssistAnswer=''; callAssistLoading=false; callAssistError=false; callXY=null; callPaused=false;
-    callInfo={title:'',app:'',count:0}; callCapture={microphone:'idle',meetingAudio:'idle',detail:''}; callPhase='idle';
+    callInfo={title:'',app:'',count:0}; callCapture={microphone:'idle',meetingAudio:'idle',transcription:'idle',detail:''}; callPhase='idle';
   }
   callRec=on; $('#callPanel').setAttribute('aria-label',on?(callPhase==='recording'?'Recording in progress':statusTextForAria(callPhase)):'Recording stopped'); callRender();
 }

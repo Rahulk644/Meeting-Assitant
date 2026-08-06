@@ -9,7 +9,8 @@ and how to report a vulnerability.
 ### Local by default
 
 - Microphone and meeting-app audio capture run locally.
-- Voice activity detection and speech transcription run locally through the selected verified model.
+- Voice activity detection and speech transcription run locally through the selected verified model by
+  default.
 - Deterministic dictation cleanup runs inside the app.
 - Optional Smart Polish runs through the bundled local runtime only after the user separately downloads a
   verified Gemma model.
@@ -28,9 +29,15 @@ not package Agent helpers or initialize an Agent runtime.
 2. **Optional meeting Intelligence provider.** If the user selects a cloud provider for meeting notes or
    Ask, the requested meeting text is sent to that provider with the user's Keychain-backed API key. Audio is
    not sent. The local option sends nothing, but requires its separate runtime/model installation.
+3. **Optional private meeting transcription.** If the user explicitly selects their own private worker,
+   bounded microphone and meeting-audio speech segments are sent to that authenticated server. The supported
+   HTTP path is an SSH-tunnelled loopback address; other destinations require HTTPS. Capture metadata,
+   Accessibility evidence, participant identities, stored transcripts, notes, and optional video are not
+   sent to the worker. Private mode fails closed: a connection failure is shown to the user and never starts
+   the installed on-device model.
 
-Cloud speech transcription, sync, public sharing, telemetry, and a My Assistant account are not implemented
-in the current beta.
+Third-party cloud speech transcription, sync, public sharing, telemetry, and a My Assistant account are not
+implemented in the current beta.
 
 ## Stored data
 
@@ -56,9 +63,10 @@ sessions, demo renders, audio, and benchmark corpora are ignored by Git.
 
 ## Secrets
 
-Provider API keys are written directly to macOS Keychain. They never enter `settings.json`, localStorage,
-logs, temporary files, command-line arguments, or committed fixtures. The Rust service reads only the key
-for the provider selected by the current request.
+Provider API keys and the private transcription bearer token are written directly to macOS Keychain. They
+never enter `settings.json`, localStorage, logs, temporary files, command-line arguments, or committed
+fixtures. The Rust service reads only the credential for the provider selected by the current request; the
+capture helper receives only the app's per-launch local token.
 
 Custom remote providers require HTTPS. Plain HTTP is allowed only for loopback services on the same Mac.
 Provider responses and request bodies are bounded, and unknown provider identifiers fail closed.
@@ -69,9 +77,11 @@ The packaged UI and API run inside the Tauri process on `127.0.0.1:8790`. Startu
 process already owns the port. Each launch generates a random secret that is exchanged for an HttpOnly,
 SameSite cookie. Requests with an unexpected Host, Origin, or token are rejected.
 
-The transcription and Smart Polish helpers bind only to loopback, require per-launch bearer authentication,
-limit request sizes, and terminate when the owning app exits. Model paths and runtime executables are
-selected server-side; the WebView cannot supply an arbitrary executable path.
+The local transcription and Smart Polish helpers bind only to loopback, require per-launch bearer
+authentication, limit request sizes, and terminate when the owning app exits. An optional private
+transcription worker is selected and validated in Rust, requires a separate Keychain-backed bearer token,
+and must use HTTPS or an SSH-tunnelled loopback URL. Model paths and runtime executables are selected
+server-side; the WebView cannot supply an arbitrary executable path.
 
 The optional meeting Intelligence choice is currently a separately installed LiteRT-LM process, not a
 bundled helper. Its verified install/update/remove, executable-integrity, port-ownership/authentication, and

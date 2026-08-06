@@ -2,9 +2,10 @@
 //   • Other participants: a Core Audio process tap (audio-only, "System Audio Recording Only" — NO Screen
 //     Recording), scoped to the meeting app. ScreenCaptureKit is used instead only when recording video.
 //   • Microphone   (AVAudioEngine)                                → you.
-// Both → energy-VAD splits on natural pauses → WHOLE-utterance WAV → on-demand transcribe-server
-// (transcribe.cpp on the Metal GPU) → caption POSTed to the GUI. Feeding whole utterances (not fixed-length
-// chunks) is what makes it accurate — a mid-sentence cut severs context and the model hallucinates.
+// Both → energy-VAD splits on natural pauses → WHOLE-utterance WAV → authenticated Rust transcription
+// provider (on-device transcribe.cpp or the user's strict local/remote private worker) → caption POSTed to the
+// GUI. Feeding whole utterances (not fixed-length chunks) is what makes it accurate — a mid-sentence cut
+// severs context and the model hallucinates.
 //
 // Build:  swiftc -O -target arm64-apple-macos14.4 meeting-tap.swift -o meeting-tap \
 //           -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework CoreImage \
@@ -343,7 +344,8 @@ final class Segmenter {
         writeWav16(samples, to: wav)
         defer { try? FileManager.default.removeItem(at: wav) }
         let secs = f1(Double(samples.count) / SR)
-        guard let (raw, conf) = transcribe(wav.path) else { return }
+        let source = isSelf ? "meeting-microphone" : "meeting-audio"
+        guard let (raw, conf) = transcribe(wav.path, source: source) else { return }
         if conf < MIN_CONF {   // low mean word-probability = noise/hallucination (the "*Sigh*" case)
             err("\(tag) seg#\(idx) \(secs)s dropped: confidence below threshold")
             return
@@ -657,7 +659,7 @@ func writeWav16(_ samples: [Float], to url: URL) {
 
 // Ask whisper-server for verbose_json → (full text, mean per-word confidence). Whisper reports a
 // probability per word; averaged, it separates real speech (~0.9) from noise/hallucination (low).
-func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
+func transcribe(_ wavPath: String, source: String) -> (text: String, conf: Float)? {
     // Two independent knobs: `language` = DETECTION (default `auto` — Rahul speaks Hindi + English, so let
     // Whisper detect per utterance), `translate` = OUTPUT (off for the shipped Turbo model, which OpenAI did
     // not train for translation). The old "auto hallucinates
@@ -665,9 +667,15 @@ func transcribe(_ wavPath: String) -> (text: String, conf: Float)? {
     // is accurate (A/B-verified against Handy's own WAVs). Both overridable in Settings → Meetings.
     var args = ["-s", whisperURL]
     if !STT_TOKEN.isEmpty { args += ["-H", "Authorization: Bearer \(STT_TOKEN)"] }
-    args += ["-F", "file=@\(wavPath)", "--form-string", "temperature=0", "--form-string", "response_format=verbose_json", "--form-string", "language=\(curLanguage)"]
-    if curTranslate { args += ["--form-string", "translate=true"] }
-    if !curVocab.isEmpty { args += ["--form-string", "prompt=\(curVocab)"] } // form-string prevents @file expansion
+    args += ["-H", "X-Assistant-Audio-Source: \(source)", "-F", "file=@\(wavPath)"]
+    // Packaged capture talks only to Rust's authenticated loopback API. Rust owns provider selection,
+    // Keychain credentials, language, translation, vocabulary, and strict private-worker routing. Keep the direct-server
+    // arguments for the standalone diagnostic mode documented at the top of this file.
+    if !whisperURL.contains("/api/transcribe") {
+        args += ["--form-string", "temperature=0", "--form-string", "response_format=verbose_json", "--form-string", "language=\(curLanguage)"]
+        if curTranslate { args += ["--form-string", "translate=true"] }
+        if !curVocab.isEmpty { args += ["--form-string", "prompt=\(curVocab)"] } // form-string prevents @file expansion
+    }
     let out = curl(args)
     guard let data = out.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }

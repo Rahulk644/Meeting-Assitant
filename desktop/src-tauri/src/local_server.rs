@@ -34,6 +34,8 @@ const ORIGIN: &str = "http://127.0.0.1:8790";
 const STT_PORT: u16 = 8091;
 const LLM_PORT: u16 = 9379;
 const KEYCHAIN_SERVICE: &str = "com.myassistant.desktop.ai-provider";
+const MEETING_STT_KEYCHAIN_SERVICE: &str = "com.myassistant.desktop.meeting-transcription";
+const MEETING_STT_KEYCHAIN_ACCOUNT: &str = "private-server";
 #[cfg(feature = "agent-research")]
 const AGENT_ACTION_PREVIEW_BUNDLE_ID: &str = "com.apple.TextEdit";
 const MAX_JSON_BODY: usize = 1_000_000;
@@ -45,6 +47,7 @@ const MIN_SPEAKER_OVERLAP_MS: u64 = 200;
 
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
 static LLM_HTTP: OnceLock<ureq::Agent> = OnceLock::new();
+static STT_HTTP: OnceLock<ureq::Agent> = OnceLock::new();
 static APP_ICONS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
 // Model verification + process startup can take several seconds on a cold launch. Keep one warm-up in
 // flight and begin it before the user stops speaking so the visible finishing phase is normally inference,
@@ -89,6 +92,7 @@ pub struct MeetingUiState {
     pub started_at: Option<u64>,
     pub microphone: String,
     pub meeting_audio: String,
+    pub transcription: String,
     pub detail: String,
     /// A deliberately small, sanitized projection for the native overlay. Full meeting history stays in
     /// the core and WebView; platform adapters never own or persist a second transcript.
@@ -169,6 +173,7 @@ struct State {
     capture_sequence: u64,
     capture_microphone: String,
     capture_meeting_audio: String,
+    capture_transcription: String,
     capture_detail: String,
     meeting_last_checkpoint: Option<Instant>,
     speaker_attribution: SpeakerAttributionState,
@@ -490,6 +495,17 @@ pub fn start(
             );
         }
     }
+    if let Some(raw) = settings.get("set.meetingTranscription").cloned() {
+        if let Some(sanitized) = sanitize_meeting_transcription_setting(&raw) {
+            settings.insert("set.meetingTranscription".into(), sanitized);
+            let _ = write_private(
+                &settings_path,
+                &serde_json::to_vec(&settings).unwrap_or_default(),
+            );
+        } else {
+            settings.remove("set.meetingTranscription");
+        }
+    }
     #[cfg(not(feature = "agent-research"))]
     if settings.remove("set.agentCompute").is_some() {
         let _ = write_private(
@@ -552,6 +568,7 @@ pub fn start(
         capture_sequence: 0,
         capture_microphone: "idle".into(),
         capture_meeting_audio: "idle".into(),
+        capture_transcription: "idle".into(),
         capture_detail: String::new(),
         meeting_last_checkpoint: None,
         speaker_attribution: SpeakerAttributionState::default(),
@@ -1736,6 +1753,12 @@ fn handle(mut request: Request, shared: Arc<Shared>) {
         (Method::Post, "/api/meeting/live-assist") => meeting_live_assist(request, shared),
         (Method::Get, "/api/settings") => settings_get(request, &shared),
         (Method::Post, "/api/settings") => settings_post(request, shared),
+        (Method::Get, "/api/transcription/provider") => {
+            meeting_transcription_provider_get(request, &shared)
+        }
+        (Method::Post, "/api/transcription/provider") => {
+            meeting_transcription_provider_post(request, shared)
+        }
         (Method::Post, "/api/config") => config_post(request, shared),
         (Method::Post, "/api/transcribe") => transcribe_proxy(request, shared),
         (Method::Get, "/api/dictations") => {
@@ -2377,6 +2400,7 @@ fn apply_capture_status(state: &mut State, value: &Value) -> bool {
     if phase == "stopped" {
         state.capture_microphone = "idle".into();
         state.capture_meeting_audio = "idle".into();
+        state.capture_transcription = "idle".into();
         state.capture_detail.clear();
         return true;
     }
@@ -2388,10 +2412,12 @@ fn apply_capture_status(state: &mut State, value: &Value) -> bool {
     };
     state.capture_microphone = microphone;
     state.capture_meeting_audio = meeting_audio;
-    state.capture_detail = clean(
-        value.get("detail").and_then(Value::as_str).unwrap_or(""),
-        240,
-    );
+    if state.capture_transcription != "failed" {
+        state.capture_detail = clean(
+            value.get("detail").and_then(Value::as_str).unwrap_or(""),
+            240,
+        );
+    }
     true
 }
 
@@ -2611,6 +2637,7 @@ fn recompute_lifecycle(shared: Arc<Shared>, action: Option<&str>) {
                 if state.capture_session.is_empty() {
                     state.capture_microphone = "idle".into();
                     state.capture_meeting_audio = "idle".into();
+                    state.capture_transcription = "idle".into();
                     state.capture_detail.clear();
                 }
             } else {
@@ -2633,7 +2660,19 @@ fn recompute_lifecycle(shared: Arc<Shared>, action: Option<&str>) {
     // check must never delay the outside-app acknowledgement or make the panel vanish between capture and save.
     broadcast_call(&shared);
     if ensure_speech_engine {
-        let _ = ensure_stt(&shared);
+        let private = meeting_uses_private_stt(&shared);
+        match ensure_meeting_transcription(&shared) {
+            Ok(()) => set_meeting_transcription_status(&shared, "ready", ""),
+            Err(error) => {
+                let detail = if private {
+                    format!("Private transcription worker unavailable · {error} · no on-device model was started")
+                } else {
+                    format!("On-device transcription unavailable · {error}")
+                };
+                set_meeting_transcription_status(&shared, "failed", &detail);
+            }
+        }
+        broadcast_call(&shared);
     }
     if let Some((generation, delay)) = schedule {
         let s = shared.clone();
@@ -2674,6 +2713,7 @@ fn reset_capture_readiness(state: &mut State) {
     state.capture_sequence = 0;
     state.capture_microphone = "starting".into();
     state.capture_meeting_audio = "starting".into();
+    state.capture_transcription = "starting".into();
     state.capture_detail = "Opening microphone and meeting-audio sources.".into();
 }
 
@@ -2683,17 +2723,21 @@ fn meeting_phase(
     has_current: bool,
     microphone: &str,
     meeting_audio: &str,
+    transcription: &str,
 ) -> &'static str {
     if gate.paused() {
-        if microphone == "idle" && meeting_audio == "idle" {
+        if microphone == "idle" && meeting_audio == "idle" && transcription == "idle" {
             "paused"
         } else {
             "pausing"
         }
     } else if gate.recording() {
-        if microphone == "failed" || meeting_audio == "failed" {
+        if microphone == "failed" || meeting_audio == "failed" || transcription == "failed" {
             "needs_attention"
-        } else if matches!(microphone, "ready" | "off") && meeting_audio == "ready" {
+        } else if matches!(microphone, "ready" | "off")
+            && meeting_audio == "ready"
+            && transcription == "ready"
+        {
             "recording"
         } else {
             "starting"
@@ -2709,18 +2753,30 @@ fn meeting_ui_state(state: &State) -> MeetingUiState {
     let current = state.current.as_ref();
     let microphone = state.capture_microphone.clone();
     let meeting_audio = state.capture_meeting_audio.clone();
+    let transcription = state.capture_transcription.clone();
     let phase = meeting_phase(
         &state.gate,
         state.finalizing,
         current.is_some(),
         &microphone,
         &meeting_audio,
+        &transcription,
     );
+    let private_transcription = meeting_transcription_setting(&state.settings)
+        .get("mode")
+        .and_then(Value::as_str)
+        == Some("private");
     let detail = match phase {
         "starting" if microphone == "ready" => "Microphone ready · checking meeting audio",
         "starting" if meeting_audio == "ready" => "Meeting audio ready · checking microphone",
+        "starting" if private_transcription && transcription != "ready" => {
+            "Connecting to private transcription worker"
+        }
         "starting" => "Checking microphone + meeting audio",
-        "recording" => "Microphone + meeting audio confirmed",
+        "recording" if private_transcription => {
+            "Mic + meeting audio ready · private transcription worker connected"
+        }
+        "recording" => "Microphone + meeting audio confirmed · on-device transcription",
         "pausing" => "Releasing microphone and meeting audio",
         "paused" => "Microphone and meeting audio released",
         "finalizing" => "Stopping capture, saving transcript, and preparing notes",
@@ -2743,6 +2799,7 @@ fn meeting_ui_state(state: &State) -> MeetingUiState {
         started_at: current.map(|meeting| meeting.started_at),
         microphone,
         meeting_audio,
+        transcription,
         detail: if state.capture_detail.is_empty() || !matches!(phase, "needs_attention") {
             detail.into()
         } else {
@@ -2783,6 +2840,7 @@ fn call_state_value(state: &State) -> Value {
         "app": presentation.app,
         "captureMicrophone": presentation.microphone,
         "captureMeetingAudio": presentation.meeting_audio,
+        "captureTranscription": presentation.transcription,
         "captureDetail": presentation.detail,
     })
 }
@@ -3115,6 +3173,13 @@ fn settings_get(request: Request, shared: &Shared) {
             sanitize_model_setting(&raw, false).unwrap_or(raw),
         );
     }
+    if let Some(raw) = settings.get("set.meetingTranscription").cloned() {
+        if let Some(sanitized) = sanitize_meeting_transcription_setting(&raw) {
+            settings.insert("set.meetingTranscription".into(), sanitized);
+        } else {
+            settings.remove("set.meetingTranscription");
+        }
+    }
     #[cfg(feature = "agent-research")]
     if let Some(raw) = settings.get("set.agentCompute").cloned() {
         settings.insert(
@@ -3158,6 +3223,12 @@ fn settings_post(mut request: Request, shared: Arc<Shared>) {
             if key == "set.aiModel" {
                 value = sanitize_model_setting(&value, true).unwrap_or(value);
             }
+            // This setting is written only by the dedicated provider endpoint after it validates the
+            // private server and moves the bearer token into Keychain. The generic settings mirror must
+            // never become a second path for persisting credentials or unvalidated network destinations.
+            if key == "set.meetingTranscription" {
+                continue;
+            }
             #[cfg(feature = "agent-research")]
             if key == "set.agentCompute" {
                 value = sanitize_agent_compute_setting(&value).unwrap_or(value);
@@ -3177,6 +3248,245 @@ fn settings_post(mut request: Request, shared: Arc<Shared>) {
         let _ = save_settings(&shared.cfg, &state.settings);
     }
     respond(request, 204, "text/plain", Vec::new(), vec![])
+}
+
+fn validated_meeting_stt_base(raw: &str) -> Result<String, String> {
+    let base = raw.trim().trim_end_matches('/');
+    if base.is_empty() || base.len() > 500 || base.contains(['\r', '\n', '\0', '@', '?', '#']) {
+        return Err("Enter a valid private transcription server URL".into());
+    }
+    if let Some(port) = base
+        .strip_prefix("http://127.0.0.1:")
+        .or_else(|| base.strip_prefix("http://localhost:"))
+    {
+        if port.parse::<u16>().ok().filter(|port| *port > 0).is_some() {
+            return Ok(base.to_string());
+        }
+        return Err("The loopback transcription URL needs a valid port".into());
+    }
+    if let Some(rest) = base.strip_prefix("https://") {
+        let authority = rest.split('/').next().unwrap_or_default();
+        if !authority.is_empty()
+            && !authority.chars().any(char::is_whitespace)
+            && !authority.starts_with('.')
+            && !authority.ends_with('.')
+        {
+            return Ok(base.to_string());
+        }
+    }
+    Err(
+        "Private transcription must use HTTPS or a loopback URL for a local worker or SSH tunnel"
+            .into(),
+    )
+}
+
+fn valid_meeting_stt_token(token: &str) -> bool {
+    (32..=512).contains(&token.len()) && !token.chars().any(char::is_whitespace)
+}
+
+fn sanitize_meeting_transcription_setting(raw: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let mode = match value.get("mode").and_then(Value::as_str) {
+        Some("private") => "private",
+        _ => "local",
+    };
+    let base = if mode == "private" {
+        validated_meeting_stt_base(value.get("base").and_then(Value::as_str).unwrap_or("")).ok()?
+    } else {
+        String::new()
+    };
+    Some(
+        json!({
+            "mode":mode,
+            "base":base,
+            // A display hint only. Every remote inference still requires the real Keychain item.
+            "keySaved":value.get("keySaved").and_then(Value::as_bool).unwrap_or(false),
+        })
+        .to_string(),
+    )
+}
+
+fn meeting_transcription_setting(settings: &HashMap<String, String>) -> Value {
+    setting_json(settings, "meetingTranscription")
+        .and_then(|value| sanitize_meeting_transcription_setting(&value.to_string()))
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or_else(|| json!({"mode":"local","base":"","keySaved":false}))
+}
+
+fn meeting_stt_cache_account() -> &'static str {
+    "meeting-transcription/private-server"
+}
+
+fn meeting_stt_key() -> Option<String> {
+    cached_provider_key_with(
+        PROVIDER_KEY_CACHE.get_or_init(|| Mutex::new(HashMap::new())),
+        meeting_stt_cache_account(),
+        || {
+            security_framework::passwords::get_generic_password(
+                MEETING_STT_KEYCHAIN_SERVICE,
+                MEETING_STT_KEYCHAIN_ACCOUNT,
+            )
+            .ok()
+        },
+    )
+}
+
+fn meeting_stt_agent() -> &'static ureq::Agent {
+    STT_HTTP.get_or_init(|| {
+        let tls = ureq::tls::TlsConfig::builder()
+            .provider(ureq::tls::TlsProvider::NativeTls)
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+            .build();
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(35)))
+            .http_status_as_error(false)
+            .tls_config(tls)
+            .build()
+            .new_agent()
+    })
+}
+
+fn private_stt_health(base: &str, token: &str) -> Result<Value, String> {
+    let base = validated_meeting_stt_base(base)?;
+    if !valid_meeting_stt_token(token) {
+        return Err("The private transcription token is invalid".into());
+    }
+    let mut response = meeting_stt_agent()
+        .get(format!("{base}/health"))
+        .header("Authorization", &format!("Bearer {token}"))
+        .call()
+        .map_err(|_| "The private transcription server could not be reached".to_string())?;
+    let status = response.status();
+    let body = response.body_mut().read_to_string().map_err(|_| {
+        "The private transcription server returned an unreadable response".to_string()
+    })?;
+    if body.len() > MAX_JSON_BODY {
+        return Err("The private transcription server response was too large".into());
+    }
+    if !status.is_success() {
+        return Err(format!(
+            "The private transcription server rejected the connection (HTTP {})",
+            status.as_u16()
+        ));
+    }
+    let value: Value = serde_json::from_str(&body)
+        .map_err(|_| "The private transcription server returned invalid JSON".to_string())?;
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err("The private transcription server failed its health check".into());
+    }
+    Ok(value)
+}
+
+fn meeting_transcription_provider_get(request: Request, shared: &Shared) {
+    let setting = {
+        let state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        meeting_transcription_setting(&state.settings)
+    };
+    json_response(request, 200, setting)
+}
+
+fn meeting_transcription_provider_post(mut request: Request, shared: Arc<Shared>) {
+    let body = match read_json(&mut request) {
+        Ok(value) => value,
+        Err(error) => return json_response(request, 400, json!({"error":error})),
+    };
+    let mode = body.get("mode").and_then(Value::as_str).unwrap_or("local");
+    if mode == "local" {
+        let setting = json!({"mode":"local","base":"","keySaved":false});
+        let mut state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state
+            .settings
+            .insert("set.meetingTranscription".into(), setting.to_string());
+        if let Err(error) = save_settings(&shared.cfg, &state.settings) {
+            return json_response(request, 500, json!({"error":error}));
+        }
+        return json_response(request, 200, setting);
+    }
+    if mode != "private" {
+        return json_response(
+            request,
+            400,
+            json!({"error":"Unknown transcription provider"}),
+        );
+    }
+    let base =
+        match validated_meeting_stt_base(body.get("base").and_then(Value::as_str).unwrap_or("")) {
+            Ok(value) => value,
+            Err(error) => return json_response(request, 400, json!({"error":error})),
+        };
+    let supplied = body
+        .get("token")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let token = if supplied.is_empty() {
+        match meeting_stt_key() {
+            Some(value) => value,
+            None => {
+                return json_response(
+                    request,
+                    409,
+                    json!({"error":"Paste the private transcription token first"}),
+                )
+            }
+        }
+    } else if valid_meeting_stt_token(supplied) {
+        supplied.to_string()
+    } else {
+        return json_response(
+            request,
+            400,
+            json!({"error":"The private transcription token is invalid"}),
+        );
+    };
+    let health = match private_stt_health(&base, &token) {
+        Ok(value) => value,
+        Err(error) => return json_response(request, 502, json!({"error":error})),
+    };
+    if !supplied.is_empty() {
+        if security_framework::passwords::set_generic_password(
+            MEETING_STT_KEYCHAIN_SERVICE,
+            MEETING_STT_KEYCHAIN_ACCOUNT,
+            token.as_bytes(),
+        )
+        .is_err()
+        {
+            return json_response(
+                request,
+                500,
+                json!({"error":"The private transcription token could not be saved in macOS Keychain"}),
+            );
+        }
+        cache_provider_key(meeting_stt_cache_account(), token.as_bytes());
+    }
+    let setting = json!({"mode":"private","base":base,"keySaved":true});
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    state
+        .settings
+        .insert("set.meetingTranscription".into(), setting.to_string());
+    if let Err(error) = save_settings(&shared.cfg, &state.settings) {
+        return json_response(request, 500, json!({"error":error}));
+    }
+    json_response(
+        request,
+        200,
+        json!({
+            "mode":"private",
+            "base":setting.get("base").cloned().unwrap_or(Value::Null),
+            "keySaved":true,
+            "ready":true,
+            "maxStreams":health.get("maxStreams").cloned().unwrap_or(Value::Null),
+        }),
+    )
 }
 
 fn sanitize_model_setting(raw: &str, persist_secret: bool) -> Option<String> {
@@ -3422,6 +3732,7 @@ fn config_post(mut request: Request, shared: Arc<Shared>) {
 
 fn transcribe_proxy(mut request: Request, shared: Arc<Shared>) {
     let content_type = header(&request, "Content-Type");
+    let meeting_audio = header(&request, "X-Assistant-Audio-Source").starts_with("meeting-");
     if !content_type
         .to_ascii_lowercase()
         .starts_with("multipart/form-data")
@@ -3436,15 +3747,33 @@ fn transcribe_proxy(mut request: Request, shared: Arc<Shared>) {
         Ok(b) => b,
         Err(e) => return json_response(request, 413, json!({"error":e})),
     };
-    if let Err(error) = ensure_stt(&shared) {
-        return json_response(request, 503, json!({"error":error}));
-    }
-    let (language, punctuation, vocab) = {
-        let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.stt_last_used = Some(Instant::now());
+    let private_provider = if meeting_audio {
+        configured_private_meeting_stt(&shared)
+    } else {
+        Ok(None)
+    };
+    let private_selected = matches!(&private_provider, Ok(Some(_)));
+    let (language, translate, punctuation, vocab) = {
+        let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
         let model = active_speech_model(&state);
+        let requested_language = if meeting_audio {
+            state
+                .last_state
+                .get("language")
+                .and_then(Value::as_str)
+                .unwrap_or("auto")
+        } else {
+            &state.dictation.language
+        };
         (
-            model_decode_language(model, &state.dictation.language),
+            model_decode_language(model, requested_language),
+            meeting_audio
+                && state
+                    .last_state
+                    .get("translate")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                && model.supports_translation,
             state.dictation.punctuation.clone(),
             state.vocab.clone(),
         )
@@ -3453,8 +3782,25 @@ fn transcribe_proxy(mut request: Request, shared: Arc<Shared>) {
         body,
         &content_type,
         &[
-            ("language", language),
-            ("translate", "false".into()),
+            // The qualified private worker currently runs multilingual Nemotron 3.5. Its safe contract is
+            // automatic-language transcription, not translation. Keep explicit local-model controls on the
+            // local path and fail closed to the worker's documented capability on the private path.
+            (
+                "language",
+                if private_selected {
+                    "auto".into()
+                } else {
+                    language
+                },
+            ),
+            (
+                "translate",
+                if private_selected {
+                    "false".into()
+                } else {
+                    translate.to_string()
+                },
+            ),
             (
                 "prompt",
                 if vocab.is_empty() {
@@ -3465,7 +3811,37 @@ fn transcribe_proxy(mut request: Request, shared: Arc<Shared>) {
             ),
         ],
     );
-    match forward_stt(&shared.cfg.token, &content_type, &body) {
+    let transcription = if meeting_audio {
+        match private_provider {
+            Ok(Some((base, token))) => forward_private_stt(&base, &token, &content_type, &body),
+            Ok(None) => ensure_stt(&shared)
+                .and_then(|()| forward_stt(&shared.cfg.token, &content_type, &body)),
+            Err(remote_error) => Err(remote_error),
+        }
+    } else {
+        ensure_stt(&shared).and_then(|()| forward_stt(&shared.cfg.token, &content_type, &body))
+    };
+    if meeting_audio {
+        match &transcription {
+            Ok(_) => set_meeting_transcription_status(&shared, "ready", ""),
+            Err(error) if private_selected || meeting_uses_private_stt(&shared) => {
+                set_meeting_transcription_status(
+                    &shared,
+                    "failed",
+                    &format!(
+                        "Private transcription worker unavailable · {error} · no on-device model was started"
+                    ),
+                );
+            }
+            Err(error) => set_meeting_transcription_status(
+                &shared,
+                "failed",
+                &format!("On-device transcription unavailable · {error}"),
+            ),
+        }
+        broadcast_call(&shared);
+    }
+    match transcription {
         Ok(bytes) => {
             let mut value: Value =
                 serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({"text":""}));
@@ -3480,6 +3856,58 @@ fn transcribe_proxy(mut request: Request, shared: Arc<Shared>) {
             json_response(request, 200, value)
         }
         Err(error) => json_response(request, 502, json!({"error":error})),
+    }
+}
+
+fn configured_private_meeting_stt(shared: &Shared) -> Result<Option<(String, String)>, String> {
+    let setting = {
+        let state = shared
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        meeting_transcription_setting(&state.settings)
+    };
+    if setting.get("mode").and_then(Value::as_str) != Some("private") {
+        return Ok(None);
+    }
+    let base =
+        validated_meeting_stt_base(setting.get("base").and_then(Value::as_str).unwrap_or(""))?;
+    let token = meeting_stt_key()
+        .filter(|token| valid_meeting_stt_token(token))
+        .ok_or_else(|| "private transcription token is missing from Keychain".to_string())?;
+    Ok(Some((base, token)))
+}
+
+fn meeting_uses_private_stt(shared: &Shared) -> bool {
+    let state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    meeting_transcription_setting(&state.settings)
+        .get("mode")
+        .and_then(Value::as_str)
+        == Some("private")
+}
+
+fn set_meeting_transcription_status(shared: &Shared, status: &str, detail: &str) {
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if !state.gate.recording() {
+        return;
+    }
+    state.capture_transcription = status.into();
+    if !detail.is_empty() {
+        state.capture_detail = clean(detail, 240);
+    }
+}
+
+fn ensure_meeting_transcription(shared: &Shared) -> Result<(), String> {
+    match configured_private_meeting_stt(shared) {
+        Ok(Some((base, token))) => private_stt_health(&base, &token).map(|_| ()),
+        Ok(None) => ensure_stt(shared),
+        Err(remote_error) => Err(remote_error),
     }
 }
 
@@ -3913,6 +4341,44 @@ fn forward_stt(token: &str, content_type: &str, body: &[u8]) -> Result<Vec<u8>, 
         return Err(String::from_utf8_lossy(&response[..split]).to_string());
     }
     Ok(response[split + 4..].to_vec())
+}
+
+fn forward_private_stt(
+    base: &str,
+    token: &str,
+    content_type: &str,
+    body: &[u8],
+) -> Result<Vec<u8>, String> {
+    let base = validated_meeting_stt_base(base)?;
+    if !valid_meeting_stt_token(token) {
+        return Err("invalid private transcription token".into());
+    }
+    let mut response = meeting_stt_agent()
+        .post(format!("{base}/inference"))
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Content-Type", content_type)
+        .send(body)
+        .map_err(|_| "private transcription request failed".to_string())?;
+    let status = response.status();
+    let bytes = response
+        .body_mut()
+        .read_to_vec()
+        .map_err(|_| "private transcription response could not be read".to_string())?;
+    if bytes.len() > MAX_JSON_BODY {
+        return Err("private transcription response exceeded the local limit".into());
+    }
+    if !status.is_success() {
+        return Err(format!(
+            "private transcription returned HTTP {}",
+            status.as_u16()
+        ));
+    }
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "private transcription returned invalid JSON".to_string())?;
+    if !value.get("text").is_some_and(Value::is_string) {
+        return Err("private transcription response did not contain text".into());
+    }
+    Ok(bytes)
 }
 
 fn port_open(port: u16) -> bool {
@@ -6071,33 +6537,47 @@ mod tests {
         let mut gate = Gate::new();
         gate.set_detected(true);
         assert_eq!(
-            meeting_phase(&gate, false, true, "starting", "starting"),
+            meeting_phase(&gate, false, true, "starting", "starting", "starting"),
             "starting"
         );
         assert_eq!(
-            meeting_phase(&gate, false, true, "ready", "starting"),
+            meeting_phase(&gate, false, true, "ready", "starting", "ready"),
             "starting"
         );
         assert_eq!(
-            meeting_phase(&gate, false, true, "ready", "ready"),
+            meeting_phase(&gate, false, true, "ready", "ready", "ready"),
             "recording"
         );
         assert_eq!(
-            meeting_phase(&gate, false, true, "failed", "ready"),
+            meeting_phase(&gate, false, true, "failed", "ready", "ready"),
             "needs_attention"
+        );
+        assert_eq!(
+            meeting_phase(&gate, false, true, "ready", "ready", "failed"),
+            "needs_attention"
+        );
+        assert_eq!(
+            meeting_phase(&gate, false, true, "ready", "ready", "starting"),
+            "starting"
         );
         gate.set_manual("pause");
         assert_eq!(
-            meeting_phase(&gate, false, true, "ready", "ready"),
+            meeting_phase(&gate, false, true, "ready", "ready", "ready"),
             "pausing"
         );
-        assert_eq!(meeting_phase(&gate, false, true, "idle", "idle"), "paused");
+        assert_eq!(
+            meeting_phase(&gate, false, true, "idle", "idle", "idle"),
+            "paused"
+        );
         gate.set_manual("stop");
         assert_eq!(
-            meeting_phase(&gate, true, true, "idle", "idle"),
+            meeting_phase(&gate, true, true, "idle", "idle", "idle"),
             "finalizing"
         );
-        assert_eq!(meeting_phase(&gate, false, false, "idle", "idle"), "idle");
+        assert_eq!(
+            meeting_phase(&gate, false, false, "idle", "idle", "idle"),
+            "idle"
+        );
     }
     #[test]
     fn capture_channel_contract_rejects_unknown_helper_states() {
@@ -6436,21 +6916,26 @@ mod tests {
         assert_eq!(resolved_title(&impromptu), "Impromptu meeting");
     }
     #[test]
-    fn app_thumbnail_is_always_available_without_a_recording() {
+    fn app_thumbnail_has_a_portable_fallback_without_a_recording() {
         let svg = app_thumbnail_svg("discord");
         assert!(svg.contains("Discord"));
         assert!(svg.contains("#5865F2"));
         assert!(svg.starts_with("<svg"));
-        let facetime = installed_app_icon_png("facetime").expect("FaceTime icon is available");
-        assert_eq!(&facetime[..8], b"\x89PNG\r\n\x1a\n");
-        let width = u32::from_be_bytes(facetime[16..20].try_into().unwrap());
-        let height = u32::from_be_bytes(facetime[20..24].try_into().unwrap());
-        assert!(width <= 512 && height <= 512, "icon is {width}x{height}");
-        assert!(
-            facetime.len() <= 1_000_000,
-            "icon is {} bytes",
-            facetime.len()
-        );
+
+        // NSWorkspace may not resolve a system application in minimal CI images or on
+        // macOS versions where Apple moved/renamed its bundle. The SVG above is the
+        // product guarantee; an installed native icon is an optional enhancement.
+        if let Some(facetime) = installed_app_icon_png("facetime") {
+            assert_eq!(&facetime[..8], b"\x89PNG\r\n\x1a\n");
+            let width = u32::from_be_bytes(facetime[16..20].try_into().unwrap());
+            let height = u32::from_be_bytes(facetime[20..24].try_into().unwrap());
+            assert!(width <= 512 && height <= 512, "icon is {width}x{height}");
+            assert!(
+                facetime.len() <= 1_000_000,
+                "icon is {} bytes",
+                facetime.len()
+            );
+        }
     }
     #[test]
     fn recording_names_cannot_escape_directory() {
@@ -6809,6 +7294,50 @@ mod tests {
         assert_eq!(first.as_deref(), Some("private-test-key"));
         assert_eq!(second.as_deref(), Some("private-test-key"));
         assert_eq!(loads.get(), 1);
+    }
+
+    #[test]
+    fn private_meeting_transcription_accepts_only_secure_destinations() {
+        assert_eq!(
+            validated_meeting_stt_base("http://127.0.0.1:18091/").as_deref(),
+            Ok("http://127.0.0.1:18091")
+        );
+        assert_eq!(
+            validated_meeting_stt_base("https://speech.example.com/private").as_deref(),
+            Ok("https://speech.example.com/private")
+        );
+        for rejected in [
+            "http://speech.example.com:8091",
+            "http://127.0.0.1:18091@evil.example",
+            "https://user@evil.example",
+            "https://speech.example.com?token=secret",
+            "http://localhost:70000",
+        ] {
+            assert!(
+                validated_meeting_stt_base(rejected).is_err(),
+                "accepted {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn private_meeting_transcription_setting_never_persists_a_token() {
+        let raw = json!({
+            "mode":"private",
+            "base":"http://127.0.0.1:18091",
+            "keySaved":true,
+            "token":"must-not-survive"
+        })
+        .to_string();
+        let sanitized = sanitize_meeting_transcription_setting(&raw).unwrap();
+        let value: Value = serde_json::from_str(&sanitized).unwrap();
+        assert_eq!(value.get("mode").and_then(Value::as_str), Some("private"));
+        assert_eq!(value.get("keySaved").and_then(Value::as_bool), Some(true));
+        assert!(value.get("token").is_none());
+        assert!(!sanitized.contains("must-not-survive"));
+        assert!(valid_meeting_stt_token(&"a".repeat(64)));
+        assert!(!valid_meeting_stt_token("too-short"));
+        assert!(!valid_meeting_stt_token(&format!("{} bad", "a".repeat(32))));
     }
 
     #[test]

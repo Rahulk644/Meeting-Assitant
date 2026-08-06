@@ -50,3 +50,7 @@ __pycache__/
 
 # Human acceptance evidence (screenshots, logs, meeting details) is private by default.
 /acceptance/sessions/
+
+# VPS transcription deployment state — models and credentials never enter git.
+/deploy/self-hosted-stt/models/
+/deploy/self-hosted-stt/secrets/

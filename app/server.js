@@ -71,6 +71,8 @@ const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
 let settingsBlob = {};
 try { settingsBlob = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) || {}; } catch { settingsBlob = {}; }
 const devProviderKeys = Object.create(null); // developer harness only: never persist provider secrets
+let devMeetingTranscription = { mode: "local", base: "", keySaved: false };
+let devMeetingTranscriptionToken = ""; // developer harness only: memory, never settings.json
 const sanitizeAiModel = raw => sanitizeDeveloperAiModel(raw, devProviderKeys);
 let _settingsTimer = null;
 function saveSettings() {
@@ -716,6 +718,7 @@ http.createServer((req, res) => {
         if (patch) {
           for (const k in patch) {
             if (patch[k] == null) delete settingsBlob[k];
+            else if (k === "set.meetingTranscription") continue; // dedicated endpoint owns validation; never mirror a token
             else settingsBlob[k] = k === "set.aiModel" ? sanitizeAiModel(String(patch[k])) : String(patch[k]);
           }
           saveSettings();
@@ -723,6 +726,40 @@ http.createServer((req, res) => {
         }
       } catch {}
       res.writeHead(204); res.end();
+    });
+    return;
+  }
+  if (req.url === "/api/transcription/provider" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(devMeetingTranscription));
+    return;
+  }
+  if (req.url === "/api/transcription/provider" && req.method === "POST") {
+    readBody(req).then(async body => {
+      const input = JSON.parse(body || "{}"), mode = String(input.mode || "local");
+      if (mode === "local") {
+        devMeetingTranscription = { mode: "local", base: "", keySaved: false };
+        return devMeetingTranscription;
+      }
+      if (mode !== "private") throw providerError("Unknown transcription provider");
+      const base = String(input.base || "").trim().replace(/\/$/, "");
+      const loopback = /^http:\/\/(127\.0\.0\.1|localhost):[1-9][0-9]{0,4}$/.test(base);
+      const secure = /^https:\/\/[^\s@/?#]+(?:\/[^\s?#]*)?$/.test(base);
+      if (!loopback && !secure) throw providerError("Private transcription must use HTTPS or an SSH-tunnelled loopback URL");
+      const supplied = String(input.token || "").trim(), token = supplied || devMeetingTranscriptionToken;
+      if (token.length < 32 || token.length > 512 || /\s/.test(token)) throw providerError("The private transcription token is invalid");
+      const response = await fetch(base + "/health", { headers: { Authorization: `Bearer ${token}` } });
+      const health = await response.json().catch(() => ({}));
+      if (!response.ok || health.ok !== true) throw providerError("The private transcription server failed its health check", 502);
+      devMeetingTranscriptionToken = token;
+      devMeetingTranscription = { mode: "private", base, keySaved: true };
+      return { ...devMeetingTranscription, ready: true, maxStreams: health.maxStreams ?? null };
+    }).then(result => {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify(result));
+    }).catch(error => {
+      res.writeHead(error.status || 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: String(error.message || error) }));
     });
     return;
   }
@@ -791,22 +828,35 @@ http.createServer((req, res) => {
     });
     return;
   }
-  if (req.url === "/api/transcribe" && req.method === "POST") { // dictation: WAV → local STT, ensuring the engine is up first
+  if (req.url === "/api/transcribe" && req.method === "POST") { // dictation stays on-device; private meeting audio uses only its selected worker
     const ct = req.headers["content-type"] || "application/octet-stream";
+    const meetingAudio = String(req.headers["x-assistant-audio-source"] || "").startsWith("meeting-");
     readBodyBuffer(req).then(async (buf) => {
+      let usedLocal = false;
       try {
-        await ensureWhisper();
-        if (!await waitPort("127.0.0.1", WHISPER_PORT, 15000)) throw new Error("transcription engine did not start");
         // Preserve Automatic language detection. Forcing the English token turns Hindi/Hinglish into a
         // phonetic English guess and measured far worse than Automatic on the pinned mixed-speech corpus.
         const spec = activeSpeechModel(), requested = dictationCfg.language || "auto";
         const lang = spec.fixedLanguage || (spec.supportedLanguages.includes(requested) ? requested : (spec.supportsLanguageDetection ? "auto" : (spec.supportedLanguages[0] || "en")));
+        const privateMeeting = meetingAudio && devMeetingTranscription.mode === "private";
         const reqBody = injectMultipartFields(buf, ct, {
-          language: lang,
+          language: privateMeeting ? "auto" : lang,
           translate: "false",
           prompt: vocabPrompt ? `Vocabulary: ${vocabPrompt}` : "",
         });
-        const r = await fetch(`http://127.0.0.1:${WHISPER_PORT}/inference`, { method: "POST", headers: { "Content-Type": ct, Authorization: `Bearer ${process.env.ASSISTANT_STT_TOKEN || GUI_TOKEN}` }, body: reqBody });
+        let endpoint, authorization;
+        if (privateMeeting) {
+          if (!devMeetingTranscriptionToken) throw new Error("private transcription worker token is unavailable");
+          endpoint = `${devMeetingTranscription.base}/inference`;
+          authorization = `Bearer ${devMeetingTranscriptionToken}`;
+        } else {
+          usedLocal = true;
+          await ensureWhisper();
+          if (!await waitPort("127.0.0.1", WHISPER_PORT, 15000)) throw new Error("transcription engine did not start");
+          endpoint = `http://127.0.0.1:${WHISPER_PORT}/inference`;
+          authorization = `Bearer ${process.env.ASSISTANT_STT_TOKEN || GUI_TOKEN}`;
+        }
+        const r = await fetch(endpoint, { method: "POST", headers: { "Content-Type": ct, Authorization: authorization }, body: reqBody });
         const body = await r.text();
         if (!r.ok) throw new Error(`${r.status} ${body.slice(0, 160)}`);
         let text = ""; try { text = String(JSON.parse(body).text || "").trim(); } catch {}
@@ -815,7 +865,7 @@ http.createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ text }));
       } catch (e) {
         res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: String(e.message || e) }));
-      } finally { if (!cur) unloadWhisperSoon(); } // free the model after dictation, unless a meeting is live
+      } finally { if (usedLocal && !cur) unloadWhisperSoon(); } // private meeting mode never starts or manages the local model
     });
     return;
   }

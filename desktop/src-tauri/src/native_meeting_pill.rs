@@ -523,11 +523,20 @@ impl MeetingPill {
             _ => return,
         };
         let detail = match state.phase.as_str() {
-            "recording" => format!("{app} · {status} · Mic + meeting audio ready"),
+            "recording" => format!(
+                "{app} · {status} · {}",
+                compact_overlay_text(&state.detail, 64)
+            ),
             "needs_attention" => {
                 format!("{app} · {}", compact_overlay_text(&state.detail, 64))
             }
             "finalizing" => format!("{app} · Saving transcript and preparing notes"),
+            _ if !state.detail.is_empty() => {
+                format!(
+                    "{app} · {status} · {}",
+                    compact_overlay_text(&state.detail, 64)
+                )
+            }
             _ => format!("{app} · {status}"),
         };
         self.title
